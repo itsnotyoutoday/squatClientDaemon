@@ -161,7 +161,7 @@ func NormTF(log string) string {
 			continue
 		}
 		if strings.HasPrefix(l, "% ") && (strings.Contains(l, "Warning:") ||
-			strings.HasPrefix(l, "% Trying to connect") || strings.HasPrefix(l, "% Connected to")) {
+			strings.HasPrefix(l, "% Trying to connect") || strings.HasPrefix(l, "% Connected to") || strings.HasPrefix(l, "% Visual mode") || strings.Contains(l, ": Redefined macro ")) {
 			continue
 		}
 		out = append(out, canonLine(l))

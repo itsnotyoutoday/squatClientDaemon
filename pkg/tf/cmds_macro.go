@@ -70,16 +70,6 @@ func (i *Interp) initMacroCmds() {
 	})
 	i.reg("enable", "/enable name...   (extension)", false, func(i *Interp, a string) error { return i.setDisabled(a, false) })
 	i.reg("disable", "/disable name...   (extension)", false, func(i *Interp, a string) error { return i.setDisabled(a, true) })
-	i.reg("gag", "/gag pattern   (define a trigger that hides matching lines)", false, func(i *Interp, a string) error {
-		return i.defShortcut("/gag", a, "g")
-	})
-	i.reg("hilite", "/hilite pattern   (define a trigger that highlights matching lines using $hiliteattr)", false, func(i *Interp, a string) error {
-		attr := i.getVarStr("hiliteattr")
-		if attr == "" {
-			attr = "h"
-		}
-		return i.defShortcut("/hilite", a, "a"+quoteOpt(attr))
-	})
 	i.reg("bind", "/bind key = command", false, func(i *Interp, a string) error {
 		k, body, ok := strings.Cut(a, "=")
 		k = strings.TrimSpace(k)
@@ -181,9 +171,7 @@ func cmdDef(i *Interp, args string) error {
 	if err != nil {
 		return err
 	}
-	if i.macros.add(m) {
-		i.fireHook(i.curWorld(), "REDEF", m.Name)
-	}
+	i.addMacro(m)
 	return nil
 }
 
@@ -327,4 +315,16 @@ func (i *Interp) loadSource(name, src string) error {
 		fail(pendStart, errIncomplete)
 	}
 	return first
+}
+
+// addMacro installs m; replacing a macro by a different definition fires the
+// REDEF hook (an identical redefinition is silent, as in TF).
+func (i *Interp) addMacro(m *Macro) {
+	oldDef := ""
+	if o := i.macros.anyByName(m.Name); o != nil && m.Name != "" {
+		oldDef = o.Def()
+	}
+	if i.macros.add(m) && m.Def() != oldDef {
+		i.fireHook(i.curWorld(), "REDEF", "macro", m.Name)
+	}
 }

@@ -24,12 +24,15 @@ func (i *Interp) passes(m *Macro, world, text string, mi *matchInfo, params []st
 			return false
 		}
 	}
+	if !i.chanceOK(m) {
+		return false
+	}
 	return true
 }
 
-// chanceOK rolls the -c probability. A macro that loses the roll still counts
-// as a match (its attributes apply and it blocks lower priorities); only its
-// body does not run.
+// chanceOK rolls the -c probability (-c0 never fires). Measured against real
+// tf: a macro that loses the roll is simply not a match, so lower priorities
+// are still considered.
 func (i *Interp) chanceOK(m *Macro) bool {
 	if !m.chanceSet || m.Chance >= 100 || !i.live {
 		return true
@@ -99,7 +102,7 @@ func (i *Interp) dispatch(world, text string, spans []proto.Span, minPri int, re
 				}
 			}
 		}
-		if i.live && i.chanceOK(m) {
+		if i.live {
 			i.consumeShot(m)
 			_ = i.callMacroWith(m, text, params, world, mi)
 		}

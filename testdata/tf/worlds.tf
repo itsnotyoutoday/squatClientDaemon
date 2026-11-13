@@ -31,8 +31,8 @@
 /trigger test line
 /def -t'test line' tl = /echo triggered
 /trigger test line
-/trigpc 100 5 test line
-/trigpc 100 -5 test line
+/trigpc 5 100 pcline = /echo pc-fired
+/trigger pcline
 /help echo
 /version
 /exit

@@ -33,7 +33,7 @@ key bound=false
 ## key main ^A
 key bound=false
 echo main: triggered
-echo main: triggered
+echo main: pc-fired
 echo main: /echo [-w<world>] [-a<attrs>] [-p] text   (-p: interpret @{attr} markup)
 echo main: % squat-tf 1.0 (TinyFugue-style)
 quit

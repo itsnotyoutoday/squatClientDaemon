@@ -63,10 +63,8 @@ func (i *Interp) fireHook(world, name string, args ...string) bool {
 			continue
 		}
 		fired = true
-		if i.chanceOK(m) {
-			i.consumeShot(m)
-			_ = i.callMacroWith(m, text, args, world, nil)
-		}
+		i.consumeShot(m)
+		_ = i.callMacroWith(m, text, args, world, nil)
 		if !m.Fall {
 			break
 		}

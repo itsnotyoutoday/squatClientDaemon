@@ -4,7 +4,7 @@
 /def -h'WORLD' world_hook = /echo world=%1
 /def -n1 -h'LOGIN' once = /echo first login only
 /def -h'GMCP Char.Vitals*' gm = /echo gmcp %1 %2
-/def -h'REDEF' redef = /echo redefined %1
+/def -h'REDEF' redef = /echo redefined %2
 /def -h'LOAD' loaded = /echo loaded %1
 ;@hook main CONNECT main
 ;@hook main DISCONNECT main gone
@@ -17,6 +17,6 @@
 ;@exec main hello there
 ;@exec main /send direct
 /def on_conn = /echo replaced
-/hook CONNECT main
+/trigger -hCONNECT main
 /def -hNOSUCH bad = x
 ;@hook main WORLD alpha

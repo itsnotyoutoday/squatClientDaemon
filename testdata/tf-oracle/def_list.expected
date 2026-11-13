@@ -10,7 +10,7 @@
 %L: /def -p1 -ah -mglob -t'hilite' dl11 = /echo eleven
 %L: /def -p1 -aCred -mglob -t'colour' dl12 = /echo twelve
 %L: /def -p1 -n1 -mglob -t'once' dl13 = /echo thirteen
-%L: /def -b'^Xz' dl14 = /echo fourteen
+%L: /def -b^Xz dl14 = /echo fourteen
 %L: /def dl1 = /echo one
 %L: /def -p1 -mglob -t'foo *' dl2 = /echo two
 %L: /def -p5 -mregexp -t'^x+$' dl3 = /echo three
@@ -23,5 +23,5 @@
 %L: /def -p1 -ah -mglob -t'hilite' dl11 = /echo eleven
 %L: /def -p1 -aCred -mglob -t'colour' dl12 = /echo twelve
 %L: /def -p1 -n1 -mglob -t'once' dl13 = /echo thirteen
-%L: /def -b'^Xz' dl14 = /echo fourteen
+%L: /def -b^Xz dl14 = /echo fourteen
 ORACLE_END

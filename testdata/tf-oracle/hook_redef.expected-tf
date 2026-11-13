@@ -1,0 +1,5 @@
+REDEF [macro rdf] [macro] [rdf]
+REDEFQ [qq]
+two
+%ERR
+ORACLE_END

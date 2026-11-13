@@ -1,0 +1,15 @@
+trig1 [foo one two]
+trig5 [bar x]
+trig5 [bar y]
+trigc
+trigpc
+hil
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+ORACLE_END

@@ -22,6 +22,7 @@ func (i *Interp) initCommands() {
 	i.initCoreCmds()
 	i.initVarCmds()
 	i.initMacroCmds()
+	i.initLibCmds()
 	i.initWorldCmds()
 	i.initMiscCmds()
 }
@@ -189,42 +190,6 @@ func (i *Interp) initMiscCmds() {
 		return nil
 	})
 	i.reg("quote", "/quote [-d<send|echo|exec>] [-w<world>] prefix 'file | #command   (shell forms are unavailable)", false, cmdQuote)
-	i.reg("trigger", "/trigger [-w<world>] text   (run trigger macros as if text arrived)", false, func(i *Interp, a string) error {
-		o, text, err := parseOpts(a, "w", "n")
-		if err != nil {
-			return err
-		}
-		w := i.curWorld()
-		if v, ok := o['w']; ok {
-			w = v
-		}
-		i.dispatch(w, text, []protoSpan{{S: text}}, -1<<31, nil)
-		return nil
-	})
-	i.reg("trigpc", "/trigpc chance priority text   (trigger with a probability, only macros of at least that priority)", false, func(i *Interp, a string) error {
-		c, r := firstWord(a)
-		p, text := firstWord(r)
-		if !S(c).num || !S(p).num || text == "" {
-			return fmt.Errorf("usage: /trigpc chance priority text")
-		}
-		if i.rng(100) >= S(c).Int() {
-			return nil
-		}
-		i.dispatch(i.curWorld(), text, []protoSpan{{S: text}}, int(S(p).Int()), nil)
-		return nil
-	})
-	i.reg("hook", "/hook [NAME args...]   (no arguments: list hook names; otherwise fire the hook)", false, func(i *Interp, a string) error {
-		if strings.TrimSpace(a) == "" {
-			i.echoText(i.curWorld(), strings.Join(HookNames(), " "))
-			return nil
-		}
-		n, rest := firstWord(a)
-		if !isHook(n) {
-			return fmt.Errorf("/hook: unknown hook %q", n)
-		}
-		i.fireHook(i.curWorld(), n, words(rest)...)
-		return nil
-	})
 	i.reg("restrict", "/restrict [shell|file|world]   (raise the restriction level; it cannot be lowered)", false, func(i *Interp, a string) error {
 		names := []string{"shell", "file", "world"}
 		a = strings.ToLower(strings.TrimSpace(a))
