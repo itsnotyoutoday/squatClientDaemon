@@ -475,7 +475,7 @@ func TestLoadSource(t *testing.T) {
 		"echo w: % x.tf:4: not a command (script lines must start with /): bare text line",
 		"echo w: joined",
 		"echo w: in loop",
-		"echo w: % /nosuch: no such command or macro",
+		"echo w: % /nosuch: no such command. Type /help for help.",
 		"echo w: last",
 		"echo w: % x.tf:14: incomplete block: missing /endif or /done",
 	}

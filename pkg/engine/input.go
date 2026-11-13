@@ -16,7 +16,7 @@ import (
 //   - "/lua <code>": run in the Lua console;
 //   - "/load file.lua" and "/reload": Lua plugin loading / reloading
 //     (everything else beginning with "/" goes to the TF interpreter, which
-//     reports unknown commands itself as "% /x: no such command or macro");
+//     reports unknown commands itself as "% /x: no such command. Type /help for help.");
 //   - anything else: Lua input handlers/aliases first, then TF (SEND hook,
 //     then the world). Typed text is echoed (kind echo) unless the server has
 //     asked for no echo.

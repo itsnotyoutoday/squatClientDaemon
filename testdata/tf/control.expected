@@ -1,7 +1,7 @@
 echo main: loop 0
 echo main: loop 1
 echo main: loop 2
-echo main: % /continue_not_a_thing: no such command or macro
+echo main: % /continue_not_a_thing: no such command. Type /help for help.
 echo main: i=2
 echo main: is three
 echo main: elseif hit

@@ -387,7 +387,7 @@ func (i *Interp) execStmt(text string) error {
 	}
 	c := i.cmds[name]
 	if c == nil {
-		return i.errf("%s: no such command or macro", "/"+name)
+		return i.errf("%s: no such command. Type /help for help.", "/"+name)
 	}
 	if !c.raw {
 		var err error
