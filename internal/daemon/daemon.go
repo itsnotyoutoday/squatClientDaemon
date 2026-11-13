@@ -358,7 +358,17 @@ func (d *Daemon) Send(p wire.Peer, id, text string) error {
 	if err != nil {
 		return err
 	}
-	return s.sendText(text)
+	return s.sendText(text, true)
+}
+
+// SendSecret implements wire.SecretSender: the text reaches the game but is never
+// echoed to clients, stored in the scrollback or written to the log.
+func (d *Daemon) SendSecret(p wire.Peer, id, text string) error {
+	s, err := d.get(id)
+	if err != nil {
+		return err
+	}
+	return s.sendText(text, false)
 }
 
 // Ack implements wire.Backend.

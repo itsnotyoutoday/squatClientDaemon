@@ -115,6 +115,7 @@ type Client struct {
 	deviceID string
 	server   string
 	sessions []proto.SessionInfo
+	features []string
 	serverFP atomic.Value // string
 
 	reqSeq atomic.Uint64
@@ -210,7 +211,7 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 		if err := json.Unmarshal(raw, &w); err != nil {
 			return nil, fmt.Errorf("wire: bad welcome: %w", err)
 		}
-		c.deviceID, c.server, c.sessions = w.DeviceID, w.Server, w.Sessions
+		c.deviceID, c.server, c.sessions, c.features = w.DeviceID, w.Server, w.Sessions, w.Features
 	default:
 		return nil, fmt.Errorf("wire: unexpected %q instead of welcome", env.T)
 	}
@@ -580,6 +581,30 @@ func (c *Client) Send(ctx context.Context, session, text string) error {
 		T string `json:"t"`
 		SendReq
 	}{proto.Version, TSend, SendReq{Session: session, Text: text}})
+}
+
+// HasFeature reports whether the daemon advertised an optional feature (e.g. FeatureNoEcho).
+func (c *Client) HasFeature(name string) bool {
+	for _, f := range c.features {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+// SendSecret sends one line the daemon must NOT record, echo or log (logins,
+// passwords). It fails if the daemon does not advertise FeatureNoEcho, so a
+// secret is never sent to a daemon that would store it.
+func (c *Client) SendSecret(ctx context.Context, session, text string) error {
+	if !c.HasFeature(FeatureNoEcho) {
+		return &ProtoError{Code: proto.ErrBadRequest, Message: "this squatterd is too old to hide secrets: update it (needs noEcho)"}
+	}
+	return c.write(ctx, struct {
+		V int    `json:"v"`
+		T string `json:"t"`
+		SendReq
+	}{proto.Version, TSend, SendReq{Session: session, Text: text, NoEcho: true}})
 }
 
 // Ack tells the daemon this device has read up to seq.

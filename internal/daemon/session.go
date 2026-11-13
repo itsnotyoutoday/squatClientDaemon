@@ -373,7 +373,7 @@ func (s *session) resize(cols, rows int) {
 	}
 }
 
-func (s *session) sendText(text string) error {
+func (s *session) sendText(text string, echo bool) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	s.mu.Lock()
@@ -386,7 +386,11 @@ func (s *session) sendText(text string) error {
 		return wire.Errf(proto.ErrBadRequest, "session is still connecting")
 	}
 	c := s.c
-	for _, line := range strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", ""), "\n") {
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", ""), "\n")
+	if !echo {
+		lines = nil // secret: delivered to the game, never recorded or echoed
+	}
+	for _, line := range lines {
 		shown := line
 		if s.remoteEcho {
 			shown = maskedEcho

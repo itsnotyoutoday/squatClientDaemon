@@ -41,7 +41,10 @@ type seqPair struct{ local, remote uint64 }
 type remoteTransport struct{ s *session }
 
 func (t *remoteTransport) Events() <-chan conn.Event { return nil }
-func (t *remoteTransport) Send(text string) error    { return t.s.remote.send(t.s, text) }
+func (t *remoteTransport) Send(text string) error    { return t.s.remote.send(t.s, text, false) }
+
+// SendSecret sends a login/password line the daemon must not record.
+func (t *remoteTransport) SendSecret(text string) error { return t.s.remote.send(t.s, text, true) }
 func (t *remoteTransport) Resize(cols, rows int) {
 	r := t.s.remote
 	if c := r.sq.client(); c != nil {
@@ -70,7 +73,7 @@ func (t *remoteTransport) Close() {
 
 // send writes one input line to the game through the daemon. It never blocks
 // longer than 10 s and never reconnects.
-func (r *remoteState) send(s *session, text string) error {
+func (r *remoteState) send(s *session, text string, secret bool) error {
 	s.mu.Lock()
 	link := r.link
 	s.mu.Unlock()
@@ -86,6 +89,9 @@ func (r *remoteState) send(s *session, text string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if secret {
+		return c.SendSecret(ctx, r.rid, text)
+	}
 	return c.Send(ctx, r.rid, text)
 }
 
@@ -219,7 +225,7 @@ func (s *session) loginAfterConnectLocked() []func() {
 		s.loginCancel = nil
 		s.mu.Unlock()
 		if l != "" {
-			if err := s.tr.Send(l); err != nil {
+			if err := sendLogin(s.tr, l); err != nil {
 				s.systemLine("% login not sent: " + err.Error())
 			}
 		}

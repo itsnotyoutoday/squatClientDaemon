@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +59,19 @@ func TestRemoteProbePairConnectLive(t *testing.T) {
 	}
 	r.waitState(t, e, si.ID, proto.StateConnected)
 	game.ExpectLine("connect bob s3cret") // login executed by the client through send
+	// the daemon must NOT have recorded the login line (it was sent as a secret)
+	t.Cleanup(func() {
+		time.Sleep(300 * time.Millisecond) // let the daemon flush its log
+		_ = filepath.Walk(env.dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if b, _ := os.ReadFile(path); strings.Contains(string(b), "s3cret") {
+				t.Errorf("password found in the daemon's files: %s", path)
+			}
+			return nil
+		})
+	})
 	r.waitLine(t, si.ID, "Welcome to the game")
 	game.SendLine("PING")
 	game.ExpectLine("pong") // live line fires the trigger

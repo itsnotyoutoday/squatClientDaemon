@@ -70,7 +70,13 @@ type Welcome struct {
 	DeviceID string              `json:"deviceId"`
 	Role     string              `json:"role"`
 	Sessions []proto.SessionInfo `json:"sessions"`
+	// Features lists optional protocol features the daemon supports, e.g. "noEcho".
+	Features []string `json:"features,omitempty"`
 }
+
+// FeatureNoEcho: the daemon honours SendReq.NoEcho (the line is delivered to the
+// game but never recorded, echoed or logged).
+const FeatureNoEcho = "noEcho"
 
 // ErrorMsg is the daemon's error message.
 type ErrorMsg struct {
@@ -106,6 +112,8 @@ type SendReq struct {
 	ID      string `json:"id,omitempty"`
 	Session string `json:"session"`
 	Text    string `json:"text"`
+	// NoEcho delivers the text to the game without recording or echoing it (logins, passwords).
+	NoEcho bool `json:"noEcho,omitempty"`
 }
 
 // AckReq is ack.

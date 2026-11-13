@@ -241,7 +241,7 @@ func (s *session) onConnected() {
 			s.loginCancel = nil
 			s.mu.Unlock()
 			if l != "" {
-				_ = s.tr.Send(l)
+				_ = sendLogin(s.tr, l)
 			}
 		}
 		if delay > 0 {
@@ -345,7 +345,7 @@ func (s *session) sendText(text string, echo bool) error {
 	}
 	if s.remote != nil {
 		// the daemon echoes what it is sent (to every attached client), so no local echo
-		return s.remote.send(s, text)
+		return s.remote.send(s, text, false)
 	}
 	if echo && le && !s.tr.RemoteEcho() {
 		s.addLine(proto.KindEcho, []proto.Span{{S: text}})
@@ -449,4 +449,17 @@ func (s *session) setLog(on bool, path string) error {
 	}
 	s.logw = f
 	return nil
+}
+
+// secretSender is implemented by transports whose far end would otherwise record
+// what we send (a squatterd): login lines go through it so the password is
+// never echoed, stored or logged there.
+type secretSender interface{ SendSecret(text string) error }
+
+// sendLogin sends a login line, using the secret path when the transport has one.
+func sendLogin(tr Transport, line string) error {
+	if ss, ok := tr.(secretSender); ok {
+		return ss.SendSecret(line)
+	}
+	return tr.Send(line)
 }

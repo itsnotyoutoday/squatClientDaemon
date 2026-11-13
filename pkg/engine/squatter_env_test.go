@@ -24,6 +24,7 @@ import (
 // sqEnv is a REAL in-process squatterd (internal/daemon + wire server over TLS).
 type sqEnv struct {
 	t    *testing.T
+	dir  string // the daemon's data dir
 	d    *daemon.Daemon
 	as   *auth.Store
 	srv  *wire.Server
@@ -73,7 +74,7 @@ func newSqEnv(t *testing.T) *sqEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &sqEnv{t: t, d: d, as: as, srv: srv, ts: ts, fp: tlsutil.Fingerprint(ts.Certificate().Raw), host: h, port: port, key: key}
+	s := &sqEnv{t: t, dir: dir, d: d, as: as, srv: srv, ts: ts, fp: tlsutil.Fingerprint(ts.Certificate().Raw), host: h, port: port, key: key}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()

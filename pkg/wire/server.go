@@ -308,7 +308,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	if infos == nil {
 		infos = []proto.SessionInfo{}
 	}
-	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: "owner", Sessions: infos}); err != nil {
+	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: "owner", Sessions: infos, Features: s.features()}); err != nil {
 		c.Close("welcome write failed")
 		return
 	}
@@ -418,7 +418,15 @@ func (s *Server) dispatch(c *client, cf ClientFrame) {
 	case AttachReq:
 		err = b.Attach(c, m)
 	case SendReq:
-		err = b.Send(c, m.Session, m.Text)
+		if m.NoEcho {
+			if ss, ok := b.(SecretSender); ok {
+				err = ss.SendSecret(c, m.Session, m.Text)
+			} else {
+				err = Errf(proto.ErrBadRequest, "noEcho is not supported by this daemon")
+			}
+		} else {
+			err = b.Send(c, m.Session, m.Text)
+		}
 	case AckReq:
 		err = b.Ack(c, m.Session, m.Seq)
 	case ResizeReq:
@@ -451,4 +459,19 @@ func (s *Server) dispatch(c *client, cf ClientFrame) {
 	if err != nil {
 		s.fail(c, cf.ID, err)
 	}
+}
+
+// SecretSender is optionally implemented by a Backend to support SendReq.NoEcho:
+// deliver text to the game without recording, echoing or logging it.
+type SecretSender interface {
+	SendSecret(p Peer, session, text string) error
+}
+
+// features reports the optional protocol features this server's backend supports.
+func (s *Server) features() []string {
+	var f []string
+	if _, ok := s.cfg.Backend.(SecretSender); ok {
+		f = append(f, FeatureNoEcho)
+	}
+	return f
 }

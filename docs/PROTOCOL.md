@@ -42,6 +42,7 @@ Version: **1**. Default port: **10327**. Endpoint: `wss://<host>:10327/swp`.
    10 minutes, single use, created by `squatterd pair`. Failed attempts are
    rate limited (5 failures / 5 min / source IP -> 5 min lockout).
 4. Success: `{"t":"welcome","server":"squatterd/0.1.0","deviceId":"<hex sha256(pubkey)[:16]>","role":"owner","sessions":[SessionInfo...]}`
+   `welcome` also carries optional `"features":[...]` (v1 defines `"noEcho"`); unknown features must be ignored.
 
 `deviceId` = first 16 hex chars of sha256 of the raw 32-byte public key.
 
@@ -96,6 +97,7 @@ interface SessionInfo {
 | `attach` | `session`, `since?:number`, `maxBacklog?:number` (default 2000, max 20000) | `attached`, then `backlog`* |
 | `detach` | `session` | none |
 | `send` | `session`, `text` (no trailing newline; daemon appends `\r\n`; embedded `\n` are sent as separate lines) | echo `line` (kind `echo`) to all attached |
+| `send` with `"noEcho":true` | same, for **secrets** (login lines, passwords) | none: the text reaches the game but is **never echoed, recorded, replayed or logged** by the daemon. Only valid if the daemon advertised `"noEcho"` in `welcome.features`; otherwise the client must refuse to send the secret (the reference client does) and the daemon answers `bad_request` |
 | `ack` | `session`, `seq` | none |
 | `resize` | `session`, `cols`, `rows` (NAWS) | none |
 | `caps` | `caps` (same object as in hello) | none (re-announces MTTS if changed) |
