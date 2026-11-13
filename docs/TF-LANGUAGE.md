@@ -1,11 +1,21 @@
-# SquatClient scripting language (pkg/tf): reference
+# SquatClient scripting language: reference
 
-`pkg/tf` implements a TinyFugue-style MU* client language. It is an original
-implementation inspired by TinyFugue's documented behaviour; it is not
-bug-for-bug compatible. Differences are listed in `TF-COMPAT.md`.
+SquatClient's scripting language is modelled on **TinyFugue** ("tf"), the
+long-loved MU* client written by **Ken Keys**
+(<https://tinyfugue.sourceforge.net>). It is designed so that most existing
+TinyFugue scripts run as written: the commands, macros, triggers, hooks and
+expressions work the way TinyFugue users expect.
+
+It is a new, independent implementation. It contains no TinyFugue code, so a
+few things behave differently, and some things that only make sense in a
+terminal are not available. Everything that differs is listed in
+[TinyFugue Script Compatibility](help:compat). Thank you, Ken, and thank you
+to the TinyFugue community for decades of documentation, scripts and answers.
+
+In this reference "TF" means TinyFugue.
 
 Scripts are plain text files (`.tf`). Everything below can be typed on the
-input line, put in a script and `/load`ed, or run by triggers and hooks.
+input line, put in a script and loaded with `/load`, or run by triggers and hooks.
 
 ## 1. Input lines, statements and scripts
 
@@ -28,7 +38,7 @@ input line, put in a script and `/load`ed, or run by triggers and hooks.
   an error: a script never sends text by accident). Blocks (`/if`, `/while`,
   `/do`, `/for`) may span lines and are collected until their `/endif` /
   `/done`.
-* Errors print as `% message` through the host and the script keeps going,
+* Errors print as `% message` and the script keeps going,
   except that an error inside a loop body ends the loop. At most 20 errors are
   shown per run.
 
@@ -123,16 +133,14 @@ A user macro can be called like a function: `/def add = /return {1} + {2}` then
   when numeric.
 * TF's on/off variables (`gag hilite more wrap visual borg login ...`) store
   `on` or `off` whatever you assign (`1`, `0`, `on`, `off`). Their defaults are
-  TinyFugue's own (checked against a real tf, see `TF-COMPAT.md` section 5).
+  TinyFugue's own (checked against a real TinyFugue; see [Variables](help:compat/variables)).
 * Behavioural variables read by the interpreter: `gag` and `hilite` (`off`
   disables gag/hilite effects), `matching` (default `/def` match mode),
   `hiliteattr` (attribute used by `/hilite`, default `B`), `sub` (`on` expands
   `%` in typed text), `quiet`, `ptime` (default `/repeat` delay), `wordpunct`,
   `TZ` (`UTC` or a fixed offset such as `UTC+2`, `-0530`, used by
-  `ftime`/`mktime`), `visual` (passed to the host as a layout toggle),
+  `ftime`/`mktime`), `visual` (a layout switch handled by the app),
   `histsize`. Others from TinyFugue are accepted as ordinary variables.
-* The host can export and import all globals as JSON (`ExportVars`,
-  `ImportVars`).
 
 ## 5. Macros: `/def`
 
@@ -153,9 +161,9 @@ value; quote values containing spaces with `'..'`, `".."` or `{..}`):
 | `-p<n>` | priority (default 1; higher runs first) |
 | `-n<shots>` / `-1` | delete the macro after that many firings |
 | `-F` | fall-through: after firing, let lower-priority matches fire too |
-| `-a<attrs>` | highlight the whole line (see section 6); `g` in the attrs gags (`-g` alone is an extension) |
+| `-a<attrs>` | highlight the whole line (see [Attributes](help:scripting/attributes)); `g` in the attrs gags (`-g` alone is an extension) |
 | `-P<n><attrs>` | highlight part `n` (0 whole match, 1..9 capture/wildcard) |
-| `-b<key>` | bind to a key name (the engine delivers key names) |
+| `-b<key>` | bind to a key name (see `/bind`) |
 | `-w<world>` | only active for that world |
 | `-E<expr>` | extra condition; must be true for the macro to fire |
 | `-c<percent>` | fire with that probability (`-c0` never; a macro that loses the roll is simply not a match) |
@@ -179,7 +187,7 @@ Patterns:
 Dispatch: matching macros are ordered by priority (high first), then definition
 order. The first one fires; if it has `-F` the next fires too, and so on. Only
 one macro per priority level fires unless `-F` is used (a deliberate
-simplification: TF picks randomly among equals; verified otherwise identical). A hook fires its macros the
+simplification: TF picks randomly among equals; otherwise identical). A hook fires its macros the
 same way; hook arguments become `%1..`.
 
 Other macro commands:
@@ -195,8 +203,8 @@ Other macro commands:
 | `/trig pat = body`, `/trigp pri pat = body`, `/trigc pct pat = body`, `/trigpc pri pct pat = body` | define unnamed trigger macros |
 | `/hook EVENT[ pat] = body` | define a hook macro (`/def -h`); `/unhook EVENT [pat]`, `/untrig [-a..] pat`, `/undeft pat` remove by exact pattern |
 | `/trigger [-gnl] [-w[world]] [-hEVENT] text` | run trigger (or hook) macros as if `text` had arrived; `-n` / `-l` list what would match instead |
-| `/bind key = command`, `/unbind key` | key bindings (key names come from the engine) |
-| `/dokey name` | editing actions (`LEFT RIGHT HOME END WLEFT WRIGHT BSPC DCH BWORD DWORD DEOL DLINE`) work on the input line and return the cursor; others go to the host |
+| `/bind key = command`, `/unbind key` | key bindings |
+| `/dokey name` | editing actions (`LEFT RIGHT HOME END WLEFT WRIGHT BSPC DCH BWORD DWORD DEOL DLINE`) work on the input line and return the cursor; other actions are passed to the app |
 | `/save file [glob]`, `/load [-q] file`, `/require file` | files (gated by `/restrict`) |
 
 Redefining a name replaces the macro and fires the `REDEF` hook. A macro name
@@ -269,9 +277,9 @@ In the TF form of `/for` the whole line is substituted once before the loop
 (second pass) rather than `%i`; the counter is a local that vanishes after the
 loop. The block form (`/done`) substitutes per iteration. `/do ... /while (expr)`
 is an extension; TF's `/while list /do list /done` and `/if list /then` forms
-(a command list as the condition) are not implemented.
+(a command list as the condition) are not available.
 A typed line closes unfinished blocks at its end; in a script file an
-unfinished block is an error. Every run is limited (section 10).
+unfinished block is an error. Every run is limited; see [Limits and safety](help:scripting/limits-and-safety).
 
 ## 8. Commands
 
@@ -281,9 +289,9 @@ unfinished block is an error. Every run is limited (section 10).
   `/beep`, `/notify title | body` (extension), `/gag`, `/hilite`.
 * Variables/eval: `/set /setenv /export /unset /let /listvar /shift [n]
   /eval /test /return /break /builtin`.
-* Macros/files: see section 5.
+* Macros/files: see [Macros: /def](help:scripting/macros-def).
 * Processes: `/repeat [-w[world]] [-n] [-<time>|-S] <count|i> <command>` runs a
-  command repeatedly through the host's timer service (time is seconds,
+  command repeatedly (time is seconds,
   `h:m` or `h:m:s`; without a time `$ptime` (1 s) is used; `-S` runs it now,
   synchronously; `-n` runs the first one immediately); it returns the process
   id. `/ps [-sr] [pid]` lists processes in TF's table format, `/kill pid...`
@@ -294,16 +302,16 @@ unfinished block is an error. Every run is limited (section 10).
 * Worlds (need world access): `/addworld [-Ttype] [-x] name [char pass] host port`,
   `/connect [world]`, `/dc [world]`, `/fg [world]`, `/world name`, `/unworld`,
   `/listworlds [glob]`, `/listsockets`, `/saveworld`.
-* UI delegates (the host decides what they do): `/limit /unlimit /relimit
+* Display commands (handled by the app): `/limit /unlimit /relimit
   /recall /log /localecho /status_add /status_edit /status_rm /histsize`.
   `/input text` inserts at the cursor of the input line; `/suspend` and the
-  `visual` variable are passed to the host (`tf.UIControl`).
+  `visual` variable are passed to the app.
 * `/version /features /help /restrict [shell|file|world] /exit /quit`.
 
 `/restrict` raises (never lowers) the restriction level: `shell` (always in
 force; there is no shell access), `file` (no `/load /save /quote 'file /log`),
-`world` (also no world/connection commands). The application sets the initial
-level (`Options.Restrict`).
+`world` (also no world/connection commands). SquatClient sets the initial
+level.
 
 ## 9. Functions
 
@@ -340,7 +348,7 @@ character type tls connected`), `is_connected([world])`, `is_open`, `fg_world()`
 `nlog() nmail() nread() morepaused() moresize() morescroll() getpid()
 gethostname() cputime() filename()` (neutral values: no mail, no paging).
 
-Input line (the GUI input widget, through `tf.InputBuffer`; positions are
+Input line (the app's input line; positions are
 characters): `kbhead() kbtail() kbpoint() kblen() kbgoto(i) kbdel(i)
 kbmatch([i]) kbwordleft([i]) kbwordright([i]) kbcharback([n]) kbcharfwd([n])`.
 Built-in commands can also be called as functions with one argument, e.g.
@@ -354,12 +362,13 @@ string with 16/256/24-bit codes), `strip_attr(text)` (remove markup and ANSI).
 `/def -hNAME [argpattern] name = body`. Names: `ACTIVITY ATCP BAMF BGTEXT BGTRIG
 CONFAIL CONFLICT CONNECT DISCONNECT GMCP ICONFAIL KILL LOAD LOADFAIL LOG LOGIN
 MAIL MORE NOMACRO OPTION102 PENDING PREACTIVITY PROCESS PROMPT PROXY REDEF RESIZE
-SEND SHADOW SHELL SIGHUP SIGTERM SIGUSR1 SIGUSR2 WORLD`. The application fires
-them with `FireHook(name, args...)`; the engine fires `CONNECT DISCONNECT CONFAIL
-LOGIN WORLD SEND PROMPT ACTIVITY BGTEXT BGTRIG LOAD REDEF RESIZE GMCP`. The
-interpreter itself fires `SEND` (before text is sent; a SEND hook that sends does
-not recurse), `LOAD`, `LOADFAIL` and `REDEF` (arguments `macro NAME`; an
-identical redefinition is silent). `/trigger -hNAME args` fires a hook by hand;
+SEND SHADOW SHELL SIGHUP SIGTERM SIGUSR1 SIGUSR2 WORLD`. SquatClient raises
+`CONNECT DISCONNECT CONFAIL LOGIN WORLD SEND PROMPT ACTIVITY BGTEXT BGTRIG LOAD
+LOADFAIL REDEF RESIZE GMCP` itself. The others can be defined, so scripts that
+use them still load, but nothing raises them. `SEND` fires just before text is
+sent (a `SEND` hook that sends does not trigger itself), `LOAD` and `LOADFAIL`
+fire around `/load`, and `REDEF` fires when a macro is redefined (arguments
+`macro NAME`; an identical redefinition is silent). `/trigger -hNAME args` fires a hook by hand;
 `/hook NAME[ pat] = body` defines one. Hook arguments are `%1..`, e.g. `GMCP`
 gets `%1` = package, `%2` = JSON. Hook names are fixed (an unknown name is an
 error).
@@ -371,13 +380,12 @@ logical line of a loaded file) has:
 
 * a step budget (statements, loop iterations, expression evaluations, function
   calls; default 50 000),
-* a wall deadline on the host clock (default 2 s),
+* a time limit (default 2 seconds),
 * a macro nesting limit (default 64) and file nesting limit (16),
 * a 256 KB cap on any one string value.
 
 Exceeding a limit aborts that run with `% script budget exceeded: ...`; the
-interpreter stays usable. When a received line is replayed from scrollback
-(`live=false`) no macro body runs, nothing is sent or notified, no shot is
+interpreter stays usable. When a line is replayed (for example the lines you missed while detached from a squatter) no macro body runs, nothing is sent or notified, no shot is
 consumed and no variable is changed; only gag and highlight are computed.
 
 ## 12. Examples
@@ -398,11 +406,3 @@ consumed and no variable is changed; only gag and highlight are computed.
 /def max = /return {1} > {2} ? {1} : {2}
 /echo biggest: $[max(3, 9)]
 ```
-
-## 13. Host integration (Go)
-
-See `pkg/tf/doc.go` and `host.go`: implement `tf.Host` (embed `tf.NopHost`),
-`tf.New(host, tf.Options{...})`, then `Exec`, `OnLine(world, line, live)`,
-`FireHook`, `Key`, `LoadFile`/`LoadString`, `Vars/GetVar/SetVar/ExportVars/
-ImportVars`, `Macros`. All calls are serialised; host callbacks must not call
-back into the interpreter.

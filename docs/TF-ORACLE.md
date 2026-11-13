@@ -143,3 +143,16 @@ verified), anything interactive (keyboard, `/more`) is out, timing is only
 tested through `/ps` structure, and tf's random choice among equal-priority
 macros cannot be compared. The harness needs `python3` (pty) and a local TCP
 socket for `;@net` cases.
+
+## Findings worth knowing (moved from TF-COMPAT.md)
+
+* The real tf **crashes** (segfault) on `$[1 ? a : b]` with a constant
+  condition in this build; the corpus avoids it.
+* A `/log` file records gagged lines (a gag is display-only), so gag cases read
+  the screen instead (`;@screen`).
+* `fake_recv()` clears the gag flag of the line it injects.
+* `/echo -6` treats `-6` as an option.
+* `1 ? 2 : 3`: `2:` is a time value in TF; ours is lenient.
+* Tested against tf 5.2.x built from `~/mush/tinyfugue` at commit
+  `052dd8cf67189276e117673296d4a9c33dbf4597`; `testdata/tf-oracle/` holds 39
+  case files (about 460 probe lines).
