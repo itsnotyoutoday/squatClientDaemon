@@ -2,7 +2,7 @@
 /echo [$[strchr("hello", "l")]] [$[strrchr("hello", "l")]] [$[strstr("hello", "llo")]] [$[strstr("hello", "z")]]
 /echo [$[strrep("ab", 3)]] [$[substr("hello", 1, 3)]] [$[substr("hello", 2)]] [$[substr("hi", 5)]]
 /echo [$[pad("ab", 5)]] [$[pad("ab", -5)]]| [$[pad("a", 3, "b", -3)]]|
-/echo [$[tolower("AbC")]] [$[toupper("AbC")]] [$[replace("a-b-c", "-", "+")]]
+/echo [$[tolower("AbC")]] [$[toupper("AbC")]] [$[replace("-", "+", "a-b-c")]]
 /echo [$[ascii("A")]] [$[char(66)]] [$[char(955)]]
 /echo [$[abs(-3)]] [$[abs(-2.5)]] [$[trunc(3.9)]] [$[mod(7, 3)]] [$[pow(2, 10)]] [$[sqrt(16)]] [$[exp(0)]] [$[ln(1)]] [$[log10(1000)]]
 /echo [$[sin(0)]] [$[cos(0)]] [$[atan(0)]]

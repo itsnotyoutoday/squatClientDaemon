@@ -1,0 +1,1 @@
+Improvement: strings are sequences of characters (UTF-8 runes) here; this tf build counts/cases bytes in these functions.

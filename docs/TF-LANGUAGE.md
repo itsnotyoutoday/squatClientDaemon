@@ -276,7 +276,7 @@ Strings: `strlen strcat strcmp strncmp strchr strrchr strstr strrep substr pad
 tolower toupper replace substitute ascii char` (indices are in characters, 0
 based; `strchr(s, set)` is the first position of any character of `set`, or -1;
 `pad(s, w)` right-justifies in `w` columns, a negative width left-justifies;
-`replace(s, old, new)` replaces every occurrence; `substitute(text [, attrs [,
+`replace(old, new, s)` replaces every occurrence of old in s (TF argument order); `substitute(text [, attrs [,
 inline]])` replaces the line being processed by a trigger).
 
 Regexp: `regmatch(pattern, string)` returns 1/0 and sets `%P0..%P9`, `%L`, `%R`

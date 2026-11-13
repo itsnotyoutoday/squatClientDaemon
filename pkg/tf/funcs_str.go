@@ -7,6 +7,21 @@ import (
 	"unicode/utf8"
 )
 
+// bound clamps a position into [0,max]; a negative position counts back from
+// max (so -1 is the last position), clamped at 0.
+func bound(v, max int) int {
+	if v > max {
+		return max
+	}
+	if v < 0 {
+		v += max
+		if v < 0 {
+			v = 0
+		}
+	}
+	return v
+}
+
 func runeIdx(r []rune, set string, last bool, from int) int {
 	if from < 0 {
 		from = 0
@@ -55,18 +70,21 @@ func (i *Interp) initStringFuncs() {
 		return I(int64(strings.Compare(string(x), string(y)))), nil
 	})
 	i.def("strchr", 2, 3, func(_ *Interp, a []Value) (Value, error) {
+		r := []rune(a[0].s)
 		from := 0
 		if len(a) > 2 {
-			from = int(a[2].Int())
+			from = bound(int(a[2].Int()), len(r))
 		}
-		return I(int64(runeIdx([]rune(a[0].s), a[1].s, false, from))), nil
+		return I(int64(runeIdx(r, a[1].s, false, from))), nil
 	})
 	i.def("strrchr", 2, 3, func(_ *Interp, a []Value) (Value, error) {
 		r := []rune(a[0].s)
+		end := len(r) - 1
 		if len(a) > 2 {
-			if e := int(a[2].Int()); e >= 0 && e < len(r) {
-				r = r[:e+1]
-			}
+			end = bound(int(a[2].Int()), len(r)-1)
+		}
+		if end < len(r)-1 {
+			r = r[:end+1]
 		}
 		return I(int64(runeIdx(r, a[1].s, true, 0))), nil
 	})
@@ -74,10 +92,7 @@ func (i *Interp) initStringFuncs() {
 		r := []rune(a[0].s)
 		from := 0
 		if len(a) > 2 {
-			from = max(int(a[2].Int()), 0)
-		}
-		if from > len(r) {
-			return I(-1), nil
+			from = bound(int(a[2].Int()), len(r))
 		}
 		k := strings.Index(string(r[from:]), a[1].s)
 		if k < 0 {
@@ -97,17 +112,10 @@ func (i *Interp) initStringFuncs() {
 	})
 	i.def("substr", 2, 3, func(_ *Interp, a []Value) (Value, error) {
 		r := []rune(a[0].s)
-		st := int(a[1].Int())
-		if st < 0 || st > len(r) {
-			if st < 0 {
-				st = 0
-			} else {
-				return S(""), nil
-			}
-		}
+		st := bound(int(a[1].Int()), len(r))
 		n := len(r) - st
 		if len(a) > 2 {
-			n = min(max(int(a[2].Int()), 0), n)
+			n = bound(int(a[2].Int()), n)
 		}
 		return S(string(r[st : st+n])), nil
 	})
@@ -138,21 +146,33 @@ func (i *Interp) initStringFuncs() {
 		}
 		return S(sb.String()), nil
 	})
-	i.def("tolower", 1, 1, func(_ *Interp, a []Value) (Value, error) { return S(strings.ToLower(a[0].s)), nil })
-	i.def("toupper", 1, 1, func(_ *Interp, a []Value) (Value, error) { return S(strings.ToUpper(a[0].s)), nil })
+	caseFn := func(name string, f func(string) string) {
+		i.def(name, 1, 2, func(_ *Interp, a []Value) (Value, error) {
+			r := []rune(a[0].s)
+			n := len(r)
+			if len(a) > 1 {
+				n = bound(int(a[1].Int()), n)
+			}
+			return S(f(string(r[:n])) + string(r[n:])), nil
+		})
+	}
+	caseFn("tolower", strings.ToLower)
+	caseFn("toupper", strings.ToUpper)
+	// replace(old, new, str): every occurrence of old in str becomes new.
 	i.def("replace", 3, 3, func(_ *Interp, a []Value) (Value, error) {
-		if a[1].s == "" {
-			return a[0], nil
+		old, nw, str := a[0].s, a[1].s, a[2].s
+		if old == "" {
+			return a[2], nil
 		}
-		if strings.Count(a[0].s, a[1].s)*(len(a[2].s)+1)+len(a[0].s) > maxValueLen {
+		if strings.Count(str, old)*(len(nw)+1)+len(str) > maxValueLen {
 			return Value{}, fmt.Errorf("replace(): result too long")
 		}
-		return S(strings.ReplaceAll(a[0].s, a[1].s, a[2].s)), nil
+		return S(strings.ReplaceAll(str, old, nw)), nil
 	})
 	i.def("ascii", 1, 1, func(_ *Interp, a []Value) (Value, error) {
 		r, n := utf8.DecodeRuneInString(a[0].s)
 		if n == 0 {
-			return I(-1), nil
+			return I(0), nil
 		}
 		return I(int64(r)), nil
 	})
@@ -186,7 +206,7 @@ func (i *Interp) initStringFuncs() {
 			}
 		}
 		fr.match = mi
-		return I(1), nil
+		return I(int64(len(mi.parts))), nil
 	})
 	i.def("substitute", 1, 3, func(i *Interp, a []Value) (Value, error) {
 		if i.lineCtx == nil || !i.live {
