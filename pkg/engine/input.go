@@ -47,6 +47,16 @@ func (e *Engine) Input(id, text string) error {
 		case "reload":
 			e.Reload()
 			return nil
+		case "secret":
+			// /secret <text>: send text that must never be echoed, recorded or logged
+			if arg == "" {
+				s.systemLine("% usage: /secret <text to send without recording it>")
+				return nil
+			}
+			if err := s.sendSecretText(arg); err != nil {
+				s.systemLine("% " + friendlySendErr(err).Error())
+			}
+			return nil
 		case "suspend", "detach":
 			// owner decision 17: detach squatter sessions, minimise the window.
 			// Handled here, before TF (which only accepts /suspend as a no-op).

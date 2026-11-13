@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
@@ -114,10 +116,7 @@ func (q *squatter) onLost(c *wire.Client, err error) {
 		return
 	}
 	q.cl, q.loopDone = nil, nil
-	msg := fmt.Sprintf("Lost the connection to squatter %q", q.cfg.Name)
-	if err != nil {
-		msg += ": " + err.Error()
-	}
+	msg, hint := describeLoss(q.cfg.Name, err)
 	q.state, q.problem, q.message = SqUnreachable, ProblemConnectionLo, msg
 	q.pending = 0
 	if q.awayTimer != nil {
@@ -125,7 +124,7 @@ func (q *squatter) onLost(c *wire.Client, err error) {
 		q.awayTimer = nil
 	}
 	q.mu.Unlock()
-	q.setLinks(LinkUnreachable, "*** "+msg+". The squatter keeps your session running; reconnect it to catch up.")
+	q.setLinks(LinkUnreachable, "*** "+msg+" "+hint)
 	q.publish()
 	q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: msg})
 }
@@ -238,4 +237,18 @@ func (e *Engine) dismissRemote(s *session) error {
 		}
 	}
 	return nil
+}
+
+// describeLoss turns the error that ended a squatter connection into text that
+// says what most likely happened, without promising more than we know.
+func describeLoss(name string, err error) (msg, hint string) {
+	switch {
+	case err == nil || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "eof") ||
+		strings.Contains(strings.ToLower(err.Error()), "going away") || strings.Contains(strings.ToLower(err.Error()), "closed"):
+		return fmt.Sprintf("Squatter %q closed the connection (it was probably stopped or restarted; the game sessions it held may have ended).", name),
+			"Reconnect to the squatter to see which sessions survived."
+	default:
+		return fmt.Sprintf("Lost the network connection to squatter %q (%v).", name, err),
+			"If the squatter is still running, your sessions are still running there: reconnect to catch up."
+	}
 }

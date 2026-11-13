@@ -334,6 +334,19 @@ func (s *session) systemLine(text string) {
 // sendText sends one line to the game. echo shows it as an echo line unless
 // the server asked for no echo (password prompt) or /localecho is off.
 func (s *session) sendText(text string, echo bool) error {
+	masked, secret := secretLine(text)
+	return s.sendLine(text, masked, secret, echo)
+}
+
+// sendSecretText sends text that must never be recorded or echoed anywhere
+// (the /secret command): the daemon does not store it and the display shows a mask.
+func (s *session) sendSecretText(text string) error {
+	return s.sendLine(text, secretMask, true, true)
+}
+
+// sendLine is the common send path. For a secret line the far end is told not to
+// record it (squatterd noEcho), and only the masked text is ever shown locally.
+func (s *session) sendLine(text, shown string, secret, echo bool) error {
 	s.mu.Lock()
 	state, le := s.info.State, s.localEcho
 	s.mu.Unlock()
@@ -344,11 +357,17 @@ func (s *session) sendText(text string, echo bool) error {
 		return conn.ErrNotConnected
 	}
 	if s.remote != nil {
-		// the daemon echoes what it is sent (to every attached client), so no local echo
-		return s.remote.send(s, text, false)
+		if secret {
+			// the daemon is told not to echo or record it, so show a masked local echo
+			if echo && le {
+				s.addLine(proto.KindEcho, []proto.Span{{S: shown}})
+			}
+		}
+		// otherwise the daemon echoes what it is sent (to every attached client): no local echo
+		return s.remote.send(s, text, secret)
 	}
 	if echo && le && !s.tr.RemoteEcho() {
-		s.addLine(proto.KindEcho, []proto.Span{{S: text}})
+		s.addLine(proto.KindEcho, []proto.Span{{S: shown}})
 	}
 	return s.tr.Send(text)
 }
