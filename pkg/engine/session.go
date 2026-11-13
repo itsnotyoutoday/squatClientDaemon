@@ -73,6 +73,7 @@ type session struct {
 	gameTypeSrc string
 	probeTimer  func()
 	probeTries  int
+	bannerSeen  int
 	noUnread    bool // appendLocked: do not count the next game line as unread
 }
 

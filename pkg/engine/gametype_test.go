@@ -26,9 +26,29 @@ func TestSniffAndParse(t *testing.T) {
 			t.Errorf("%s should be in the MU* family", ty)
 		}
 	}
-	for _, ty := range []string{"", engine.GameOther, "diku"} {
+	for _, ty := range []string{"", engine.GameOther, "nonsense"} {
 		if engine.GameTypeFamily(ty) != "" {
 			t.Errorf("%q must not be in the MU* family", ty)
+		}
+	}
+}
+
+func TestSniffOtherMuds(t *testing.T) {
+	cases := []struct{ text, typ, family string }{
+		{"Welcome to tbaMUD!", "circlemud", "diku"},
+		{"By what name do you wish to be known?", "diku", "diku"},
+		{"ROM 2.4 beta, Copyright (c) 1993-1998 Russ Taylor", "rom", "diku"},
+		{"This game is powered by Evennia.", "evennia", "evennia"},
+		{"*** LambdaMOO ***", "lambdamoo", "moo"},
+		{"Running on FluffOS v2019", "lpmud", "lp"},
+		{"CoffeeMUD v5.10", "coffeemud", "coffeemud"},
+		{"Welcome to the world of Achaea, Dreams of Divine Lands (Iron Realms Entertainment)", "ironrealms", "ironrealms"},
+		{"SMAUG 1.8 Copyright", "smaug", "diku"},
+	}
+	for _, c := range cases {
+		got := engine.SniffGameTypeForTest(c.text)
+		if got != c.typ || engine.GameTypeFamily(got) != c.family {
+			t.Errorf("%q: got %q (%q), want %q (%q)", c.text, got, engine.GameTypeFamily(got), c.typ, c.family)
 		}
 	}
 }

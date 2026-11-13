@@ -53,7 +53,7 @@ func (e *Engine) Input(id, text string) error {
 			if arg == "" {
 				sn := s.snapshot()
 				if sn.GameType == "" {
-					s.systemLine("% game type: not detected yet. Set it with /gametype pennmush|cobramush|tinymux|tinymush|rhostmush|mush|other")
+					s.systemLine("% game type: not detected yet. Set it with /gametype <type> (an unknown type lists the choices)")
 				} else {
 					s.systemLine(fmt.Sprintf("%% game type: %s (%s)", sn.GameType, sn.GameTypeSource))
 				}
