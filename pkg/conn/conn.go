@@ -394,7 +394,7 @@ func (c *Conn) write(b []byte) error {
 	if _, err := nc.Write(b); err != nil {
 		c.setFatal(err, "")
 		nc.Close()
-		if c.closing.Load() {
+		if c.closing.Load() || errors.Is(err, net.ErrClosed) {
 			return ErrClosed
 		}
 		return err
