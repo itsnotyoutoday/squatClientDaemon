@@ -22,7 +22,10 @@ var builtinVars = map[string]string{
 	"ansi_log": "0", "auto_fg": "1", "redef": "1", "refreshtime": "0",
 	"proxy_host": "", "shpause": "0", "visual": "0", "time_format": "%H:%M",
 	"TZ": "", "LANG": "en_US.UTF-8", "prompt_sec": "0", "prompt_usec": "250000",
-	"textdiv": "", "version": "",
+	"textdiv": "", "version": "", "hiliteattr": "h", "max_iter": "0", "tabsize": "8",
+	"quitdone": "0", "snarf": "0", "qecho": "0", "wrapsize": "0", "kprefix": "", "bg_output": "1",
+	"expand_tabs": "1", "ptime": "0", "telopt": "0", "textencode": "utf-8", "backslash": "1",
+	"interactive": "1", "wordpunct": "", "gethostbyname": "1", "TERM": "xterm-256color",
 }
 
 func (i *Interp) initVars() {

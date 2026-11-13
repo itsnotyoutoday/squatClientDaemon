@@ -263,6 +263,12 @@ func (i *Interp) execLine(world, line string) error {
 func (i *Interp) execTop(world, line string) error {
 	t := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(t, "/") {
+		if sub := i.getVarStr("sub"); sub == "on" || sub == "full" || sub == "1" {
+			var err error
+			if line, err = i.expand(line); err != nil {
+				return err
+			}
+		}
 		return i.sendText(world, line)
 	}
 	nodes, err := parseNodes(splitStatements(t), true)

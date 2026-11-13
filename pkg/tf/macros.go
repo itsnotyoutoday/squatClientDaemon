@@ -333,9 +333,22 @@ func (m *Macro) match(text string) (*matchInfo, bool) {
 
 // ---- formatting -------------------------------------------------------------
 
+// quoteOpt renders an option value so optArg reads it back unchanged. Bare
+// tokens are used when possible, then '..', "..", {..}; as a last resort
+// quotes are backslash-escaped (values that end in a backslash and contain
+// both kinds of quote and whitespace cannot be represented).
 func quoteOpt(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t'\"{}()=") {
+	if s != "" && strings.IndexFunc(s, unicode.IsSpace) < 0 && !strings.ContainsRune("'\"{(", rune(s[0])) {
 		return s
+	}
+	tail := strings.HasSuffix(s, "\\")
+	for _, q := range []string{"'", "\""} {
+		if !strings.Contains(s, q) && !tail {
+			return q + s + q
+		}
+	}
+	if e := closerFor("{"+s+"}", 0, '{', '}'); e == len(s)+2 {
+		return "{" + s + "}"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
 }
@@ -394,7 +407,7 @@ func (m *Macro) Def() string {
 	if m.Invisible {
 		b.WriteString(" -i")
 	}
-	if !strings.HasPrefix(m.Name, "#") {
+	if m.Name != "" && !strings.HasPrefix(m.Name, "#") {
 		b.WriteString(" " + m.Name)
 	}
 	b.WriteString(" = " + m.Body)

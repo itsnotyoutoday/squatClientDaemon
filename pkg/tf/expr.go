@@ -221,7 +221,7 @@ func (i *Interp) evalExprText(src string) (Value, error) {
 				return Value{}, err
 			}
 			if p.peek().k != tEOF {
-				return Value{}, fmt.Errorf("unexpected %q in expression", tokText(p.peek()))
+				return Value{}, unexpected(p.peek())
 			}
 		}
 		if len(i.exprs) > 2048 {
@@ -232,14 +232,14 @@ func (i *Interp) evalExprText(src string) (Value, error) {
 	return fn(i)
 }
 
-func tokText(t token) string {
-	if t.k == tEOF {
-		return "end of expression"
+func unexpected(t token) error {
+	switch t.k {
+	case tEOF:
+		return fmt.Errorf("unexpected end of expression")
+	case tNum:
+		return fmt.Errorf("unexpected %q in expression", t.v.s)
 	}
-	if t.k == tNum {
-		return t.v.s
-	}
-	return t.s
+	return fmt.Errorf("unexpected %q in expression", t.s)
 }
 
 func (p *exprParser) comma() (evalFn, error) {
@@ -597,5 +597,5 @@ func (p *exprParser) primary() (evalFn, error) {
 			return f, nil
 		}
 	}
-	return nil, fmt.Errorf("unexpected %q in expression", tokText(t))
+	return nil, unexpected(t)
 }
