@@ -6,15 +6,15 @@ import "strings"
 // (CONNECT DISCONNECT CONFAIL LOGIN WORLD SEND PROMPT ACTIVITY BGTEXT BGTRIG
 // LOAD REDEF RESIZE GMCP); the rest may be defined but only fire if the
 // engine calls FireHook with them.
-var hookNames = map[string]bool{}
-
-func init() {
+var hookNames = func() map[string]bool {
+	m := map[string]bool{}
 	for _, h := range strings.Fields(`ACTIVITY ATCP BAMF BGTEXT BGTRIG CONFAIL CONFLICT CONNECT DISCONNECT
 		GMCP ICONFAIL KILL LOAD LOADFAIL LOG LOGIN MAIL MORE NOMACRO OPTION102 PENDING PREACTIVITY
 		PROCESS PROMPT PROXY REDEF RESIZE SEND SHADOW SHELL SIGHUP SIGTERM SIGUSR1 SIGUSR2 WORLD`) {
-		hookNames[h] = true
+		m[h] = true
 	}
-}
+	return m
+}()
 
 func isHook(name string) bool { return hookNames[strings.ToUpper(name)] }
 

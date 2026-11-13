@@ -210,8 +210,13 @@ func (i *Interp) cmdLoad(a string, once bool) error {
 		i.fireHook(i.curWorld(), "LOADFAIL", f)
 		return fmt.Errorf("/load: %w", err)
 	}
+	if i.loadDep >= 16 {
+		return fmt.Errorf("/load: files nested too deeply")
+	}
 	i.loaded[f] = true
+	i.loadDep++
 	err = i.loadSource(f, string(data))
+	i.loadDep--
 	i.fireHook(i.curWorld(), "LOAD", f)
 	return err
 }

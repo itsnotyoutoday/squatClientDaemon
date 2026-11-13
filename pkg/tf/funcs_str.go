@@ -164,7 +164,7 @@ func (i *Interp) initStringFuncs() {
 		return S(string(rune(n))), nil
 	})
 	i.def("regmatch", 2, 2, func(i *Interp, a []Value) (Value, error) {
-		re, err := compileRe(a[0].s)
+		re, err := i.compileRe(a[0].s)
 		if err != nil {
 			return Value{}, fmt.Errorf("regmatch(): %v", err)
 		}

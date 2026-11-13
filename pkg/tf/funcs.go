@@ -59,19 +59,17 @@ func (i *Interp) callFunc(name string, args []Value) (Value, error) {
 	return Value{}, fmt.Errorf("unknown function %s()", name)
 }
 
-var reCache = map[string]*regexp.Regexp{}
-
-func compileRe(p string) (*regexp.Regexp, error) {
-	if re, ok := reCache[p]; ok {
+func (i *Interp) compileRe(p string) (*regexp.Regexp, error) {
+	if re, ok := i.reCache[p]; ok {
 		return re, nil
 	}
 	re, err := regexp.Compile(p)
 	if err != nil {
 		return nil, err
 	}
-	if len(reCache) > 256 {
-		reCache = map[string]*regexp.Regexp{}
+	if len(i.reCache) > 256 {
+		i.reCache = map[string]*regexp.Regexp{}
 	}
-	reCache[p] = re
+	i.reCache[p] = re
 	return re, nil
 }

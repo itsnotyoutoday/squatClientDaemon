@@ -585,3 +585,23 @@ func TestListNames(t *testing.T) {
 		t.Errorf("commands=%d funcs=%d hooks=%d", len(CommandNames()), len(FuncNames()), len(HookNames()))
 	}
 }
+
+func TestSelfLoadIsBounded(t *testing.T) {
+	i, h := newTest()
+	h.files["self.tf"] = "/load self.tf\n"
+	_ = i.Exec("w", "/load self.tf")
+	if !strings.Contains(h.dump(), "nested too deeply") {
+		t.Errorf("recursive /load not bounded: %.200s", h.dump())
+	}
+}
+
+func TestSubVariableExpandsTypedText(t *testing.T) {
+	i, h := newTest()
+	_ = i.Exec("w", "/set who=Bob")
+	_ = i.Exec("w", "hi %who")
+	_ = i.Exec("w", "/set sub=on")
+	_ = i.Exec("w", "hi %who")
+	if got := h.dump(); got != "send w: hi %who\nsend w: hi Bob" {
+		t.Errorf("%q", got)
+	}
+}

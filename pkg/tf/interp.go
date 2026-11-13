@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,8 @@ type Interp struct {
 	timers   map[int]*timerRec
 	nextTmr  int
 	exprs    map[string]evalFn
+	reCache  map[string]*regexp.Regexp
+	loadDep  int
 
 	frames   []*frame
 	runDepth int
@@ -105,6 +108,7 @@ func New(host Host, opts Options) *Interp {
 		loaded:    map[string]bool{},
 		timers:    map[int]*timerRec{},
 		exprs:     map[string]evalFn{},
+		reCache:   map[string]*regexp.Regexp{},
 		live:      true,
 		lastInput: map[string]time.Time{},
 		lastSend:  map[string]time.Time{},
