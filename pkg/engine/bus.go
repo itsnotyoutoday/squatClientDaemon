@@ -21,6 +21,10 @@ const (
 	EvForeground                          // Session: the foreground session changed
 	EvReset                               // Session: view filter changed, refetch scrollback
 	EvQuit                                // a script asked to quit
+	EvSquatter                            // Squatter (status-type: coalesced per squatter)
+	EvSuspend                             // Suspended: squatter sessions were detached / resumed
+	EvWindow                              // Text: "minimise" (a /suspend asked the app to hide its window)
+	EvAway                                // Away: "While you were away" summary after (re)attaching
 )
 
 // Notice levels.
@@ -46,7 +50,11 @@ type Event struct {
 	Info    *SessionInfo
 	Fields  []StatusField
 	Level   string // EvNotice
-	Text    string // EvNotice
+	Text    string // EvNotice, EvWindow
+
+	Squatter  *SquatterInfo // EvSquatter
+	Suspended bool          // EvSuspend
+	Away      []AwayItem    // EvAway
 }
 
 func (e Event) coalesceKey() (string, bool) {
@@ -55,6 +63,10 @@ func (e Event) coalesceKey() (string, bool) {
 		return "s:" + e.Session, true
 	case EvStatus:
 		return "t:" + e.Session, true
+	case EvSquatter:
+		if e.Squatter != nil {
+			return "q:" + e.Squatter.ID, true
+		}
 	}
 	return "", false
 }

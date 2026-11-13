@@ -20,11 +20,11 @@ import (
 // Transport is what a session needs from a connection. *conn.Conn implements
 // it (direct mode).
 //
-// TODO(remote): a RemoteSession over pkg/wire's SWP client implements this
-// interface (mapping attach/replay frames to conn.Event values, replayed
-// history flagged so it never re-runs side effects) and is plugged in through
-// Options.Dialer; nothing else in the engine depends on *conn.Conn. Not done
-// here because pkg/wire is unfinished.
+// Remote sessions (held by a squatterd, see remote.go and squatter.go) use a
+// small Transport implementation for the control calls only (Send, Resize,
+// Close = ask the daemon to end the game connection); their output does not
+// flow through Events: the squatter's wire event loop feeds the session
+// directly so replayed history can be flagged live=false.
 type Transport interface {
 	Events() <-chan conn.Event
 	Send(text string) error
@@ -65,6 +65,9 @@ type session struct {
 	limit       *regexp.Regexp
 	storeClosed bool
 	started     bool
+
+	remote   *remoteState // non-nil for sessions held by a squatter
+	noUnread bool         // appendLocked: do not count the next game line as unread
 }
 
 func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login string) (*session, error) {
@@ -151,7 +154,11 @@ func (s *session) snapshotLocked() SessionInfo {
 	in := s.info
 	in.FirstSeq, in.LastSeq = s.store.Bounds()
 	in.Unread = uint64(len(s.unread))
-	return SessionInfo{SessionInfo: in, WorldID: s.world.ID, Via: "direct"}
+	si := SessionInfo{SessionInfo: in, WorldID: s.world.ID, Via: "direct"}
+	if s.remote != nil {
+		si.Via, si.Link = s.remote.sq.id, s.remote.link
+	}
+	return si
 }
 
 func (s *session) publishInfoLocked() {
@@ -276,7 +283,7 @@ func (s *session) onEnded(ev conn.Event) {
 // ---- output ------------------------------------------------------------
 
 // appendLocked stores a line, publishes it and updates counters. s.mu held.
-func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts int64) {
+func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts int64) uint64 {
 	if spans == nil {
 		spans = []proto.Span{}
 	}
@@ -287,10 +294,10 @@ func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts 
 	seq, err := s.store.Append(scrollback.LineEntry(l))
 	if err != nil {
 		s.e.log.Warn("scrollback append failed", "session", s.id, "err", err)
-		return
+		return 0
 	}
 	l.Seq = seq
-	if kind == proto.KindGame && !prompt {
+	if kind == proto.KindGame && !prompt && !s.noUnread {
 		s.unread = append(s.unread, seq)
 		if over := len(s.unread) - s.e.opts.RingSize; over > 0 {
 			s.unread = append(s.unread[:0], s.unread[over:]...)
@@ -303,6 +310,7 @@ func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts 
 		s.e.bus.publish(Event{Kind: EvLine, Session: s.id, Line: &l})
 	}
 	s.publishInfoLocked()
+	return seq
 }
 
 // addLine adds a locally generated line; while the session's own line is
@@ -335,6 +343,10 @@ func (s *session) sendText(text string, echo bool) error {
 	case proto.StateConnecting:
 		return conn.ErrNotConnected
 	}
+	if s.remote != nil {
+		// the daemon echoes what it is sent (to every attached client), so no local echo
+		return s.remote.send(s, text)
+	}
 	if echo && le && !s.tr.RemoteEcho() {
 		s.addLine(proto.KindEcho, []proto.Span{{S: text}})
 	}
@@ -347,6 +359,9 @@ func (s *session) setSize(cols, rows int) {
 	}
 	s.mu.Lock()
 	s.cols, s.rows = cols, rows
+	if s.remote != nil {
+		s.remote.sized = true
+	}
 	s.mu.Unlock()
 	s.tr.Resize(cols, rows)
 }

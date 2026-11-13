@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,15 @@ func (e *Engine) Input(id, text string) error {
 			}
 		case "reload":
 			e.Reload()
+			return nil
+		case "suspend", "detach":
+			// owner decision 17: detach squatter sessions, minimise the window.
+			// Handled here, before TF (which only accepts /suspend as a no-op).
+			if n := e.Suspend(); n > 0 {
+				s.systemLine(fmt.Sprintf("*** Suspended: detached from %d squatter session(s). They keep running; Resume re-attaches.", n))
+			} else {
+				s.systemLine("*** Suspended: no squatter sessions to detach (direct connections stay live); the window was minimised.")
+			}
 			return nil
 		}
 		_ = e.tf.Exec(s.tfName, text)

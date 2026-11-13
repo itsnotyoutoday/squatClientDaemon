@@ -10,9 +10,10 @@
 //	info, err := e.Dial(engine.World{Name: "m", Host: "mush.example", Port: 4201}, "")
 //	e.Input(info.ID, "look")          // "/cmd" -> TF, "/lua code" -> Lua, text -> world
 //
-// Sessions run in direct mode: pkg/conn dials the game. A RemoteSession over
-// the squatterd SWP client is a documented TODO (see Transport in session.go):
-// nothing outside session.go depends on the transport being a *conn.Conn.
+// Sessions are direct (pkg/conn dials the game) or held by a squatterd
+// (World.Via = a squatter added with AddSquatter; see squatter.go and
+// docs/ENGINE.md "Remote sessions"). Replayed history from a squatter runs the
+// pipeline with live=false; the engine never reconnects a squatter by itself.
 //
 // # Pipeline (docs/AUTOMATION.md)
 //

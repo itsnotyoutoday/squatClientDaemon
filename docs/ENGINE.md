@@ -19,7 +19,7 @@ e.Restyle(id, line)                    // display effects only (live=false), for
 e.Sessions(); e.Session(id); e.SetCaps(caps); e.Reload()
 ```
 
-`engine.SessionInfo` = `proto.SessionInfo` + `worldId` + `via:"direct"`. Defaults: caps `proto.DefaultCaps()`
+`engine.SessionInfo` = `proto.SessionInfo` + `worldId` + `via:"direct"|<squatterId>` + `link` (squatter sessions). Defaults: caps `proto.DefaultCaps()`
 (truecolor + UTF-8), 20000 lines of in-memory scrollback per session (`Options.SessionLogDir` adds an ndjson log).
 
 ## Pipeline
@@ -68,13 +68,70 @@ Never dropped or reordered: line, gmcp, notice, bell, session-removed, foregroun
 Coalesced (latest wins, in place): session-info updates and status fields. A subscriber more than
 `Options.MaxQueue` (100000) events behind is closed and must resync via `Sessions()`/`Scrollback()`.
 
-## Transport seam / TODO: RemoteSession
+## Transport seam
 
-Sessions talk to a `Transport` (`Events() <-chan conn.Event`, `Send`, `Resize`, `SetCaps`, `RemoteEcho`, `Close`);
-`*conn.Conn` is the direct implementation, selected by `Options.Dialer`. TODO: a `RemoteSession` over the pkg/wire
-client implements `Transport` (attach/replay frames -> conn events; replayed history must be shown through
-`Restyle`-style `live=false` handling, never live processing). Not done: pkg/wire is unfinished.
+Direct sessions talk to a `Transport` (`Events() <-chan conn.Event`, `Send`, `Resize`, `SetCaps`, `RemoteEcho`, `Close`);
+`*conn.Conn` is the implementation, selected by `Options.Dialer`. Remote (squatter) sessions use the same interface for
+control calls only; their output is pushed by the squatter's wire event loop (see below) because replayed lines need a
+`live` flag that `conn.Event` does not have.
+
+## Remote sessions (squatterd)
+
+squatterd is OPTIONAL. Direct connections are unchanged. A `World{Via: "<squatterId>"}` makes `Dial` ask the daemon to open the
+game connection (`session.connect`); the daemon then owns it, it survives the app closing, and re-attaching replays what was missed.
+
+```go
+e.AddSquatter(engine.SquatterConfig{ID: "home", Name: "Home", Host: "h", Port: 10327, Key: devKey, DeviceName: "laptop",
+        Fingerprint: pinned, PairCode: code /* first connect only */})
+fp, err := engine.ProbeSquatter(ctx, host, port)  // TLS handshake only, NO pairing code sent: show fp, user confirms (TOFU)
+e.ConnectSquatter(ctx, "home")      // dial, auth, mirror ALL daemon sessions, attach each with since=<last seq held>
+e.DisconnectSquatter(id)            // on purpose: sessions "detached", daemon keeps them
+e.ReconnectSquatter(ctx, id)        // explicit user action; the engine NEVER reconnects by itself
+e.RemoveSquatter(id)                // forget it + its mirrored sessions locally (daemon untouched)
+e.Squatters(); e.SquatterStatus(id) // SquatterInfo{state, problem, message, fingerprint, deviceId, sessions, suspended}
+e.Dial(World{Via: "home", ...}, password)  // blocks for the daemon reply (<=20 s)
+e.SuspendSquatters(); e.ResumeSquatters(ctx); e.Suspend(); e.Suspended(); e.Away()
+```
+
+* **Ids.** Mirrored sessions are `<squatterId>:<daemonSessionId>` (squatter ids contain no `:`); `SessionInfo.Via` = squatter id,
+  `SessionInfo.Link` = `attached | detached | unreachable`. `engine.SessionInfo.Link` is empty for direct sessions.
+  Local scrollback seqs are the engine's own; the daemon seq of every stored line is remembered to implement `since` and `ack`.
+* **Pipeline.** Backlog frames run the pipeline with `live=false` (gag/hilite only, never sends, notify or trigger functions);
+  live entries run with `live=true`. Entries are de-duplicated by daemon seq (also across re-attaches). Daemon `echo`/`system` lines
+  are stored as received (no pipeline, no second local echo). GMCP entries are delivered live only. A `gap` in `attached` becomes a system line.
+* **Input.** `/...` (TF/Lua) runs locally; text goes through `wire.Client.Send`; the daemon echoes it. While `remoteEcho` is on the daemon masks the echo.
+* **Login.** The login template is executed by the engine through `send` once the daemon reports `connected` (after `Login.Delay`).
+  The password is a `Dial` argument, dropped after sending; neither engine nor daemon stores it.
+  **KNOWN LEAK (daemon, needs a `send` option such as `noEcho`):** the daemon records an echo line for every `send`, and it only masks the
+  echo while the game has `WILL ECHO` set. A login line such as `connect bob s3cret` is therefore echoed in clear into the daemon's scrollback / log
+  and replayed to every attached client. Mitigation until fixed: games that use `connect name pw` expose the password in the squatter's history.
+* **Caps / resize.** Caps are sent in `hello` and on `SetCaps` (wire `caps`); `Resize` becomes `resize` (NAWS) and is re-sent after a re-attach.
+* **Ack.** `Ack(id, seq)` maps the local seq back to the daemon seq and sends `ack` (best effort). Unread for replayed lines counts only lines newer than the device's ack.
+* **Failure handling.** `SquatterInfo.State`: `idle | connecting | connected | disconnected | unreachable | refused`. `refused` + `Problem`:
+  `fingerprint_mismatch` (hard refuse, the pairing code is never sent to an impostor) or `auth_failed` (unpaired / revoked / expired code).
+  A lost connection marks sessions `unreachable` (a system line says so), emits `EvSquatter` + `EvNotice`, and stays that way until `ReconnectSquatter`.
+  A revoked device is noticed at the next connect (daemon note 24). Sessions the daemon no longer has are dropped locally on reconnect.
+* **Ended sessions** are just ended: `State=ended`, `EndReason`, `EndDetail`, `LastText` come from the daemon; `Disconnect` asks the daemon to end the game
+  connection (`client_quit`), `Dismiss` ends if needed and removes it on the daemon.
+* **Engine.Close** only closes the squatter connections (detach); it never disconnects daemon-held sessions.
+* **Away summary.** After an attach round (all final backlog frames, or an 8 s fallback) `EvAway{Away: []AwayItem}` lists squatter sessions with unread output
+  (and ended sessions whose end this device has not acknowledged): `unread`, `ended`, `endReason`, `endedAt`, `lastText`. `Away()` computes it on demand.
+
+### /suspend and /detach (owner decision 17)
+
+Handled in `Engine.Input` before TF (`/suspend`, `/detach`): `Suspend()` detaches every attached squatter session (the daemon keeps running and recording),
+sets `Suspended()`, emits `EvSuspend{Suspended:true}` and always emits `EvWindow{Text:"minimise"}` (the app minimises/hides its window).
+Direct sessions stay live; with only direct sessions nothing is suspended (no `EvSuspend`). `ResumeSquatters(ctx)` re-attaches with `since`
+(reconnecting a squatter whose connection is down: an explicit user action), replays with `live=false` and emits `EvAway`.
+Not wired: a TF macro body calling `/suspend` (pkg/tf registers `/suspend` as an accepted no-op; TODO in pkg/tf: route it through a Host hook), Lua `squat.suspend`.
+
+### Events added
+
+`EvSquatter` (SquatterInfo, coalesced per squatter), `EvSuspend`, `EvWindow`, `EvAway`.
 
 ## Tests
 
-`go test -race ./pkg/engine/...` (fakemush). Live: `SQUAT_LIVE=1 go test -run TestLiveStarTrekKin -v ./pkg/engine/`.
+`go test -race ./pkg/engine/...` (fakemush; the remote tests run a REAL in-process squatterd: `internal/daemon` + wire server over TLS,
+`squatter_env_test.go`). Live direct: `SQUAT_LIVE=1 go test -run TestLiveStarTrekKin -v ./pkg/engine/`.
+Live via a real `squatterd` binary (`squatter_live_test.go`): start `./squatterd serve --data-dir D --port P --bind 127.0.0.1`, `./squatterd pair --data-dir D`, then
+`SQUAT_LIVE=1 SQUAT_LIVE_SQUATTER=127.0.0.1:P SQUAT_LIVE_PAIRCODE=<code> go test -run TestLiveSquatterStarTrekKin -v ./pkg/engine/`.

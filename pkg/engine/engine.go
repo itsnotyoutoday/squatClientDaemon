@@ -44,13 +44,20 @@ type World struct {
 	TLSVerify string // "strict" (default) | "insecure"
 	Encoding  string // "utf-8" (default) | "latin1"
 	Login     *Login
+	// Via is "" or "direct" for a direct connection, or the id of a squatter
+	// added with AddSquatter: the daemon then holds the game connection.
+	Via string
 }
 
 // SessionInfo is proto.SessionInfo plus the engine-side extras the UI needs.
 type SessionInfo struct {
 	proto.SessionInfo
 	WorldID string `json:"worldId,omitempty"`
-	Via     string `json:"via"` // "direct"
+	Via     string `json:"via"` // "direct" or the squatter id
+	// Link is only set for squatter sessions: "attached" (live), "detached"
+	// (suspended or the squatter connection was closed on purpose) or
+	// "unreachable" (the squatter connection was lost or never established).
+	Link string `json:"link,omitempty"`
 }
 
 // Options configures an Engine. The zero value is usable.
@@ -112,6 +119,9 @@ type Engine struct {
 	timers   map[*time.Timer]struct{}
 	caps     proto.Caps
 	closed   bool
+
+	squatters map[string]*squatter
+	suspended bool
 }
 
 // New creates an Engine. It performs no I/O; call LoadScripts to load the
@@ -149,6 +159,7 @@ func New(o Options) *Engine {
 	e := &Engine{
 		opts: o, log: o.Logger, bus: newBus(o.MaxQueue),
 		sessions: map[string]*session{}, timers: map[*time.Timer]struct{}{}, caps: o.Caps,
+		squatters: map[string]*squatter{},
 	}
 	e.ctx, e.cancel = context.WithCancel(context.Background())
 	topts := o.TF
@@ -186,8 +197,17 @@ func (e *Engine) Close() {
 		t.Stop()
 	}
 	e.timers = map[*time.Timer]struct{}{}
+	sqs := make([]*squatter, 0, len(e.squatters))
+	for _, q := range e.squatters {
+		sqs = append(sqs, q)
+	}
 	e.mu.Unlock()
 	e.cancel()
+	// squatter connections are only closed (detached): the daemon keeps the
+	// sessions running; shutdown() below is a no-op for them.
+	for _, q := range sqs {
+		q.shutdown()
+	}
 	for _, s := range ss {
 		s.shutdown()
 		s.closeStore()
@@ -338,6 +358,9 @@ func (e *Engine) Dial(w World, password string) (SessionInfo, error) {
 	if w.Name == "" {
 		w.Name = fmt.Sprintf("%s:%d", w.Host, w.Port)
 	}
+	if w.Via != "" && w.Via != "direct" {
+		return e.dialVia(w, password)
+	}
 	cfg := conn.Config{
 		World: proto.World{Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
 			TLSVerify: orDefault(w.TLSVerify, "strict"), Encoding: orDefault(w.Encoding, "utf-8")},
@@ -424,6 +447,9 @@ func (e *Engine) Dismiss(id string) error {
 	if s == nil {
 		return ErrNoSession
 	}
+	if s.remote != nil {
+		return e.dismissRemote(s)
+	}
 	s.shutdown()
 	e.remove(s)
 	return nil
@@ -473,9 +499,18 @@ func (e *Engine) SetCaps(c proto.Caps) {
 	for _, s := range e.sessions {
 		ss = append(ss, s)
 	}
+	sqs := make([]*squatter, 0, len(e.squatters))
+	for _, q := range e.squatters {
+		sqs = append(sqs, q)
+	}
 	e.mu.Unlock()
 	for _, s := range ss {
-		s.tr.SetCaps(c)
+		if s.remote == nil {
+			s.tr.SetCaps(c)
+		}
+	}
+	for _, q := range sqs {
+		q.setCaps(c)
 	}
 }
 

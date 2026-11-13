@@ -103,16 +103,22 @@ func (e *Engine) Ack(id string, seq uint64) error {
 		return ErrNoSession
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	n := 0
 	for n < len(s.unread) && s.unread[n] <= seq {
 		n++
 	}
-	if n == 0 {
-		return nil
+	var rseq uint64
+	if n > 0 {
+		s.unread = append(s.unread[:0], s.unread[n:]...)
+		s.publishInfoLocked()
+		if s.remote != nil {
+			rseq = s.remote.remoteFor(seq)
+		}
 	}
-	s.unread = append(s.unread[:0], s.unread[n:]...)
-	s.publishInfoLocked()
+	s.mu.Unlock()
+	if rseq > 0 {
+		s.remote.ack(s, rseq) // tell the daemon (best effort)
+	}
 	return nil
 }
 
