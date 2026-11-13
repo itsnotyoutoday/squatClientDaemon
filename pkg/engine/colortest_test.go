@@ -23,6 +23,8 @@ func TestColorTestCommandShowsEveryColourMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitLine(t, si.ID, "Colour test")
+	// the lines arrive one by one: wait for the last one before reading them all
+	r.waitLine(t, si.ID, "日本語")
 	var all strings.Builder
 	for _, l := range r.lines(si.ID) {
 		b, _ := json.Marshal(l.Spans)
