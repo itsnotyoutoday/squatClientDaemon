@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal pkg scripts)"
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+      - name: test (race)
+        run: go test -race -count=1 ./...
+      - name: fuzz smoke
+        run: go test ./pkg/wire -run '^$' -fuzz FuzzDecodeClient -fuzztime 20s
+      - name: static build
+        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/squatterd
