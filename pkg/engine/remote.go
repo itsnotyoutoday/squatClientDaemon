@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
@@ -131,12 +132,22 @@ func (r *remoteState) remoteFor(seq uint64) uint64 {
 // pipeline, exactly like local echo/system lines in direct mode.
 func (s *session) ingestLine(l proto.Line, live bool) {
 	if l.Kind != proto.KindGame {
+		if l.Kind == proto.KindEcho && s.cap.dropEcho(l.Plain()) {
+			return // echo of an internal Capture send (daemon without noEcho)
+		}
 		s.mu.Lock()
 		s.appendRemoteLocked(l.Kind, l.Spans, l.Prompt, l.Ts, l.Seq)
 		s.mu.Unlock()
 		return
 	}
 	line := proto.Line{V: proto.Version, T: proto.TLine, Session: s.id, Ts: l.Ts, Kind: proto.KindGame, Spans: l.Spans, Prompt: l.Prompt}
+	if live {
+		if s.cap.offer(line) {
+			return // diverted by Capture
+		}
+	} else if !l.Prompt && strings.HasPrefix(line.Plain(), capPrefix) {
+		return // replayed output of an earlier Capture
+	}
 	s.mu.Lock()
 	s.collecting = true
 	s.mu.Unlock()
@@ -178,6 +189,7 @@ func (s *session) applyRemoteInfo(in proto.SessionInfo) {
 	prev := s.info.State
 	s.info.State, s.info.StartedAt, s.info.RemoteEcho, s.info.Attached = in.State, in.StartedAt, in.RemoteEcho, in.Attached
 	if in.State == proto.StateEnded {
+		s.cap.abort()
 		s.info.EndedAt, s.info.EndReason, s.info.EndDetail, s.info.LastText = in.EndedAt, in.EndReason, in.EndDetail, in.LastText
 		s.info.RemoteEcho = false
 		if s.loginCancel != nil {

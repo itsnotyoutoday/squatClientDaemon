@@ -66,6 +66,7 @@ type session struct {
 	storeClosed bool
 	started     bool
 
+	cap      capState     // Capture machinery (capture.go)
 	remote   *remoteState // non-nil for sessions held by a squatter
 	noUnread bool         // appendLocked: do not count the next game line as unread
 }
@@ -115,6 +116,7 @@ func (s *session) shutdown() {
 		s.loginCancel()
 	}
 	s.mu.Unlock()
+	s.cap.abort()
 	if started {
 		s.tr.Close()
 		<-s.done
@@ -197,6 +199,9 @@ func (s *session) onLine(spans []proto.Span, prompt bool) {
 	}
 	line := proto.Line{V: proto.Version, T: proto.TLine, Session: s.id, Ts: s.e.now().UnixMilli(),
 		Kind: proto.KindGame, Spans: spans, Prompt: prompt}
+	if s.cap.offer(line) {
+		return // diverted by Capture: not shown, stored or trigger-processed
+	}
 	s.mu.Lock()
 	s.collecting = true
 	s.mu.Unlock()
@@ -256,6 +261,7 @@ func (s *session) onConnected() {
 }
 
 func (s *session) onEnded(ev conn.Event) {
+	s.cap.abort()
 	s.mu.Lock()
 	if s.loginCancel != nil {
 		s.loginCancel()

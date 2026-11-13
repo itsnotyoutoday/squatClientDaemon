@@ -135,3 +135,14 @@ Not wired: a TF macro body calling `/suspend` (pkg/tf registers `/suspend` as an
 `squatter_env_test.go`). Live direct: `SQUAT_LIVE=1 go test -run TestLiveStarTrekKin -v ./pkg/engine/`.
 Live via a real `squatterd` binary (`squatter_live_test.go`): start `./squatterd serve --data-dir D --port P --bind 127.0.0.1`, `./squatterd pair --data-dir D`, then
 `SQUAT_LIVE=1 SQUAT_LIVE_SQUATTER=127.0.0.1:P SQUAT_LIVE_PAIRCODE=<code> go test -run TestLiveSquatterStarTrekKin -v ./pkg/engine/`.
+
+## Capture and the object model (in-game editor support)
+
+`Engine.Capture(ctx, sid, commands, CaptureOpts)` sends `think SQUATCAP-<token>-BEGIN`, the commands, and `...-END`, and returns the game lines
+in between without displaying, storing or trigger-processing them (`Visible:true` shows them). Hook points: `session.onLine` (direct) and
+`session.ingestLine` (squatter, live lines) call `capState.offer` before the pipeline; `onEnded`/`applyRemoteInfo`/`shutdown` call `capState.abort`.
+One capture at a time per session (FIFO), `ErrCaptureTimeout` (default 5 s), `ErrCaptureSessionEnded`. Capture bypasses `Input` (no echo, no
+TF SEND hook, so an app never records the commands in history); over a squatter it uses `noEcho` sends.
+On top of it: `FetchObject`, `FetchAttr`, `ListAttrs`, `SaveAttr` (validated, no command injection, read-back verification), and
+`ExpandEscapes`/`CompressEscapes` (`%r`/`%t` <-> newline/tab, reversible). Full design, security notes and limits: `docs/EDIT.md`.
+Tests: `capture_test.go`, `mushobj_test.go` (scripted fake MUSH in `capture_sim_test.go`, direct and via the in-process squatterd).
