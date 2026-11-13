@@ -1,0 +1,18 @@
+[a] [4]
+[b] [3] [b c d]
+[d] [1] [d]
+[5] 5
+6
+%ERR
+[nm] [x]
+one
+two
+[nm] [y]
+[same]
+[zzz] [zzz] [d] []
+before
+%ERR
+after
+trailing
+[3]
+ORACLE_END
