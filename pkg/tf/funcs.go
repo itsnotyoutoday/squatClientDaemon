@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 type funcDef struct {
@@ -63,7 +64,7 @@ func (i *Interp) compileRe(p string) (*regexp.Regexp, error) {
 	if re, ok := i.reCache[p]; ok {
 		return re, nil
 	}
-	re, err := regexp.Compile(p)
+	re, err := compileTFRegexp(p)
 	if err != nil {
 		return nil, err
 	}
@@ -72,4 +73,15 @@ func (i *Interp) compileRe(p string) (*regexp.Regexp, error) {
 	}
 	i.reCache[p] = re
 	return re, nil
+}
+
+// compileTFRegexp compiles a pattern the way TinyFugue treats regexps: a
+// pattern containing no upper-case letter matches case-insensitively.
+func compileTFRegexp(p string) (*regexp.Regexp, error) {
+	for _, r := range p {
+		if unicode.IsUpper(r) {
+			return regexp.Compile(p)
+		}
+	}
+	return regexp.Compile("(?i)" + p)
 }

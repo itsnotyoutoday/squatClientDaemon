@@ -14,7 +14,10 @@ while time.time() < end:
     r, _, _ = select.select([fd], [], [], 0.1)
     if r:
         try:
-            if not os.read(fd, 65536):
+            d = os.read(fd, 65536)
+            if os.environ.get("TF_PTY_DUMP"):
+                open(os.environ["TF_PTY_DUMP"], "ab").write(d)
+            if not d:
                 break
         except OSError:
             break

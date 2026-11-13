@@ -1,0 +1,9 @@
+r1 [Bob says hello there] [Bob] [hello there] [Bob] [says] [4]
+r2 [abbbc] [xx] [yy]
+s1 [exact line]
+s2 [hay needle stack]
+r3 [UPPER]
+r4 [LOWER]
+r5 [xyz] [y] []
+r5 [xz] [] []
+ORACLE_END

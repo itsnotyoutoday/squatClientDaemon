@@ -13,6 +13,7 @@ import (
 const (
 	ModeGlob   = "glob"
 	ModeSimple = "simple"
+	ModeSubstr = "substr"
 	ModeRegexp = "regexp"
 )
 
@@ -150,7 +151,7 @@ func worldOK(m *Macro, world string) bool { return m.World == "" || m.World == w
 
 func (i *Interp) parseDef(args string) (*Macro, error) {
 	m := &Macro{Mode: i.getVarStr("matching")}
-	if m.Mode != ModeSimple && m.Mode != ModeRegexp {
+	if m.Mode != ModeSimple && m.Mode != ModeRegexp && m.Mode != ModeSubstr {
 		m.Mode = ModeGlob
 	}
 	rest := strings.TrimLeftFunc(args, unicode.IsSpace)
@@ -202,10 +203,10 @@ func (m *Macro) setOpt(c byte, v string) error {
 		m.Trigger = v
 	case 'm':
 		switch strings.ToLower(v) {
-		case ModeGlob, ModeSimple, ModeRegexp:
+		case ModeGlob, ModeSimple, ModeRegexp, ModeSubstr:
 			m.Mode = strings.ToLower(v)
 		default:
-			return fmt.Errorf("/def -m: unknown match mode %q (glob, simple, regexp)", v)
+			return fmt.Errorf("/def -m: unknown match mode %q (glob, simple, regexp, substr)", v)
 		}
 	case 'h':
 		name, pat := firstWord(v)
@@ -281,7 +282,7 @@ func (m *Macro) compile() error {
 	}
 	switch m.Mode {
 	case ModeRegexp:
-		re, err := regexp.Compile(m.Trigger)
+		re, err := compileTFRegexp(m.Trigger)
 		if err != nil {
 			return fmt.Errorf("/def: bad regexp %q: %v", m.Trigger, err)
 		}
@@ -322,9 +323,17 @@ func (m *Macro) match(text string) (*matchInfo, bool) {
 			mi.idx = append(mi.idx, c)
 		}
 		return mi, true
-	case m.Mode == ModeSimple:
-		if text != m.Trigger {
+	case m.Mode == ModeSimple || m.Mode == ModeSubstr:
+		if m.Mode == ModeSimple && text != m.Trigger {
 			return nil, false
+		}
+		if m.Mode == ModeSubstr {
+			k := strings.Index(text, m.Trigger)
+			if k < 0 {
+				return nil, false
+			}
+			return &matchInfo{text: text, start: k, end: k + len(m.Trigger), left: text[:k], right: text[k+len(m.Trigger):],
+				parts: []string{m.Trigger}, idx: [][2]int{{k, k + len(m.Trigger)}}}, true
 		}
 		return &matchInfo{text: text, end: len(text), parts: []string{text}, idx: [][2]int{{0, len(text)}}}, true
 	}

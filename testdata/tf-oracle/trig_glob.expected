@@ -1,0 +1,11 @@
+g1 [hello world] [hello] [world] [2]
+g2 [hello there big world] [hello] [there] [4]
+g3 [Bob tells you: hi there] [Bob] [tells] [you:] [hi] [5]
+g4 [abc]
+g5 [the end]
+g6 [foo baz]
+g6 [bar baz]
+g7 [upper]
+g2 [hello   world] [hello] [world] [2]
+g1 [Hello World] [Hello] [World] [2]
+ORACLE_END

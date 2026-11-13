@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +21,11 @@ func cases(args []string) []string {
 	return f
 }
 
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 func read(p string) string {
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -31,12 +37,19 @@ func read(p string) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: oracle gen CASE LOG | norm | ours CASE | diff [CASE...] | update [CASE...]")
+		fmt.Fprintln(os.Stderr, "usage: oracle gen CASE LOG PORT | norm | ours CASE | diff [CASE...] | update [CASE...]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "gen":
-		fmt.Print(GenScript(read(os.Args[2]), os.Args[3]))
+		fmt.Print(GenScript(read(os.Args[2]), os.Args[3], atoi(os.Args[4])))
+	case "sends":
+		for _, l := range Sends(read(os.Args[2])) {
+			fmt.Println(l)
+		}
+	case "normscreen":
+		b, _ := io.ReadAll(os.Stdin)
+		fmt.Print(NormScreen(string(b)))
 	case "norm":
 		b, _ := io.ReadAll(os.Stdin)
 		fmt.Print(NormTF(string(b)))

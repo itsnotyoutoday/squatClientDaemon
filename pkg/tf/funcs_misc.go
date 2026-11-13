@@ -39,6 +39,20 @@ func (i *Interp) initMiscFuncs() {
 		i.echoSpans(w, spans)
 		return I(1), nil
 	})
+	// fake_recv(text [, world]): process text as if received from the world:
+	// triggers run, and the line is displayed unless a trigger gags it.
+	i.def("fake_recv", 1, 3, func(i *Interp, a []Value) (Value, error) {
+		w := i.curWorld()
+		if len(a) > 1 && a[1].s != "" {
+			w = a[1].s
+		}
+		spans := []protoSpan{{S: a[0].s}}
+		lc := i.dispatch(w, a[0].s, spans, -1<<31, nil)
+		if !lc.gag {
+			i.echoSpans(w, lc.spans)
+		}
+		return I(1), nil
+	})
 	i.def("send", 1, 2, func(i *Interp, a []Value) (Value, error) {
 		if !i.live {
 			return I(0), nil

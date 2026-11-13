@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,7 +29,8 @@ import (
 
 // GenScript turns a case into the script both interpreters execute.
 // logPath, when non-empty, is where real tf logs its output.
-func GenScript(src, logPath string) string {
+func GenScript(src, logPath string, port int) string {
+	net := strings.Contains(src, ";@net")
 	var setup []string
 	var paras [][]string
 	var body []string
@@ -59,11 +61,27 @@ func GenScript(src, logPath string) string {
 	if logPath != "" {
 		sb.WriteString("/log -g " + logPath + "\n")
 	}
+	sb.WriteString("/echo ORACLE_BEGIN\n")
 	for _, l := range setup {
 		sb.WriteString(l + "\n")
 	}
+	var calls []string
 	for k, p := range paras {
-		fmt.Fprintf(&sb, "/def -i oracle_case%d = %s\n/oracle_case%d\n", k, strings.Join(p, " %; "), k)
+		fmt.Fprintf(&sb, "/def -i oracle_case%d = %s\n", k, strings.Join(p, " %; "))
+		calls = append(calls, fmt.Sprintf("/oracle_case%d", k))
+	}
+	if net {
+		// The cases run from the CONNECT hook of a world connected to a
+		// local dummy server, so fake_recv() has a socket to feed.
+		calls = append(calls, "/echo ORACLE_END", "/log off", "/quit")
+		fmt.Fprintf(&sb, "/def -i oracle_run = %s\n", strings.Join(calls, " %; "))
+		// let lines the dummy server sends on connect arrive before the cases
+		sb.WriteString("/def -i -hCONNECT oracle_go = /repeat -1 1 /oracle_run\n")
+		fmt.Fprintf(&sb, "/addworld ow 127.0.0.1 %d\n/connect ow\n", port)
+		return sb.String()
+	}
+	for _, c := range calls {
+		sb.WriteString(c + "\n")
 	}
 	sb.WriteString("/echo ORACLE_END\n")
 	if logPath != "" {
@@ -72,9 +90,52 @@ func GenScript(src, logPath string) string {
 	return sb.String()
 }
 
+// Sends returns the ";@send TEXT" lines of a case: what the dummy server
+// transmits when tf connects, and what RunOurs feeds through OnLine first.
+func Sends(src string) []string {
+	var out []string
+	for _, l := range strings.Split(src, "\n") {
+		if t, ok := strings.CutPrefix(l, ";@send "); ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// NormScreen extracts canonical output from a raw pty transcript of tf, for
+// ";@screen" cases whose point is what is DISPLAYED (tf logs gagged lines, so
+// the log cannot show a gag). Lines between ORACLE_BEGIN and ORACLE_END are
+// kept; carriage-return/clear-line noise is dropped.
+func NormScreen(raw string) string {
+	var out []string
+	on := false
+	for _, l := range strings.Split(raw, "\n") {
+		if k := strings.LastIndex(strings.TrimRight(l, "\r"), "\r"); k >= 0 {
+			l = strings.TrimRight(l, "\r")[k+1:]
+		}
+		l = strings.TrimRight(l, " \t\r")
+		switch {
+		case l == "ORACLE_BEGIN":
+			on = true
+		case !on:
+		case l == "ORACLE_END":
+			return strings.Join(out, "\n") + "\nORACLE_END\n"
+		case strings.HasPrefix(l, "% Trying to connect") || strings.HasPrefix(l, "% Connected to") || strings.HasPrefix(l, "% Visual mode") || strings.Contains(l, "Warning:"):
+		case l == "":
+			// the terminal repaints blank lines; blank echoes cannot be told apart
+		default:
+			out = append(out, canonLine(l))
+		}
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
 // canonLine normalises one output line: error/warning text is replaced by a
 // marker because the wording intentionally differs.
 func canonLine(l string) string {
+	if os.Getenv("ORACLE_RAWERR") != "" {
+		return l
+	}
 	l = strings.TrimRight(l, " \t\r")
 	if strings.HasPrefix(l, "% ") {
 		return "%ERR"
@@ -85,13 +146,18 @@ func canonLine(l string) string {
 var tsRe = regexp.MustCompile(`^\d\d:\d\d:\d\d # `)
 
 // NormTF converts real tf's log (with timestamps) to canonical output.
-// Warning lines are dropped (tf warns about style, we do not).
+// Warning lines and connection progress are dropped (tf warns about style,
+// we do not; ours has no socket).
 func NormTF(log string) string {
 	var out []string
 	for _, l := range strings.Split(strings.TrimRight(log, "\n"), "\n") {
 		l = tsRe.ReplaceAllString(l, "")
 		l = strings.TrimRight(l, " \t\r")
-		if strings.HasPrefix(l, "% ") && strings.Contains(l, "Warning:") {
+		if l == "ORACLE_BEGIN" {
+			continue
+		}
+		if strings.HasPrefix(l, "% ") && (strings.Contains(l, "Warning:") ||
+			strings.HasPrefix(l, "% Trying to connect") || strings.HasPrefix(l, "% Connected to")) {
 			continue
 		}
 		out = append(out, canonLine(l))
@@ -102,9 +168,10 @@ func NormTF(log string) string {
 // oracleHost records echoed text.
 type oracleHost struct {
 	tf.NopHost
+	world  string
+	timers []func()
 	out    []string
 	now    time.Time
-	timers []func()
 }
 
 func (h *oracleHost) Echo(w string, spans []proto.Span) {
@@ -118,8 +185,11 @@ func (h *oracleHost) Echo(w string, spans []proto.Span) {
 	}
 }
 func (h *oracleHost) SendToWorld(w, t string) error { return errors.New("Not connected.") }
+func (h *oracleHost) AddWorld(tf.WorldInfo) error   { return nil }
+func (h *oracleHost) Connect(string) error          { return nil }
 func (h *oracleHost) Now() time.Time                { return h.now }
 func (h *oracleHost) Schedule(d time.Duration, fn func()) func() {
+	h.timers = append(h.timers, fn)
 	return func() {}
 }
 func (h *oracleHost) ForegroundWorld() string        { return "main" }
@@ -127,10 +197,29 @@ func (h *oracleHost) Log(string, bool, string) error { return nil }
 
 // RunOurs runs the case through pkg/tf and returns canonical output.
 func RunOurs(src string) string {
-	h := &oracleHost{now: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}
+	h := &oracleHost{world: "main", now: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}
 	i := tf.New(h, tf.Options{Rand: func(n int64) int64 { return 0 }})
-	_ = i.LoadString("oracle.tf", GenScript(src, ""))
-	return strings.Join(h.out, "\n") + "\n"
+	_ = i.LoadString("oracle.tf", GenScript(src, "", 0))
+	if strings.Contains(src, ";@net") {
+		h.world = "ow"
+		for _, t := range Sends(src) {
+			res := i.OnLine("ow", proto.Line{Kind: proto.KindGame, Spans: []proto.Span{{S: t}}}, true)
+			if !res.Gag {
+				h.Echo("ow", res.Spans)
+			}
+		}
+		i.FireHookWorld("ow", "CONNECT")
+		for len(h.timers) > 0 { // the delayed run of the cases
+			fn := h.timers[0]
+			h.timers = h.timers[1:]
+			fn()
+		}
+	}
+	out := h.out
+	if len(out) > 0 && out[0] == "ORACLE_BEGIN" {
+		out = out[1:]
+	}
+	return strings.Join(out, "\n") + "\n"
 }
 
 // Diff returns a line diff summary of want (real tf) vs got (ours), "" if equal.
