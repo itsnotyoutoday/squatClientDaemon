@@ -1,0 +1,25 @@
+echo main: biggest: 9 9
+echo main: 1 
+echo main: 2 
+echo main: 3 
+## hook main CONNECT main
+hook fired=true
+## advance 300s
+send main: IDLE
+## advance 300s
+send main: IDLE
+## advance 300s
+## line main Zed tells you: hi there
+notify: Tell from Zed | hi there
+line main gag=false fired=[tell]: <fg=10,b>Zed</> tells you: hi there
+## line main [Spam] buy now
+line main gag=true fired=[spam]: [Spam] buy now
+## line other [Spam] buy now
+line other gag=false fired=[]: [Spam] buy now
+## line main the orc is dead.
+line main gag=false fired=[]: the orc is dead.
+## line main the orc is dead.
+send main: get all from corpse
+line main gag=false fired=[loot]: the orc is dead.
+## line main *ALERT* now
+line main gag=false fired=[alert]: <fg=#ffe0e0,bg=#400000,b>*ALERT* now</>

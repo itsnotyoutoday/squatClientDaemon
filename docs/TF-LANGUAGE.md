@@ -338,7 +338,7 @@ consumed and no variable is changed; only gag and highlight are computed.
 /def -mregexp -t'^(\w+) tells you: (.*)$' -P1Cbrightgreen,h tell = \
     /notify Tell from %P1 | %P2
 ; gag spam, but only from one world
-/def -wmain -t'[Spam]*' -g spam
+/def -wmain -t'\[Spam\]*' -g spam
 ; auto-loot with a condition and a 50% chance
 /def -t'* is dead.' -E'looting' -c50 loot = get all from corpse
 ; 256 and truecolour
