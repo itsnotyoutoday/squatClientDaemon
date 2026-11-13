@@ -60,6 +60,8 @@ var GameKinds = func() []GameKind {
 		{Type: "lambdamoo", Family: "moo", Name: "MOO (LambdaMOO, ToastStunt)", Banner: `\b(lambda\s?(moo|core)|toast\s?stunt|stunt\s?moo)\b`},
 		{Type: "evennia", Family: "evennia", Name: "Evennia", Banner: `\bevennia\b`},
 		{Type: "muck", Family: "muck", Name: "MUCK (Fuzzball, TinyMUCK)", Banner: `\b(fuzzball|tiny\s?muck|tiny\s?mud)\b`},
+		{Type: "tinymuse", Family: "muse", Name: "TinyMUSE (MicroMUSE, PernMUSE...)", Banner: `\b(tiny\s?muse|micro\s?muse|pern\s?muse|muse\s+(version|\d))`},
+		{Type: "coldmud", Family: "cold", Name: "ColdMUD", Banner: `\bcold\s?(mud|c)\b`},
 		{Type: "coffeemud", Family: "coffeemud", Name: "CoffeeMUD", Banner: `\bcoffee\s?mud\b`},
 		{Type: "ironrealms", Family: "ironrealms", Name: "Iron Realms (Achaea, Aetolia...)", Banner: `\biron\s+realms\b`},
 		{Type: "custom", Family: "custom", Name: "Other MUD (not listed)"},

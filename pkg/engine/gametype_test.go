@@ -41,6 +41,8 @@ func TestSniffOtherMuds(t *testing.T) {
 		{"This game is powered by Evennia.", "evennia", "evennia"},
 		{"*** LambdaMOO ***", "lambdamoo", "moo"},
 		{"Running on FluffOS v2019", "lpmud", "lp"},
+		{"Welcome to MicroMUSE", "tinymuse", "muse"},
+		{"TinyMUSE version 2.2", "tinymuse", "muse"},
 		{"CoffeeMUD v5.10", "coffeemud", "coffeemud"},
 		{"Welcome to the world of Achaea, Dreams of Divine Lands (Iron Realms Entertainment)", "ironrealms", "ironrealms"},
 		{"SMAUG 1.8 Copyright", "smaug", "diku"},
