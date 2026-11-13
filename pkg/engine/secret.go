@@ -38,3 +38,10 @@ func secretLine(text string) (masked string, ok bool) {
 	}
 	return strings.Join(lines, "\n"), true
 }
+
+// MaskSecret is the exported form of secretLine for front ends that persist
+// typed input (e.g. command history). secret reports whether any line of text
+// carries a password; masked is text with the secret parts replaced by
+// "********" (equal to text when secret is false). Callers that persist input
+// should drop lines for which secret is true.
+func MaskSecret(text string) (masked string, secret bool) { return secretLine(text) }
