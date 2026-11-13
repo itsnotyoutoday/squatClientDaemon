@@ -196,23 +196,52 @@ func (e *Engine) RenameAttr(ctx context.Context, sid, obj, from, to string, opts
 	return e.DeleteAttr(ctx, sid, obj, from, opts...)
 }
 
-// DeleteAttr clears an attribute (`&ATTR obj=`) and verifies it is gone.
+// DeleteAttr removes an attribute and verifies it is gone. Games clear attributes in different
+// ways, so it tries, in order, and re-reads after each:
+//  1. `&ATTR obj`           (no '=': CobraMUSH clears with this form; PennMUSH does too)
+//  2. `&ATTR obj=`          (an empty value: clears on PennMUSH, only empties it on CobraMUSH)
+//  3. `@wipe obj/ATTR`      (last resort; the name is validated, so it cannot contain wildcards)
+//
+// A refusal from the game (permission denied, locked attribute...) stops at once with its reply.
 func (e *Engine) DeleteAttr(ctx context.Context, sid, obj, attr string, opts ...CaptureOpts) error {
 	if err := validAttr(obj, attr); err != nil {
 		return err
 	}
 	co := capOpt(opts)
-	if err := e.SaveAttr(ctx, sid, obj, attr, "", SaveOpts{Capture: co}); err != nil {
-		return err
+	cmds := []string{"&" + attr + " " + obj, "&" + attr + " " + obj + "=", "@wipe " + obj + "/" + attr}
+	var last []string
+	for _, cmd := range cmds {
+		reply, err := e.mutate(ctx, sid, cmd, co)
+		if err != nil {
+			return err
+		}
+		a, err := e.FetchAttr(ctx, sid, obj, attr, co)
+		if err != nil {
+			return err
+		}
+		if !a.Exists {
+			return nil
+		}
+		if len(reply) > 0 && !successReply(reply) {
+			return refusal(reply) // the game said no: do not try other forms
+		}
+		last = reply
 	}
-	a, err := e.FetchAttr(ctx, sid, obj, attr, co)
-	if err != nil {
-		return err
-	}
-	if a.Exists {
+	if len(last) == 0 {
 		return &MutationError{Kind: ErrMismatch, Reply: "the attribute still exists"}
 	}
-	return nil
+	return &MutationError{Kind: ErrMismatch, Reply: "the attribute still exists: " + joinReply(last)}
+}
+
+// successReply reports whether every reply line is an ordinary acknowledgement.
+func successReply(lines []string) bool {
+	for _, l := range lines {
+		t := strings.ToLower(strings.TrimSpace(l))
+		if !(strings.HasPrefix(t, "set") || strings.HasPrefix(t, "cleared") || strings.HasPrefix(t, "wiped") || strings.HasPrefix(t, "removed")) {
+			return false
+		}
+	}
+	return true
 }
 
 var warningNameOK = func(s string) bool {

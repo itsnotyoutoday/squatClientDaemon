@@ -707,3 +707,28 @@ func TestWarningsDetailsExamine(t *testing.T) {
 		c.clean(t)
 	})
 }
+
+// CobraMUSH clears an attribute with `&ATTR obj` (no '='); `&ATTR obj=` only empties it.
+func TestDeleteAttrCobraMUSH(t *testing.T) {
+	pboth(t, func(t *testing.T, c penv) {
+		c.g.mu.Lock()
+		c.g.cobra = true
+		c.g.mu.Unlock()
+		if err := c.e.DeleteAttr(ctxT(t), c.sid, "#123", "CMD"); err != nil {
+			t.Fatal(err)
+		}
+		var sent []string
+		for _, cmd := range c.g.commands() {
+			if strings.HasPrefix(cmd, "&") || strings.HasPrefix(cmd, "@wipe") {
+				sent = append(sent, cmd)
+			}
+		}
+		if len(sent) != 1 || sent[0] != "&CMD #123" {
+			t.Fatalf("expected one `&CMD #123`, sent %q", sent)
+		}
+		a, err := c.e.FetchAttr(ctxT(t), c.sid, "#123", "CMD")
+		if err != nil || a.Exists {
+			t.Fatalf("%+v %v", a, err)
+		}
+	})
+}
