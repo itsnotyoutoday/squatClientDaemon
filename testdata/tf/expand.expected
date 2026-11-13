@@ -1,0 +1,16 @@
+echo main: Hello, World! World Worlds
+echo main: percent: 100% done
+echo main: semi
+echo main: second
+echo main: expr: 7 yes 5
+echo main: unset:[] set?1 0
+echo main: dollar: $5 $notexpr
+echo main: args=[alpha beta] n=2 1=[alpha] 2=[beta] 3=[] 0=show
+echo main: args=[] n=0 1=[] 2=[] 3=[] 0=show
+echo main: args=[one two three four] n=4 1=[one] 2=[two] 3=[three] 0=show
+echo main: nested World
+echo main: from-var
+echo main: cmdsub: inner and ab
+echo main: return: 42
+echo main: fn: 42
+echo main: after shift: b c (2)

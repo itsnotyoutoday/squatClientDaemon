@@ -1,0 +1,11 @@
+echo main: before
+echo main: % script budget exceeded: more than 50000 steps
+echo main: after-runaway
+echo main: % test.tf:6: script budget exceeded: more than 50000 steps
+echo main: after-forever
+echo main: % macro nesting too deep (limit 64) in rec
+echo main: still-alive
+echo main: % expansion too long
+echo main: after-big
+echo main: % strrep(): result too long
+echo main: after-strrep

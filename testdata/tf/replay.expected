@@ -1,0 +1,19 @@
+## replay main you attack the orc
+line main gag=true fired=[atk]: <fg=1,b>you attack the orc</>
+## replay main some gold
+line main gag=false fired=[gld]: <bg=3>some gold</>
+## var seen
+var seen="" set=false
+## line main you attack the orc
+send main: flee 
+notify: under attack | 
+line main gag=true fired=[atk]: <fg=1,b>you attack the orc</>
+## line main some gold
+echo main: got gold
+line main gag=false fired=[gld]: <bg=3>some gold</>
+## var seen
+var seen="1" set=true
+## replay main more gold
+line main gag=false fired=[]: more gold
+## line main more gold
+line main gag=false fired=[]: more gold

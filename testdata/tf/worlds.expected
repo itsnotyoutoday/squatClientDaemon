@@ -1,0 +1,39 @@
+addworld {Name:main Host:example.org Port:4201 Character: Password: Type:tiny TLS:true Connected:false}
+addworld {Name:alt Host:example.com Port:4202 Character:bob Password:secret Type:tiny TLS:false Connected:false}
+echo main: /addworld alt example.com 4202
+echo main: /addworld main example.org 4201
+connect main
+connect alt
+fg alt
+fg main
+disconnect alt
+unworld alt
+saveworlds
+echo main: example.org 4201 1
+log main on=true out.log
+log main on=false off
+limit main: foo*
+unlimit main: 
+relimit main: 
+input main: hello
+dokey main: recall-prev
+status status_add foo [-A]
+status status_rm foo []
+recall main: 10
+bell
+notify: Title | body text
+## key main ^A
+echo main: ctrl-a pressed
+key bound=true
+## key main F1
+echo main: f1
+key bound=true
+## key main F2
+key bound=false
+## key main ^A
+key bound=false
+echo main: triggered
+echo main: triggered
+echo main: /echo [-w<world>] [-a<attrs>] [-p] text   (-p: interpret @{attr} markup)
+echo main: % squat-tf 1.0 (TinyFugue-style)
+quit

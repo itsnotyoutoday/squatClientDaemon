@@ -1,0 +1,17 @@
+echo main: 1: every 5s, 3 left: /echo tick
+## advance 4s
+## advance 2s
+echo main: tick
+## advance 5s
+echo main: tick
+## advance 5s
+echo main: tick
+## advance 5s
+echo main: ps now:
+echo main: 2: every 10s, 5 left: /echo never
+## advance 100s
+echo main: immediate
+echo main: immediate
+## advance 89s
+## advance 1s
+echo main: ninety

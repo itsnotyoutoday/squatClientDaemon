@@ -1,0 +1,16 @@
+echo main: <fg=1>red text</>
+echo main: <fg=196,u>indexed 256</>
+echo main: <fg=#ff8800>truecolor</>
+echo main: <fg=#aabbcc,bg=#001122,b,i>both</>
+echo main: <fg=10,bg=237,dim>bright+gray</>
+echo main: <fg=214>cube</>
+echo main: plain <fg=1>red</> <bg=4,u>blue-u</> <fg=#102030>tc</> lit@at
+echo main: % unknown colour "nosuchcolor"
+echo main: <b>hilite-only</>
+echo main: [0;38;2;255;0;0mx[0my
+echo main: [0;38;5;196;48;5;21ma[0;31;48;5;21mb[0m
+echo main: hello
+## line main xyz
+line main gag=false fired=[hl]: <fg=#abcdef,b>xyz</>
+echo main: 1: /def -tx* -ah,C#abcdef hl = 
+echo main: 2: /def -mregexp -t'(a)(b)' -P1Cred -P2C#00ff00 pp = 

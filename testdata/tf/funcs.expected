@@ -1,0 +1,22 @@
+echo main: [5] [ab3] [-1] [1] [0] [0]
+echo main: [2] [3] [2] [-1]
+echo main: [ababab] [ell] [llo] []
+echo main: [   ab] [ab   ]| [  ab  ]|
+echo main: [abc] [ABC] [a+b+c]
+echo main: [65] [B] [λ]
+echo main: [3] [2.5] [3] [1] [1024] [4] [1] [0] [3]
+echo main: [0] [1] [0]
+echo main: [0] [int] [float] [str]
+echo main: [1735787045] [1970-01-01 00:00:00] [946684800]
+echo main: [Fri Jan  2 002 AM 12]
+echo main: [3] [hi]
+echo main: [1] [12-34] [12] [34] [abc ] [ def]
+echo main: [0] []
+echo main: [80] [24] [0] [0] []
+echo main: [hi@there]
+echo main: [@{u,Cred}hi@{n}]
+echo main: a=[1] b=[val] c=[] rest=[x y]
+echo main: a=[1] b=[2] c=[] rest=[foo]
+echo main: a=[] b=[] c=[] rest=[plain]
+echo main: % unknown function nosuchfn()
+echo main: % strlen(): wrong number of arguments (0)

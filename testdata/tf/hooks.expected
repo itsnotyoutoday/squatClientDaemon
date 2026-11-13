@@ -1,0 +1,32 @@
+## hook main CONNECT main
+echo main: connected main
+hook fired=true
+## hook main DISCONNECT main gone
+echo main: disconnected main gone
+hook fired=true
+## hook main DISCONNECT other gone
+hook fired=false
+## hook main CONNECT
+echo main: connected 
+hook fired=true
+## hook main LOGIN main
+echo main: first login only
+hook fired=true
+## hook main LOGIN main
+hook fired=false
+## hook main GMCP Char.Vitals {"hp":5}
+echo main: gmcp Char.Vitals {"hp":5}
+hook fired=true
+## hook main GMCP Char.Status {}
+hook fired=false
+## exec main hello there
+echo main: sending [hello there]
+send main: hello there
+## exec main /send direct
+echo main: sending [direct]
+send main: direct
+echo main: redefined on_conn
+echo main: % /def -h: unknown hook "NOSUCH"
+## hook main WORLD alpha
+echo main: world=alpha
+hook fired=true

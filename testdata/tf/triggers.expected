@@ -1,0 +1,43 @@
+## line main You say, "hello there"
+echo main: heard: hello there words=4 first=You
+line main gag=false fired=[say_trig]: You say, "hello there"
+## line main Alice arrives.
+echo main: high priority: Alice
+line main gag=false fired=[high]: Alice arrives.
+## line main Bob arrives.
+echo main: fall-through first
+echo main: high priority: Bob
+line main gag=false fired=[fall high]: Bob arrives.
+## line main ping
+echo main: pong
+line main gag=false fired=[shots]: ping
+## line main ping
+echo main: pong
+line main gag=false fired=[shots]: ping
+## line main ping
+line main gag=false fired=[]: ping
+## line main Zed tells you: meet me at 5
+echo main: tell from Zed saying [meet me at 5] left=[] right=[]
+line main gag=false fired=[tell]: Zed tells you: meet me at 5
+## line main exact line
+echo main: simple matched
+line main gag=false fired=[simple]: exact line
+## line main exact line plus
+line main gag=false fired=[]: exact line plus
+## line main secret stuff
+echo main: hidden
+line main gag=true fired=[hider]: secret stuff
+## line main a dragon appears
+line main gag=false fired=[hl]: <fg=1,b>a dragon appears</>
+## line main you find 25 gold here
+line main gag=false fired=[part]: you find <bg=4>25</> gold here
+## line main only here
+line main gag=false fired=[]: only here
+## line other only here
+echo other: world-only
+line other gag=false fired=[wonly]: only here
+## line main maybe
+line main gag=false fired=[]: maybe
+## line main maybe
+echo main: cond-fired
+line main gag=false fired=[cond]: maybe

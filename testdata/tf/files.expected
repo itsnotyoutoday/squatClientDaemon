@@ -1,0 +1,24 @@
+## file data.txt
+## file lib.tf
+echo main: loading lib
+echo main: inside block
+echo main: from lib x
+echo main: a b
+echo main: % /load: no such file missing.tf
+write out.tf
+write all.tf
+echo main: 4: /def -tzzz keep = /echo z
+echo main: pre: alpha
+echo main: pre: beta
+echo main: pre- piped
+send main: say hello
+echo main: % /quote: shell commands are not available
+## restrict file
+echo main: % /load: file access is restricted
+echo main: % /save: file access is restricted
+echo main: % /quote: file access is restricted
+echo main: still ok
+## restrict world
+echo main: % /connect: world access is restricted
+echo main: % /addworld: world access is restricted
+echo main: % restrict level: world

@@ -1,0 +1,77 @@
+package tf
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+type funcDef struct {
+	min, max int // max < 0: variadic
+	fn       func(i *Interp, a []Value) (Value, error)
+}
+
+func (i *Interp) def(name string, min, max int, fn func(*Interp, []Value) (Value, error)) {
+	i.funcs[name] = &funcDef{min, max, fn}
+}
+
+func (i *Interp) initFuncs() {
+	i.funcs = map[string]*funcDef{}
+	i.initStringFuncs()
+	i.initMathFuncs()
+	i.initTimeFuncs()
+	i.initMiscFuncs()
+}
+
+// FuncNames lists the built-in function names.
+func FuncNames() []string {
+	i := &Interp{}
+	i.initFuncs()
+	var out []string
+	for n := range i.funcs {
+		out = append(out, n)
+	}
+	sortStrings(out)
+	return out
+}
+
+func (i *Interp) callFunc(name string, args []Value) (Value, error) {
+	if f := i.funcs[name]; f != nil {
+		if len(args) < f.min || (f.max >= 0 && len(args) > f.max) {
+			return Value{}, fmt.Errorf("%s(): wrong number of arguments (%d)", name, len(args))
+		}
+		v, err := f.fn(i, args)
+		if len(v.s) > maxValueLen {
+			return Value{}, fmt.Errorf("%s(): result too long", name)
+		}
+		return v, err
+	}
+	// A user macro can be called like a function: its /return value is the result.
+	if m := i.macros.byName(name); m != nil {
+		strs := make([]string, len(args))
+		for k, a := range args {
+			strs[k] = a.s
+		}
+		i.last = Value{}
+		err := i.callMacroWith(m, strings.Join(strs, " "), strs, i.top().world, nil)
+		return i.last, err
+	}
+	return Value{}, fmt.Errorf("unknown function %s()", name)
+}
+
+var reCache = map[string]*regexp.Regexp{}
+
+func compileRe(p string) (*regexp.Regexp, error) {
+	if re, ok := reCache[p]; ok {
+		return re, nil
+	}
+	re, err := regexp.Compile(p)
+	if err != nil {
+		return nil, err
+	}
+	if len(reCache) > 256 {
+		reCache = map[string]*regexp.Regexp{}
+	}
+	reCache[p] = re
+	return re, nil
+}
