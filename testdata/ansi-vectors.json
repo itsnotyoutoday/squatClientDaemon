@@ -1,0 +1,579 @@
+{
+ "version": 1,
+ "note": "Each case: feed `inputs` as successive lines (without newline) to ONE fresh parser; output for line i must equal spans[i]. Style persists across lines.",
+ "cases": [
+  {
+   "name": "plain",
+   "inputs": [
+    "hello"
+   ],
+   "spans": [
+    [
+     {
+      "s": "hello"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "blank",
+   "inputs": [
+    ""
+   ],
+   "spans": [
+    []
+   ]
+  },
+  {
+   "name": "red then reset",
+   "inputs": [
+    "\u001b[31mred\u001b[0m plain"
+   ],
+   "spans": [
+    [
+     {
+      "s": "red",
+      "fg": 1
+     },
+     {
+      "s": " plain"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bright fg 91",
+   "inputs": [
+    "\u001b[91mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 9
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bold only",
+   "inputs": [
+    "\u001b[1mB\u001b[22mN"
+   ],
+   "spans": [
+    [
+     {
+      "s": "B",
+      "b": true
+     },
+     {
+      "s": "N"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bold does not shift colour",
+   "inputs": [
+    "\u001b[1;31mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 1,
+      "b": true
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bg and default bg",
+   "inputs": [
+    "\u001b[44mX\u001b[49mY"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "bg": 4
+     },
+     {
+      "s": "Y"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "256 fg",
+   "inputs": [
+    "\u001b[38;5;196mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 196
+     }
+    ]
+   ]
+  },
+  {
+   "name": "256 bg",
+   "inputs": [
+    "\u001b[48;5;21mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "bg": 21
+     }
+    ]
+   ]
+  },
+  {
+   "name": "truecolor fg",
+   "inputs": [
+    "\u001b[38;2;255;128;0mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": "#ff8000"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "truecolor bg zero padded",
+   "inputs": [
+    "\u001b[48;2;1;2;3mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "bg": "#010203"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "empty m is reset",
+   "inputs": [
+    "\u001b[31mA\u001b[mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A",
+      "fg": 1
+     },
+     {
+      "s": "B"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "multiple codes in one sequence",
+   "inputs": [
+    "\u001b[1;4;32mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 2,
+      "b": true,
+      "u": true
+     }
+    ]
+   ]
+  },
+  {
+   "name": "underline off",
+   "inputs": [
+    "\u001b[4mA\u001b[24mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A",
+      "u": true
+     },
+     {
+      "s": "B"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "reverse on off",
+   "inputs": [
+    "\u001b[7mA\u001b[27mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A",
+      "rev": true
+     },
+     {
+      "s": "B"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "dim italic strike blink",
+   "inputs": [
+    "\u001b[2;3;9;5mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "dim": true,
+      "i": true,
+      "st": true,
+      "blink": true
+     }
+    ]
+   ]
+  },
+  {
+   "name": "adjacent identical styles merge",
+   "inputs": [
+    "\u001b[31mA\u001b[31mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "AB",
+      "fg": 1
+     }
+    ]
+   ]
+  },
+  {
+   "name": "redundant resets",
+   "inputs": [
+    "\u001b[0m\u001b[0mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "style carries across lines",
+   "inputs": [
+    "\u001b[32mgreen",
+    "still green\u001b[0m",
+    "plain"
+   ],
+   "spans": [
+    [
+     {
+      "s": "green",
+      "fg": 2
+     }
+    ],
+    [
+     {
+      "s": "still green",
+      "fg": 2
+     }
+    ],
+    [
+     {
+      "s": "plain"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "non-SGR CSI dropped",
+   "inputs": [
+    "A\u001b[2JB\u001b[10;5HC"
+   ],
+   "spans": [
+    [
+     {
+      "s": "ABC"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "OSC title dropped",
+   "inputs": [
+    "A\u001b]0;title\u0007B"
+   ],
+   "spans": [
+    [
+     {
+      "s": "AB"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "BEL dropped",
+   "inputs": [
+    "A\u0007B"
+   ],
+   "spans": [
+    [
+     {
+      "s": "AB"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "tab kept",
+   "inputs": [
+    "A\tB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A\tB"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "256 out of range ignored",
+   "inputs": [
+    "\u001b[38;5;300mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "truecolor out of range ignored",
+   "inputs": [
+    "\u001b[38;2;256;0;0mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "default fg 39",
+   "inputs": [
+    "\u001b[31mA\u001b[39mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A",
+      "fg": 1
+     },
+     {
+      "s": "B"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "256 colour followed by bold",
+   "inputs": [
+    "\u001b[38;5;82;1mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 82,
+      "b": true
+     }
+    ]
+   ]
+  },
+  {
+   "name": "OSC 8 hyperlink",
+   "inputs": [
+    "\u001b]8;;http://x.y\u001b\\link\u001b]8;;\u001b\\ after"
+   ],
+   "spans": [
+    [
+     {
+      "s": "link",
+      "link": "http://x.y"
+     },
+     {
+      "s": " after"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unknown SGR ignored",
+   "inputs": [
+    "\u001b[99mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unknown SGR among known",
+   "inputs": [
+    "\u001b[31;99mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 1
+     }
+    ]
+   ]
+  },
+  {
+   "name": "colour change keeps bold",
+   "inputs": [
+    "\u001b[1mA\u001b[31mB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A",
+      "b": true
+     },
+     {
+      "s": "B",
+      "b": true,
+      "fg": 1
+     }
+    ]
+   ]
+  },
+  {
+   "name": "reset inside sequence",
+   "inputs": [
+    "\u001b[31;0;4mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "u": true
+     }
+    ]
+   ]
+  },
+  {
+   "name": "unicode text",
+   "inputs": [
+    "h\u00e9llo \u2713 \u65e5\u672c"
+   ],
+   "spans": [
+    [
+     {
+      "s": "h\u00e9llo \u2713 \u65e5\u672c"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "incomplete ESC at end dropped",
+   "inputs": [
+    "A\u001b"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "incomplete CSI at end dropped",
+   "inputs": [
+    "A\u001b[31"
+   ],
+   "spans": [
+    [
+     {
+      "s": "A"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "carriage return dropped",
+   "inputs": [
+    "A\rB"
+   ],
+   "spans": [
+    [
+     {
+      "s": "AB"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bright bg 100",
+   "inputs": [
+    "\u001b[100mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "bg": 8
+     }
+    ]
+   ]
+  },
+  {
+   "name": "bg 47 then fg",
+   "inputs": [
+    "\u001b[47;30mX"
+   ],
+   "spans": [
+    [
+     {
+      "s": "X",
+      "fg": 0,
+      "bg": 7
+     }
+    ]
+   ]
+  },
+  {
+   "name": "only escape sequences gives blank",
+   "inputs": [
+    "\u001b[31m\u001b[0m"
+   ],
+   "spans": [
+    []
+   ]
+  }
+ ]
+}

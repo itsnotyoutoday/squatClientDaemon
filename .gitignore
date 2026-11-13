@@ -1,0 +1,7 @@
+dist/
+*.test
+*.out
+.DS_Store
+coverage.txt
+go.work
+go.work.sum
