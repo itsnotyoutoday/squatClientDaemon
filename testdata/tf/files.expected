@@ -7,7 +7,7 @@ echo main: a b
 echo main: % /load: no such file missing.tf
 write out.tf
 write all.tf
-echo main: 4: /def -tzzz keep = /echo z
+echo main: 4: /def -p1 -mglob -t'zzz' keep = /echo z
 echo main: pre: alpha
 echo main: pre: beta
 echo main: pre- piped

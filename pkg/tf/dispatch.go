@@ -24,12 +24,20 @@ func (i *Interp) passes(m *Macro, world, text string, mi *matchInfo, params []st
 			return false
 		}
 	}
-	if m.Chance > 0 && m.Chance < 100 && i.live {
-		if i.rng(100) >= int64(m.Chance) {
-			return false
-		}
-	}
 	return true
+}
+
+// chanceOK rolls the -c probability. A macro that loses the roll still counts
+// as a match (its attributes apply and it blocks lower priorities); only its
+// body does not run.
+func (i *Interp) chanceOK(m *Macro) bool {
+	if !m.chanceSet || m.Chance >= 100 || !i.live {
+		return true
+	}
+	if m.Chance <= 0 {
+		return false
+	}
+	return i.rng(100) < int64(m.Chance)
 }
 
 func (i *Interp) consumeShot(m *Macro) {
@@ -91,7 +99,7 @@ func (i *Interp) dispatch(world, text string, spans []proto.Span, minPri int, re
 				}
 			}
 		}
-		if i.live {
+		if i.live && i.chanceOK(m) {
 			i.consumeShot(m)
 			_ = i.callMacroWith(m, text, params, world, mi)
 		}

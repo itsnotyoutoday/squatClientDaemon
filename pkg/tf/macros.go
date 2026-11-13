@@ -41,16 +41,17 @@ type Macro struct {
 	Key       string
 	World     string
 	Cond      string
-	Chance    int // percent; 0 = always
+	Chance    int // percent (only meaningful when set with -c)
 	Invisible bool
 	Disabled  bool
 
-	left    int
-	deleted bool
-	glob    *globPat
-	re      *regexp.Regexp
-	nodes   []node
-	ready   bool
+	left      int
+	chanceSet bool
+	deleted   bool
+	glob      *globPat
+	re        *regexp.Regexp
+	nodes     []node
+	ready     bool
 }
 
 // MacroInfo is the read-only view returned by Interp.Macros.
@@ -150,7 +151,7 @@ func worldOK(m *Macro, world string) bool { return m.World == "" || m.World == w
 // ---- /def parsing -----------------------------------------------------------
 
 func (i *Interp) parseDef(args string) (*Macro, error) {
-	m := &Macro{Mode: i.getVarStr("matching")}
+	m := &Macro{Mode: i.getVarStr("matching"), Priority: 1}
 	if m.Mode != ModeSimple && m.Mode != ModeRegexp && m.Mode != ModeSubstr {
 		m.Mode = ModeGlob
 	}
@@ -173,6 +174,10 @@ func (i *Interp) parseDef(args string) (*Macro, error) {
 			}
 			if err := m.setOpt(c, val); err != nil {
 				return nil, err
+			}
+			// option letters may be clustered: -Fp2, -ag
+			if strings.IndexByte("tmhpnaPbkwEcT", c) < 0 && rest != "" && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '=' {
+				rest = "-" + rest
 			}
 		default:
 			end := strings.IndexFunc(rest, func(r rune) bool { return unicode.IsSpace(r) || r == '=' })
@@ -229,7 +234,7 @@ func (m *Macro) setOpt(c byte, v string) error {
 			if n > 100 {
 				return fmt.Errorf("/def -c: chance must be 0-100")
 			}
-			m.Chance = n
+			m.Chance, m.chanceSet = n, true
 		}
 	case '1':
 		m.Shots = 1
@@ -362,59 +367,68 @@ func quoteOpt(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
 }
 
-// Def returns a /def line that recreates the macro.
+// Def returns a /def line that recreates the macro. The option order and
+// spelling follow TinyFugue's /list output (-i -Fp -c -a -P -n -w -E -m -t
+// -h -b), so listings look familiar and can be loaded back.
 func (m *Macro) Def() string {
 	var b strings.Builder
 	b.WriteString("/def")
 	opt := func(c byte, v string) { fmt.Fprintf(&b, " -%c%s", c, quoteOpt(v)) }
-	if m.Trigger != "" {
-		if m.Mode != ModeGlob {
-			opt('m', m.Mode)
+	// TF always single-quotes pattern-like option values
+	qopt := func(c byte, v string) {
+		fmt.Fprintf(&b, " -%c'%s'", c, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v))
+	}
+	if m.Invisible {
+		b.WriteString(" -i")
+	}
+	if m.Trigger != "" || m.Hook != "" {
+		f := ""
+		if m.Fall {
+			f = "F"
 		}
-		opt('t', m.Trigger)
+		fmt.Fprintf(&b, " -%sp%d", f, m.Priority)
+	}
+	if m.chanceSet {
+		opt('c', strconv.Itoa(m.Chance))
+	}
+	attr := m.Attr
+	attr.Gag = false
+	as := attr.String()
+	if m.Gag {
+		as = "g" + as
+	}
+	if as != "" {
+		fmt.Fprintf(&b, " -a%s", as)
+	}
+	for _, p := range m.parts {
+		opt('P', strconv.Itoa(p.n)+p.a.String())
+	}
+	if m.Shots != 0 {
+		opt('n', strconv.Itoa(m.Shots))
+	}
+	if m.World != "" {
+		opt('w', m.World)
+	}
+	if m.Cond != "" {
+		qopt('E', m.Cond)
+	}
+	if m.Trigger != "" {
+		opt('m', m.Mode)
+		qopt('t', m.Trigger)
 	}
 	if m.Hook != "" {
 		h := m.Hook
 		if m.HookPat != "" {
 			h += " " + m.HookPat
 		}
-		opt('h', h)
-	}
-	if m.Priority != 0 {
-		opt('p', strconv.Itoa(m.Priority))
-	}
-	if m.Shots != 0 {
-		opt('n', strconv.Itoa(m.Shots))
-	}
-	if m.Fall {
-		b.WriteString(" -F")
-	}
-	if m.Gag {
-		b.WriteString(" -g")
-	}
-	if a := m.Attr; !a.IsZero() {
-		a.Gag = false
-		if !a.IsZero() {
-			opt('a', a.String())
+		if m.HookPat != "" {
+			qopt('h', h)
+		} else {
+			opt('h', h)
 		}
-	}
-	for _, p := range m.parts {
-		opt('P', strconv.Itoa(p.n)+p.a.String())
 	}
 	if m.Key != "" {
 		opt('b', m.Key)
-	}
-	if m.World != "" {
-		opt('w', m.World)
-	}
-	if m.Cond != "" {
-		opt('E', m.Cond)
-	}
-	if m.Chance != 0 {
-		opt('c', strconv.Itoa(m.Chance))
-	}
-	if m.Invisible {
-		b.WriteString(" -i")
 	}
 	if m.Name != "" && !strings.HasPrefix(m.Name, "#") {
 		b.WriteString(" " + m.Name)

@@ -12,5 +12,5 @@ echo main: [0;38;5;196;48;5;21ma[0;31;48;5;21mb[0m
 echo main: hello
 ## line main xyz
 line main gag=false fired=[hl]: <fg=#abcdef,b>xyz</>
-echo main: 1: /def -tx* -ah,C#abcdef hl = 
-echo main: 2: /def -mregexp -t'(a)(b)' -P1Cred -P2C#00ff00 pp = 
+echo main: 1: /def -p1 -ah,C#abcdef -mglob -t'x*' hl = 
+echo main: 2: /def -p1 -P1Cred -P2C#00ff00 -mregexp -t'(a)(b)' pp = 

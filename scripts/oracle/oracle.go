@@ -137,12 +137,16 @@ func canonLine(l string) string {
 		return l
 	}
 	l = strings.TrimRight(l, " \t\r")
+	if m := listRe.FindStringSubmatch(l); m != nil {
+		return "%L: " + m[1] // /list line; the macro number is not comparable
+	}
 	if strings.HasPrefix(l, "% ") {
 		return "%ERR"
 	}
 	return l
 }
 
+var listRe = regexp.MustCompile(`^(?:% )?(?:\d+: )?(/def .*)$`)
 var tsRe = regexp.MustCompile(`^\d\d:\d\d:\d\d # `)
 
 // NormTF converts real tf's log (with timestamps) to canonical output.
@@ -184,7 +188,7 @@ func (h *oracleHost) Echo(w string, spans []proto.Span) {
 		h.out = append(h.out, canonLine(l))
 	}
 }
-func (h *oracleHost) SendToWorld(w, t string) error { return errors.New("Not connected.") }
+func (h *oracleHost) SendToWorld(w, t string) error { return errors.New("not connected") }
 func (h *oracleHost) AddWorld(tf.WorldInfo) error   { return nil }
 func (h *oracleHost) Connect(string) error          { return nil }
 func (h *oracleHost) Now() time.Time                { return h.now }

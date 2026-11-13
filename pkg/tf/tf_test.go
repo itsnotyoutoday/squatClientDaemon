@@ -272,8 +272,10 @@ func TestChanceAndCond(t *testing.T) {
 		t.Error("chance roll 29 should fire at 30%")
 	}
 	roll = 30
-	if r := lineRes(i, "c", true); len(r.Fired) != 0 {
-		t.Error("chance roll 30 should not fire at 30%")
+	before := strings.Count(h.dump(), "fired")
+	// a lost roll still counts as a match (priority, attributes) but the body does not run
+	if r := lineRes(i, "c", true); len(r.Fired) != 1 || strings.Count(h.dump(), "fired") != before {
+		t.Error("chance roll 30 should match but not run the body at 30%")
 	}
 	if r := lineRes(i, "e", true); len(r.Fired) != 0 {
 		t.Error("cond false (hp unset)")

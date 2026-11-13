@@ -1,0 +1,27 @@
+%L: /def dl1 = /echo one
+%L: /def -p1 -mglob -t'foo *' dl2 = /echo two
+%L: /def -p5 -mregexp -t'^x+$' dl3 = /echo three
+%L: /def -p1 -n3 -mglob -t'shot' dl4 = /echo four
+%L: /def -Fp2 -mglob -t'fall' dl5 = /echo five
+%L: /def -p1 -E'(1)' -mglob -t'cond' dl7 = /echo seven
+%L: /def -p1 -hCONNECT dl8 = /echo eight
+%L: /def -p1 -c50 -mglob -t'chance' dl9 = /echo nine
+%L: /def -p1 -ag -mglob -t'gagme' dl10 = /echo ten
+%L: /def -p1 -aB -mglob -t'hilite' dl11 = /echo eleven
+%L: /def -p1 -aCred -mglob -t'colour' dl12 = /echo twelve
+%L: /def -p1 -n1 -mglob -t'once' dl13 = /echo thirteen
+%L: /def -b'^Xz' dl14 = /echo fourteen
+%L: /def dl1 = /echo one
+%L: /def -p1 -mglob -t'foo *' dl2 = /echo two
+%L: /def -p5 -mregexp -t'^x+$' dl3 = /echo three
+%L: /def -p1 -n3 -mglob -t'shot' dl4 = /echo four
+%L: /def -Fp2 -mglob -t'fall' dl5 = /echo five
+%L: /def -p1 -E'(1)' -mglob -t'cond' dl7 = /echo seven
+%L: /def -p1 -hCONNECT dl8 = /echo eight
+%L: /def -p1 -c50 -mglob -t'chance' dl9 = /echo nine
+%L: /def -p1 -ag -mglob -t'gagme' dl10 = /echo ten
+%L: /def -p1 -aB -mglob -t'hilite' dl11 = /echo eleven
+%L: /def -p1 -aCred -mglob -t'colour' dl12 = /echo twelve
+%L: /def -p1 -n1 -mglob -t'once' dl13 = /echo thirteen
+%L: /def -b'^Xz' dl14 = /echo fourteen
+ORACLE_END
