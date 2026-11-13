@@ -26,6 +26,10 @@ const maxReplyLines = 4
 // Replies are free text and differ per game, so a positive match list would
 // lose the very error message the user needs.
 func (e *Engine) mutate(ctx context.Context, sid, cmd string, co CaptureOpts) ([]string, error) {
+	return e.mutateN(ctx, sid, cmd, co, maxReplyLines)
+}
+
+func (e *Engine) mutateN(ctx context.Context, sid, cmd string, co CaptureOpts, max int) ([]string, error) {
 	co.Accept = func(p string) bool { return strings.TrimSpace(p) != "" && !chatterRe.MatchString(p) }
 	lines, err := e.Capture(ctx, sid, []string{cmd}, co)
 	if err != nil {
@@ -33,7 +37,7 @@ func (e *Engine) mutate(ctx context.Context, sid, cmd string, co CaptureOpts) ([
 	}
 	var out []string
 	for _, l := range lines {
-		if p := strings.TrimSpace(l.Plain()); p != "" && len(out) < maxReplyLines {
+		if p := strings.TrimSpace(l.Plain()); p != "" && len(out) < max {
 			out = append(out, p)
 		}
 	}

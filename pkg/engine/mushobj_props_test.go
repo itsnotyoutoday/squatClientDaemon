@@ -39,7 +39,7 @@ func TestFetchDetails(t *testing.T) {
 		if strings.Join(d.Flags, ",") != "DARK,SAFE" || d.FlagLetters != "Ds" || strings.Join(d.Powers, ",") != "SEE_ALL" {
 			t.Fatalf("flags/powers %+v", d)
 		}
-		if len(d.Locks) != 2 || d.Locks[0] != (engine.LockInfo{Type: "Basic", Expr: "#45|flag^WIZARD"}) || d.Locks[1].Expr != "=#45" {
+		if len(d.Locks) != 2 || d.Locks[0].Type != "Basic" || d.Locks[0].Expr != "#45|flag^WIZARD" || strings.Join(d.Locks[0].Flags, ",") != "visual,no_inherit" || len(d.Locks[1].Flags) != 0 || d.Locks[1].Expr != "=#45" {
 			t.Fatalf("locks %+v", d.Locks)
 		}
 		if d.AttrCount != 2 {
@@ -546,6 +546,149 @@ func TestMutationTimeoutAndCancel(t *testing.T) {
 		c.g.override = func(cmd string) ([]string, bool) { return nil, strings.HasPrefix(cmd, "think ") }
 		_, err = c.e.SetFlag(ctxT(t), c.sid, "#123", "VISUAL", true, engine.CaptureOpts{Timeout: 150 * time.Millisecond})
 		if !errors.Is(err, engine.ErrCaptureTimeout) {
+			t.Fatalf("%v", err)
+		}
+		c.clean(t)
+	})
+}
+
+func TestLockFlagsAndTest(t *testing.T) {
+	pboth(t, func(t *testing.T, c penv) {
+		m, err := c.e.SetLockFlag(ctxT(t), c.sid, "#123", "Use", "visual", true)
+		if err != nil || strings.Join(m.Details.Locks[1].Flags, ",") != "visual" {
+			t.Fatalf("%+v %v", m, err)
+		}
+		m, err = c.e.SetLockFlag(ctxT(t), c.sid, "#123", "Basic", "no_inherit", false)
+		if err != nil || strings.Join(m.Details.Locks[0].Flags, ",") != "visual" {
+			t.Fatalf("%+v %v", m, err)
+		}
+		if _, err = c.e.SetLockFlag(ctxT(t), c.sid, "#123", "Basic", "bogus", true); err == nil || !strings.Contains(err.Error(), "Unknown lock flag.") {
+			t.Fatalf("%v", err)
+		}
+		if _, err = c.e.SetLockFlag(ctxT(t), c.sid, "#200", "Basic", "visual", true); !errors.Is(err, engine.ErrPermission) {
+			t.Fatalf("%v", err)
+		}
+		r, raw, err := c.e.TestLock(ctxT(t), c.sid, "#123", "Basic", "#45")
+		if err != nil || r != engine.TriTrue || raw != "1" {
+			t.Fatalf("%v %q %v", r, raw, err)
+		}
+		r, _, err = c.e.TestLock(ctxT(t), c.sid, "#123", "Basic", "#1")
+		if err != nil || r != engine.TriFalse {
+			t.Fatalf("%v %v", r, err)
+		}
+		r, raw, _ = c.e.TestLock(ctxT(t), c.sid, "#123", "Nope", "#1")
+		if r != engine.TriUnknown || !strings.Contains(raw, "#-1") {
+			t.Fatalf("%v %q", r, raw)
+		}
+		n := len(c.g.commands())
+		for _, bad := range []string{"a;b", "[x]", "#1,#2", "a\nb"} {
+			if _, _, err = c.e.TestLock(ctxT(t), c.sid, "#123", "Basic", bad); !errors.Is(err, engine.ErrInvalidInput) {
+				t.Fatalf("%q %v", bad, err)
+			}
+		}
+		if len(c.g.commands()) != n {
+			t.Fatal("injection reached the game")
+		}
+		c.clean(t)
+	})
+}
+
+func TestAttrLockChownRenameDelete(t *testing.T) {
+	pboth(t, func(t *testing.T, c penv) {
+		r, err := c.e.SetAttrLock(ctxT(t), c.sid, "#123", "DESC", true)
+		if err != nil || r.Locked != engine.TriTrue {
+			t.Fatalf("%+v %v", r, err)
+		}
+		// a locked attribute refuses writes
+		if err = c.e.DeleteAttr(ctxT(t), c.sid, "#123", "DESC"); err == nil {
+			t.Fatal("deleting a locked attribute must fail")
+		}
+		if r, err = c.e.SetAttrLock(ctxT(t), c.sid, "#123", "DESC", false); err != nil || r.Locked != engine.TriFalse {
+			t.Fatalf("%+v %v", r, err)
+		}
+		if _, err = c.e.SetAttrLock(ctxT(t), c.sid, "#200", "DESC", true); err == nil {
+			t.Fatal("want an error")
+		}
+		o, _, err := c.e.AttrChown(ctxT(t), c.sid, "#123", "DESC", "#1")
+		if !errors.Is(err, engine.ErrPermission) || o == "#1" {
+			t.Fatalf("%q %v", o, err)
+		}
+		c.g.mu.Lock()
+		c.g.wiz = true
+		c.g.mu.Unlock()
+		if o, _, err = c.e.AttrChown(ctxT(t), c.sid, "#123", "DESC", "#1"); err != nil || o != "#1" {
+			t.Fatalf("%q %v", o, err)
+		}
+		if err = c.e.RenameAttr(ctxT(t), c.sid, "#123", "DESC", "SHORT_DESC"); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := c.e.FetchAttr(ctxT(t), c.sid, "#123", "SHORT_DESC")
+		old, _ := c.e.FetchAttr(ctxT(t), c.sid, "#123", "DESC")
+		if !a.Exists || a.Value != "A widget." || old.Exists {
+			t.Fatalf("%+v %+v", a, old)
+		}
+		if err = c.e.RenameAttr(ctxT(t), c.sid, "#123", "SHORT_DESC", "CMD"); !errors.Is(err, engine.ErrRejected) {
+			t.Fatalf("rename onto an existing attribute: %v", err)
+		}
+		if err = c.e.DeleteAttr(ctxT(t), c.sid, "#123", "CMD"); err != nil {
+			t.Fatal(err)
+		}
+		if a, _ = c.e.FetchAttr(ctxT(t), c.sid, "#123", "CMD"); a.Exists {
+			t.Fatal("not deleted")
+		}
+		for _, bad := range []string{"A/B", "a;b", ""} {
+			if err = c.e.DeleteAttr(ctxT(t), c.sid, "#123", bad); !errors.Is(err, engine.ErrInvalidInput) {
+				t.Fatalf("%q %v", bad, err)
+			}
+			if err = c.e.RenameAttr(ctxT(t), c.sid, "#123", "SHORT_DESC", bad); !errors.Is(err, engine.ErrInvalidInput) {
+				t.Fatalf("%q %v", bad, err)
+			}
+		}
+		c.clean(t)
+	})
+}
+
+func TestWarningsDetailsExamine(t *testing.T) {
+	pboth(t, func(t *testing.T, c penv) {
+		m, err := c.e.SetWarnings(ctxT(t), c.sid, "#123", "exit-unlinked thing-desc")
+		if err != nil || m.Details.Warnings != "exit-unlinked thing-desc" {
+			t.Fatalf("%+v %v", m, err)
+		}
+		if _, err = c.e.SetWarnings(ctxT(t), c.sid, "#123", "a;b"); !errors.Is(err, engine.ErrInvalidInput) {
+			t.Fatalf("%v", err)
+		}
+		lines, err := c.e.WCheck(ctxT(t), c.sid, "#123")
+		if err != nil || len(lines) != 2 || !strings.Contains(lines[0], "exit-unlinked") {
+			t.Fatalf("%v %v", lines, err)
+		}
+		d, err := c.e.FetchDetails(ctxT(t), c.sid, "#123")
+		if err != nil || len(d.ParentChain) != 1 || d.ParentChain[0].Dbref != "#130" || d.ParentChain[0].Name != "Base Widget" {
+			t.Fatalf("%+v %v", d.ParentChain, err)
+		}
+		p, err := c.e.FetchDetails(ctxT(t), c.sid, "#45")
+		if err != nil || p.Extra["channels"] != "Public Guild" {
+			t.Fatalf("%+v %v", p.Extra, err)
+		}
+		ex, err := c.e.Examine(ctxT(t), c.sid, "#123", engine.ExamineAll)
+		if err != nil || len(ex) != 3 || ex[1].Plain() != "Owner: #45" {
+			t.Fatalf("%v %v", ex, err)
+		}
+		if len(ex[0].Spans) == 0 || !ex[0].Spans[0].B {
+			t.Fatalf("colour lost: %+v", ex[0].Spans)
+		}
+		found := false
+		for _, cmd := range c.g.commands() {
+			if cmd == "examine/all #123" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("examine/all not sent")
+		}
+		if _, err = c.e.Examine(ctxT(t), c.sid, "#123", "x;y"); !errors.Is(err, engine.ErrInvalidInput) {
+			t.Fatalf("%v", err)
+		}
+		if _, err = c.e.Examine(ctxT(t), c.sid, "me", engine.ExamineNormal); !errors.Is(err, engine.ErrInvalidInput) {
 			t.Fatalf("%v", err)
 		}
 		c.clean(t)

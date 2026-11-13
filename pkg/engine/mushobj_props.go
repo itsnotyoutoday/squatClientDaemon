@@ -59,6 +59,38 @@ type ObjRef struct {
 type LockInfo struct {
 	Type string `json:"type"`
 	Expr string `json:"expr"`
+	// Flags are the lock's flags by name (visual, no_inherit, no_clone, wizard, locked).
+	Flags []string `json:"flags"`
+}
+
+var lockFlagLetters = map[rune]string{'v': "visual", 'i': "no_inherit", 'c': "no_clone", 'w': "wizard", 'l': "locked"}
+
+// parseLockFlags reads lockflags(): letters ("vi"), or names separated by spaces.
+func parseLockFlags(s string) []string {
+	s = strings.TrimSpace(s)
+	out := []string{}
+	if s == "" || isErrValue(s) {
+		return out
+	}
+	if !strings.ContainsAny(s, " ") {
+		all := true
+		var names []string
+		for _, r := range s {
+			n, ok := lockFlagLetters[r]
+			if !ok {
+				all = false
+				break
+			}
+			names = append(names, n)
+		}
+		if all {
+			return names
+		}
+	}
+	for _, f := range strings.Fields(s) {
+		out = append(out, strings.ToLower(f))
+	}
+	return out
 }
 
 // Details is everything FetchDetails knows about one object. Empty strings
@@ -93,6 +125,12 @@ type Details struct {
 	// Names maps the dbrefs mentioned above (owner, parent, zone, location,
 	// home, destination) to their names, where the game told.
 	Names map[string]string `json:"names"`
+	// Warnings is the object's warning list as the game reports it ("" unknown).
+	Warnings string `json:"warnings"`
+	// ParentChain is the parent, its parent, ... (up to 3 levels).
+	ParentChain []ObjRef `json:"parentChain"`
+	// Extra holds player-only facts the game exposed (alias, channels, quota).
+	Extra map[string]string `json:"extra"`
 }
 
 var (
@@ -169,7 +207,10 @@ func fields(s string) []string {
 // parseRecords splits "a~:~b~|~c~:~d" into records of n+ fields; records
 // with fewer than min fields (empty, errors) are dropped. The last field
 // keeps any extra separators.
-func parseRecords(s string, min int) [][]string {
+func parseRecords(s string, min int) [][]string { return parseRecordsN(s, min, min) }
+
+// parseRecordsN is parseRecords with up to max fields per record (at least min).
+func parseRecordsN(s string, min, max int) [][]string {
 	if s == "" || isErrValue(s) {
 		return nil
 	}
@@ -178,7 +219,7 @@ func parseRecords(s string, min int) [][]string {
 		if strings.TrimSpace(r) == "" {
 			continue
 		}
-		f := strings.SplitN(r, subSep, min)
+		f := strings.SplitN(r, subSep, max)
 		if len(f) < min {
 			continue
 		}
@@ -226,11 +267,14 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 		"T": "[ctime(" + d + ")]" + fieldSep + "[created(" + d + ")]" + fieldSep + "[mtime(" + d + ")]",
 		"F": "[lflags(" + d + ")]" + fieldSep + "[flags(" + d + ")]",
 		"P": "[lpowers(" + d + ")]" + fieldSep + "[powers(" + d + ")]",
-		"K": "[iter(llocks(" + d + "),##" + subSep + "[lock(" + d + "/##)],,~|~)]",
+		"K": "[iter(llocks(" + d + "),##" + subSep + "[lock(" + d + "/##)]" + subSep + "[lockflags(" + d + "/##)],,~|~)]",
+		"W": "[warnings(" + d + ")]",
+		"Y": "[parent(parent(" + d + "))]" + subSep + "[name(parent(parent(" + d + ")))]" + recSep + "[parent(parent(parent(" + d + ")))]" + subSep + "[name(parent(parent(parent(" + d + "))))]",
+		"E": "[get(" + d + "/ALIAS)]" + fieldSep + "[channels(" + d + ")]" + fieldSep + "[quota(" + d + ")]",
 		"C": "[iter(lcon(" + d + "),##" + subSep + "[name(##)],,~|~)]",
 		"X": "[iter(lexits(" + d + "),##" + subSep + "[name(##)],,~|~)]",
 	}
-	got, other, err := e.probe(ctx, sid, capOpt(opts), DefaultFailurePatterns, nil, exprs, []string{"H", "N", "T", "F", "P", "K", "C", "X"})
+	got, other, err := e.probe(ctx, sid, capOpt(opts), DefaultFailurePatterns, nil, exprs, []string{"H", "N", "T", "F", "P", "K", "W", "Y", "E", "C", "X"})
 	if err != nil {
 		return Details{}, err
 	}
@@ -317,9 +361,36 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 			dt.Powers = fields(pf[1])
 		}
 	}
-	for _, r := range parseRecords(got["K"], 2) {
+	for _, r := range parseRecordsN(got["K"], 2, 3) {
 		if ty := strings.TrimSpace(r[0]); ty != "" {
-			dt.Locks = append(dt.Locks, LockInfo{Type: ty, Expr: strings.TrimSpace(r[1])})
+			li := LockInfo{Type: ty, Expr: strings.TrimSpace(r[1]), Flags: []string{}}
+			if len(r) > 2 {
+				li.Flags = parseLockFlags(r[2])
+			}
+			dt.Locks = append(dt.Locks, li)
+		}
+	}
+	if w := strings.TrimSpace(got["W"]); okVal(w) {
+		dt.Warnings = w
+	}
+	dt.ParentChain = []ObjRef{}
+	if dt.Parent != "" {
+		pn := dt.Names[dt.Parent]
+		dt.ParentChain = append(dt.ParentChain, ObjRef{Dbref: dt.Parent, Name: pn})
+		for _, r := range parseRecordsN(got["Y"], 2, 2) {
+			if d := noneDbref(r[0]); d != "" && len(dt.ParentChain) < 4 && okVal(r[1]) {
+				dt.ParentChain = append(dt.ParentChain, ObjRef{Dbref: d, Name: strings.TrimSpace(r[1])})
+			}
+		}
+	}
+	dt.Extra = map[string]string{}
+	if t == "player" {
+		if ef := strings.Split(got["E"], fieldSep); len(ef) == 3 {
+			for i, k := range []string{"alias", "channels", "quota"} {
+				if v := strings.TrimSpace(ef[i]); okVal(v) {
+					dt.Extra[k] = v
+				}
+			}
 		}
 	}
 	dt.Contents = objRefs(got["C"])

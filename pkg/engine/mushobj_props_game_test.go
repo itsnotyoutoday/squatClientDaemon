@@ -24,6 +24,10 @@ type pobj struct {
 	money                                     int
 	attrs                                     map[string]string
 	aflags                                    map[string][]string
+	lflags                                    map[string][]string
+	alocked                                   map[string]bool
+	aowner                                    map[string]string
+	warnings                                  string
 }
 
 var flagLetters = map[string]string{
@@ -60,7 +64,7 @@ func newPGame(t *testing.T, srv *fakemush.Server) *pgame {
 		"#45": {name: "Nveid", typ: "PLAYER", owner: "#45", loc: "#10", home: "#10", money: 120, attrs: map[string]string{}, locks: map[string]string{}},
 		"#123": {name: "Widget", typ: "THING", owner: "#45", loc: "#10", home: "#10", parent: "#130", zone: "#131", money: 5,
 			flags: []string{"DARK", "SAFE"}, powers: []string{"SEE_ALL"},
-			locks: map[string]string{"Basic": "#45|flag^WIZARD", "Use": "=#45"},
+			locks: map[string]string{"Basic": "#45|flag^WIZARD", "Use": "=#45"}, lflags: map[string][]string{"Basic": {"visual", "no_inherit"}},
 			attrs: map[string]string{"DESC": "A widget.", "CMD": "$x:say hi"}, aflags: map[string][]string{"CMD": {"no_command"}}},
 		"#130": {name: "Base Widget", typ: "THING", owner: "#45", loc: "#10", home: "#10", attrs: map[string]string{}, locks: map[string]string{}},
 		"#131": {name: "Zone Master", typ: "THING", owner: "#45", loc: "#10", home: "#10", attrs: map[string]string{}, locks: map[string]string{}},
@@ -204,6 +208,85 @@ func (g *pgame) reply(cmd string) []string {
 		h, v, _ := strings.Cut(cmd[6:], "=")
 		ty, d, _ := strings.Cut(h, " ")
 		return g.guard(d, func(o *pobj) []string { o.locks[ty] = v; return []string{"Locked."} })
+	case strings.HasPrefix(cmd, "@lset "):
+		h, v, _ := strings.Cut(cmd[6:], "=")
+		d, ty, _ := strings.Cut(h, "/")
+		return g.guard(d, func(o *pobj) []string {
+			if _, ok := o.locks[ty]; !ok {
+				return []string{"No such lock."}
+			}
+			neg := strings.HasPrefix(v, "!")
+			f := strings.ToLower(strings.TrimPrefix(v, "!"))
+			if f != "visual" && f != "no_inherit" && f != "no_clone" && f != "wizard" && f != "locked" {
+				return []string{"Unknown lock flag."}
+			}
+			if o.lflags == nil {
+				o.lflags = map[string][]string{}
+			}
+			if neg {
+				o.lflags[ty] = without(o.lflags[ty], f)
+				return []string{"Lock flag reset."}
+			}
+			if !has(o.lflags[ty], f) {
+				o.lflags[ty] = append(o.lflags[ty], f)
+			}
+			return []string{"Lock flag set."}
+		})
+	case strings.HasPrefix(cmd, "@atrlock "):
+		h, v, _ := strings.Cut(cmd[9:], "=")
+		d, at, _ := strings.Cut(h, "/")
+		return g.guard(d, func(o *pobj) []string {
+			if _, ok := o.attrs[at]; !ok {
+				return []string{"No such attribute."}
+			}
+			if o.alocked == nil {
+				o.alocked = map[string]bool{}
+			}
+			o.alocked[at] = v == "on"
+			return []string{"Attribute lock changed."}
+		})
+	case strings.HasPrefix(cmd, "@atrchown "):
+		h, v, _ := strings.Cut(cmd[10:], "=")
+		d, at, _ := strings.Cut(h, "/")
+		return g.guard(d, func(o *pobj) []string {
+			if g.db[v] == nil {
+				return []string{"I can't find that player."}
+			}
+			if !g.wiz && v != g.me {
+				return []string{"Permission denied."}
+			}
+			if o.aowner == nil {
+				o.aowner = map[string]string{}
+			}
+			o.aowner[at] = v
+			return []string{"Attribute owner changed."}
+		})
+	case strings.HasPrefix(cmd, "@warnings "):
+		d, v, _ := strings.Cut(cmd[10:], "=")
+		return g.guard(d, func(o *pobj) []string { o.warnings = v; return []string{"Warnings set."} })
+	case strings.HasPrefix(cmd, "@wcheck "):
+		return []string{"Warning 'exit-unlinked' for Back(#301).", "1 warning."}
+	case strings.HasPrefix(cmd, "examine"):
+		_, d, _ := strings.Cut(cmd, " ")
+		o := g.db[d]
+		if o == nil {
+			return []string{"I can't see that here."}
+		}
+		return []string{"\x1b[1m" + o.name + "(" + d + ")\x1b[0m", "Owner: " + o.owner, "Type: " + o.typ}
+	case strings.HasPrefix(cmd, "&"):
+		a, rest, _ := strings.Cut(cmd[1:], " ")
+		d, v, _ := strings.Cut(rest, "=")
+		return g.guard(d, func(o *pobj) []string {
+			if o.alocked[a] {
+				return []string{"Permission denied."}
+			}
+			if v == "" {
+				delete(o.attrs, a)
+				return []string{"Cleared."}
+			}
+			o.attrs[a] = v
+			return []string{"Set."}
+		})
 	case strings.HasPrefix(cmd, "@unlock/"):
 		ty, d, _ := strings.Cut(cmd[8:], " ")
 		return g.guard(d, func(o *pobj) []string { delete(o.locks, ty); return []string{"Unlocked."} })
@@ -483,6 +566,9 @@ func (g *pgame) fn(fn string, a []string) string {
 			if g.db[obj] == nil || g.db[obj].attrs[attr] == "" {
 				return "#-1 NO SUCH ATTRIBUTE"
 			}
+			if ao := g.db[obj].aowner[attr]; ao != "" {
+				return ao
+			}
 			return g.db[obj].owner
 		}
 		if o == nil {
@@ -546,7 +632,11 @@ func (g *pgame) fn(fn string, a []string) string {
 			if g.db[obj] == nil || g.db[obj].attrs[attr] == "" {
 				return "#-1 NO SUCH ATTRIBUTE"
 			}
-			return strings.Join(g.db[obj].aflags[attr], " ")
+			fl := append([]string(nil), g.db[obj].aflags[attr]...)
+			if g.db[obj].alocked[attr] {
+				fl = append(fl, "locked")
+			}
+			return strings.Join(fl, " ")
 		}
 		if o == nil {
 			return noMatch
@@ -590,6 +680,43 @@ func (g *pgame) fn(fn string, a []string) string {
 		}
 		sort.Strings(n)
 		return strings.Join(n, " ")
+	case "lockflags":
+		obj, ty, _ := strings.Cut(a[0], "/")
+		if g.db[obj] == nil {
+			return noMatch
+		}
+		m := map[string]string{"visual": "v", "no_inherit": "i", "no_clone": "c", "wizard": "w", "locked": "l"}
+		var l string
+		for _, f := range g.db[obj].lflags[ty] {
+			l += m[f]
+		}
+		return l
+	case "elock":
+		obj, ty, _ := strings.Cut(a[0], "/")
+		if g.db[obj] == nil || g.db[a[1]] == nil {
+			return noMatch
+		}
+		expr, ok := g.db[obj].locks[ty]
+		if !ok {
+			return "#-1 NO SUCH LOCK"
+		}
+		return map[bool]string{true: "1", false: "0"}[strings.Contains(expr, a[1]) || expr == ""]
+	case "atrlock":
+		obj, at, _ := strings.Cut(a[0], "/")
+		if g.db[obj] == nil {
+			return noMatch
+		}
+		return map[bool]string{true: "1", false: "0"}[g.db[obj].alocked[at]]
+	case "warnings":
+		if o == nil {
+			return noMatch
+		}
+		return o.warnings
+	case "channels":
+		if o == nil || o.typ != "PLAYER" {
+			return "#-1 NOT A PLAYER"
+		}
+		return "Public Guild"
 	case "lock":
 		obj, ty, _ := strings.Cut(a[0], "/")
 		if g.db[obj] == nil {
