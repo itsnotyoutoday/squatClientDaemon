@@ -48,6 +48,21 @@ func (e *Engine) Input(id, text string) error {
 		case "reload":
 			e.Reload()
 			return nil
+		case "gametype":
+			// /gametype [type|auto]: show, set or re-detect the kind of game (it decides which modules apply)
+			if arg == "" {
+				sn := s.snapshot()
+				if sn.GameType == "" {
+					s.systemLine("% game type: not detected yet. Set it with /gametype pennmush|cobramush|tinymux|tinymush|rhostmush|mush|other")
+				} else {
+					s.systemLine(fmt.Sprintf("%% game type: %s (%s)", sn.GameType, sn.GameTypeSource))
+				}
+				return nil
+			}
+			if err := e.SetGameType(s.id, arg); err != nil {
+				s.systemLine("% /gametype: " + err.Error())
+			}
+			return nil
 		case "colortest":
 			// /colortest: print every colour mode (16, xterm-256, truecolor, styles, UTF-8)
 			for _, sp := range colorTestLines() {
@@ -77,6 +92,7 @@ func (e *Engine) Input(id, text string) error {
 		_ = e.tf.Exec(s.tfName, text)
 		return nil
 	}
+	s.noteUserLine(text)
 	if e.lua.OnInput(s.id, text) {
 		return nil
 	}

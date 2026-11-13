@@ -51,6 +51,7 @@ type pgame struct {
 	override    func(cmd string) ([]string, bool)
 	noLsearch   bool   // lsearch(all,...) answers #-1 PERMISSION DENIED
 	catalogFmt  string // "table" (default), "paren", "dash", "none"
+	version     string // the reply of version() (empty: the function does not exist)
 	noReplyCmds bool   // mutation commands are accepted silently but do nothing
 }
 
@@ -493,6 +494,11 @@ func (g *pgame) call(expr string) string {
 		return ""
 	}
 	switch fn {
+	case "version":
+		if g.version != "" {
+			return g.version
+		}
+		return "#-1 FUNCTION (VERSION) NOT FOUND"
 	case "iter":
 		items := strings.Fields(arg(0))
 		osep := " "

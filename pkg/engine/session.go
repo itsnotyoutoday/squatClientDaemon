@@ -66,10 +66,14 @@ type session struct {
 	storeClosed bool
 	started     bool
 
-	cap      capState     // Capture machinery (capture.go)
-	props    propsCache   // flag/power catalogues (mushobj_props.go)
-	remote   *remoteState // non-nil for sessions held by a squatter
-	noUnread bool         // appendLocked: do not count the next game line as unread
+	cap         capState     // Capture machinery (capture.go)
+	props       propsCache   // flag/power catalogues (mushobj_props.go)
+	remote      *remoteState // non-nil for sessions held by a squatter
+	gameType    string       // see gametype.go
+	gameTypeSrc string
+	probeTimer  func()
+	probeTries  int
+	noUnread    bool // appendLocked: do not count the next game line as unread
 }
 
 func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login string) (*session, error) {
@@ -88,6 +92,9 @@ func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login st
 		login: login, localEcho: true, cols: 80, rows: 24}
 	s.info = proto.SessionInfo{ID: id, Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
 		State: proto.StateConnecting, StartedAt: e.now().UnixMilli(), Attached: 1}
+	if w.GameType != "" && w.GameType != "auto" && ValidGameType(w.GameType) {
+		s.gameType, s.gameTypeSrc = w.GameType, GameSourceCfg
+	}
 	return s, nil
 }
 
@@ -157,7 +164,8 @@ func (s *session) snapshotLocked() SessionInfo {
 	in := s.info
 	in.FirstSeq, in.LastSeq = s.store.Bounds()
 	in.Unread = uint64(len(s.unread))
-	si := SessionInfo{SessionInfo: in, WorldID: s.world.ID, Via: "direct"}
+	si := SessionInfo{SessionInfo: in, WorldID: s.world.ID, Via: "direct",
+		GameType: s.gameType, GameFamily: GameTypeFamily(s.gameType), GameTypeSource: s.gameTypeSrc}
 	if s.remote != nil {
 		si.Via, si.Link = s.remote.sq.id, s.remote.link
 	}
@@ -257,6 +265,13 @@ func (s *session) onConnected() {
 		}
 	}
 	s.mu.Unlock()
+	if login != "" {
+		d := probeSoon
+		if s.world.Login != nil {
+			d += s.world.Login.Delay
+		}
+		s.scheduleProbe(d)
+	}
 	s.e.tf.FireHookWorld(s.tfName, "CONNECT", s.world.Name)
 	s.e.lua.FireEventFor(s.id, "connect", map[string]any{"world": s.id, "name": s.tfName}, true)
 }
@@ -304,6 +319,9 @@ func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts 
 		return 0
 	}
 	l.Seq = seq
+	if kind == proto.KindGame && !prompt {
+		s.noteBannerLocked(l.Plain())
+	}
 	if kind == proto.KindGame && !prompt && !s.noUnread {
 		s.unread = append(s.unread, seq)
 		if over := len(s.unread) - s.e.opts.RingSize; over > 0 {

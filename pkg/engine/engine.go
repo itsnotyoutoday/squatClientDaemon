@@ -45,6 +45,9 @@ type World struct {
 	TLSVerify string // "strict" (default) | "insecure"
 	Encoding  string // "utf-8" (default) | "latin1"
 	Login     *Login
+	// GameType, when set ("pennmush", "cobramush", "tinymux", "tinymush", "rhostmush", "mush", "other"),
+	// is used instead of detecting the game's server.
+	GameType string
 	// Via is "" or "direct" for a direct connection, or the id of a squatter
 	// added with AddSquatter: the daemon then holds the game connection.
 	Via string
@@ -59,6 +62,11 @@ type SessionInfo struct {
 	// (suspended or the squatter connection was closed on purpose) or
 	// "unreachable" (the squatter connection was lost or never established).
 	Link string `json:"link,omitempty"`
+	// GameType is the kind of game ("" until detected); GameFamily is "mush" for the MU* family,
+	// whose module is the Object Editor; GameTypeSource says how it was found.
+	GameType       string `json:"gameType,omitempty"`
+	GameFamily     string `json:"gameFamily,omitempty"`
+	GameTypeSource string `json:"gameTypeSource,omitempty"`
 }
 
 // Options configures an Engine. The zero value is usable.
