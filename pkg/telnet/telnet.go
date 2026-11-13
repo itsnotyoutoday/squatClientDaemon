@@ -106,14 +106,13 @@ type Machine struct {
 	ttypeIdx   int
 	cols, rows int
 
-	z       *inflater
-	zDead   bool // compressed stream failed; remaining input is discarded
-	startZ  bool
-	inZ     bool // currently parsing decompressed output
-	data    []byte
-	reply   []byte
-	events  []Event
-	subSeen bool
+	z      *inflater
+	zDead  bool // compressed stream failed; remaining input is discarded
+	startZ bool
+	inZ    bool // currently parsing decompressed output
+	data   []byte
+	reply  []byte
+	events []Event
 }
 
 // New returns a Machine.
