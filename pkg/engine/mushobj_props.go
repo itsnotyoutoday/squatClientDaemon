@@ -90,6 +90,9 @@ type Details struct {
 	Exits       []ObjRef   `json:"exits"`
 	// AttrCount is -1 when unknown.
 	AttrCount int `json:"attrCount"`
+	// Names maps the dbrefs mentioned above (owner, parent, zone, location,
+	// home, destination) to their names, where the game told.
+	Names map[string]string `json:"names"`
 }
 
 var (
@@ -218,6 +221,8 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 			"[owner(" + d + ")]" + fieldSep + "[parent(" + d + ")]" + fieldSep + "[zone(" + d + ")]" + fieldSep +
 			"[loc(" + d + ")]" + fieldSep + "[home(" + d + ")]" + fieldSep + "[money(" + d + ")]" + fieldSep +
 			"[words(lattr(" + d + "))]",
+		"N": "[name(owner(" + d + "))]" + fieldSep + "[name(parent(" + d + "))]" + fieldSep + "[name(zone(" + d + "))]" +
+			fieldSep + "[name(loc(" + d + "))]" + fieldSep + "[name(home(" + d + "))]",
 		"T": "[ctime(" + d + ")]" + fieldSep + "[created(" + d + ")]" + fieldSep + "[mtime(" + d + ")]",
 		"F": "[lflags(" + d + ")]" + fieldSep + "[flags(" + d + ")]",
 		"P": "[lpowers(" + d + ")]" + fieldSep + "[powers(" + d + ")]",
@@ -225,7 +230,7 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 		"C": "[iter(lcon(" + d + "),##" + subSep + "[name(##)],,~|~)]",
 		"X": "[iter(lexits(" + d + "),##" + subSep + "[name(##)],,~|~)]",
 	}
-	got, other, err := e.probe(ctx, sid, capOpt(opts), DefaultFailurePatterns, nil, exprs, []string{"H", "T", "F", "P", "K", "C", "X"})
+	got, other, err := e.probe(ctx, sid, capOpt(opts), DefaultFailurePatterns, nil, exprs, []string{"H", "N", "T", "F", "P", "K", "C", "X"})
 	if err != nil {
 		return Details{}, err
 	}
@@ -252,7 +257,8 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 	}
 	dt := Details{Dbref: f[0], Name: f[1], Type: t, Owner: noneDbref(f[3]), Parent: noneDbref(f[4]),
 		Zone: noneDbref(f[5]), AttrCount: -1,
-		Flags: []string{}, Powers: []string{}, Locks: []LockInfo{}, Contents: []ObjRef{}, Exits: []ObjRef{}}
+		Flags: []string{}, Powers: []string{}, Locks: []LockInfo{}, Contents: []ObjRef{}, Exits: []ObjRef{},
+		Names: map[string]string{}}
 	loc, home := noneDbref(f[6]), noneDbref(f[7])
 	if t == "exit" {
 		// Penn: loc(exit) is its destination, home(exit) its source room.
@@ -261,6 +267,14 @@ func (e *Engine) FetchDetails(ctx context.Context, sid, dbref string, opts ...Ca
 	} else {
 		dt.Location = loc
 		dt.Home = home
+	}
+	if nf := strings.Split(got["N"], fieldSep); len(nf) == 5 {
+		// owner, parent, zone, loc, home: names of the refs that exist
+		for i, ref := range []string{dt.Owner, dt.Parent, dt.Zone, noneDbref(f[6]), noneDbref(f[7])} {
+			if n := strings.TrimSpace(nf[i]); ref != "" && okVal(n) {
+				dt.Names[ref] = cutAlias(n)
+			}
+		}
 	}
 	if t == "thing" || t == "player" {
 		if n, err := strconv.ParseInt(strings.TrimSpace(f[8]), 10, 64); err == nil {

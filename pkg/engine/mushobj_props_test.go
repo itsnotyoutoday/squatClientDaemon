@@ -45,6 +45,9 @@ func TestFetchDetails(t *testing.T) {
 		if d.AttrCount != 2 {
 			t.Fatalf("attr count %d", d.AttrCount)
 		}
+		if d.Names["#45"] != "Nveid" || d.Names["#130"] != "Base Widget" || d.Names["#131"] != "Zone Master" || d.Names["#10"] != "Lobby" {
+			t.Fatalf("names %+v", d.Names)
+		}
 		r, err := c.e.FetchDetails(ctxT(t), c.sid, "#10")
 		if err != nil || r.Type != "room" {
 			t.Fatalf("%+v %v", r, err)
@@ -58,6 +61,9 @@ func TestFetchDetails(t *testing.T) {
 		x, err := c.e.FetchDetails(ctxT(t), c.sid, "#300")
 		if err != nil || x.Type != "exit" || x.Destination != "#11" || x.Location != "#10" {
 			t.Fatalf("exit: %+v %v", x, err)
+		}
+		if x.Names["#11"] != "Garden" || x.Names["#10"] != "Lobby" {
+			t.Fatalf("exit names %+v", x.Names)
 		}
 		c.clean(t)
 	})
