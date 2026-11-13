@@ -21,6 +21,7 @@ const (
 	GameMUX      = "tinymux"
 	GameTinyMUSH = "tinymush"
 	GameRhost    = "rhostmush"
+	GameTinyMUSE = "tinymuse"
 
 	FamilyMUSH = "mush"
 
@@ -202,6 +203,15 @@ func (e *Engine) DetectGameType(ctx context.Context, id string) (string, error) 
 		plain = append(plain, l.Plain())
 	}
 	t := ParseVersionReply(plain)
+	if t == GameMUSH {
+		// version() missing or not naming the server (TinyMUSE and some others): ask `@version` too
+		if more, err := e.Capture(ctx, id, []string{"@version"}, CaptureOpts{Timeout: 4 * time.Second}); err == nil {
+			for _, l := range more {
+				plain = append(plain, l.Plain())
+			}
+			t = ParseVersionReply(plain)
+		}
+	}
 	s.mu.Lock()
 	s.setGameTypeLocked(t, GameSourcePrb)
 	s.publishInfoLocked()

@@ -55,6 +55,20 @@ func TestSniffOtherMuds(t *testing.T) {
 	}
 }
 
+// version() is missing, so the name comes from @version.
+func TestDetectGameTypeFromAtVersion(t *testing.T) {
+	pboth(t, func(t *testing.T, c penv) {
+		c.g.mu.Lock()
+		c.g.atVersion = "TinyMUSE version 2.2 patchlevel 4"
+		c.g.mu.Unlock()
+		got, err := c.e.DetectGameType(ctxT(t), c.sid)
+		if err != nil || got != engine.GameTinyMUSE {
+			t.Fatalf("%q %v", got, err)
+		}
+		c.clean(t)
+	})
+}
+
 func TestDetectGameType(t *testing.T) {
 	pboth(t, func(t *testing.T, c penv) {
 		c.g.mu.Lock()

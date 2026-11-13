@@ -51,6 +51,7 @@ type pgame struct {
 	override    func(cmd string) ([]string, bool)
 	noLsearch   bool   // lsearch(all,...) answers #-1 PERMISSION DENIED
 	catalogFmt  string // "table" (default), "paren", "dash", "none"
+	atVersion   string // the reply of @version
 	version     string // the reply of version() (empty: the function does not exist)
 	noReplyCmds bool   // mutation commands are accepted silently but do nothing
 }
@@ -274,6 +275,11 @@ func (g *pgame) reply(cmd string) []string {
 			return []string{"I can't see that here."}
 		}
 		return []string{"\x1b[1m" + o.name + "(" + d + ")\x1b[0m", "Owner: " + o.owner, "Type: " + o.typ}
+	case cmd == "@version":
+		if g.atVersion != "" {
+			return []string{g.atVersion}
+		}
+		return []string{"Huh?  Type \"help\" for help."}
 	case strings.HasPrefix(cmd, "&"):
 		a, rest, _ := strings.Cut(cmd[1:], " ")
 		d, v, hasEq := strings.Cut(rest, "=")
