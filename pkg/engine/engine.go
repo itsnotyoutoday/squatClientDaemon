@@ -64,6 +64,10 @@ type SessionInfo struct {
 	Link string `json:"link,omitempty"`
 	// GameType is the kind of game ("" until detected); GameFamily is "mush" for the MU* family,
 	// whose module is the Object Editor; GameTypeSource says how it was found.
+	// Encoding and TLSVerify are the connection settings the session was opened with (so a quick
+	// connect can be saved as a world).
+	Encoding       string `json:"encoding,omitempty"`
+	TLSVerify      string `json:"tlsVerify,omitempty"`
 	GameType       string `json:"gameType,omitempty"`
 	GameFamily     string `json:"gameFamily,omitempty"`
 	GameTypeSource string `json:"gameTypeSource,omitempty"`

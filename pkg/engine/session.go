@@ -166,6 +166,7 @@ func (s *session) snapshotLocked() SessionInfo {
 	in.FirstSeq, in.LastSeq = s.store.Bounds()
 	in.Unread = uint64(len(s.unread))
 	si := SessionInfo{SessionInfo: in, WorldID: s.world.ID, Via: "direct",
+		Encoding: s.world.Encoding, TLSVerify: s.world.TLSVerify,
 		GameType: s.gameType, GameFamily: GameTypeFamily(s.gameType), GameTypeSource: s.gameTypeSrc}
 	if s.remote != nil {
 		si.Via, si.Link = s.remote.sq.id, s.remote.link
