@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
@@ -62,6 +63,9 @@ type SessionInfo struct {
 
 // Options configures an Engine. The zero value is usable.
 type Options struct {
+	// SquatterReconnectDelays is the backoff between automatic reconnect attempts to a lost
+	// squatter connection (the last delay repeats; default 1s, 2s, 5s, 10s, 30s, 60s).
+	SquatterReconnectDelays []time.Duration
 	// ConfigDir holds startup.tf, plugins/ and logs/ (default ~/.squatclient).
 	ConfigDir   string
 	StartupFile string // default ConfigDir/startup.tf
@@ -102,10 +106,13 @@ type Options struct {
 // Engine is the brain. Create with New, release with Close.
 type Engine struct {
 	opts Options
-	log  *slog.Logger
-	tf   *tf.Interp
-	lua  *lua.Runtime
-	bus  *bus
+
+	// noAutoReconnect turns off automatic reconnection of lost squatter connections (default: on).
+	noAutoReconnect atomic.Bool
+	log             *slog.Logger
+	tf              *tf.Interp
+	lua             *lua.Runtime
+	bus             *bus
 
 	ctx    context.Context
 	cancel context.CancelFunc

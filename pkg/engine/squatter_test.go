@@ -405,6 +405,7 @@ func TestRemoteUnreachableAndNoAutoReconnect(t *testing.T) {
 	cfg := env.cfg("sq")
 	cfg.Port = px.port
 	e, r := newEngine(t)
+	e.SetAutoReconnectSquatters(false) // this test is about the explicit-reconnect path
 	if err := e.AddSquatter(cfg); err != nil {
 		t.Fatal(err)
 	}

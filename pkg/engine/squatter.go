@@ -108,6 +108,9 @@ type squatter struct {
 	pending   int                 // attaches awaiting their final backlog frame
 	awayTimer func()              // cancels the away fallback timer
 	closed    bool
+
+	retryCancel func() // pending automatic reconnect attempt (nil = none)
+	attempts    int    // automatic attempts since the connection was lost
 }
 
 func (sq *squatter) name() string {
@@ -256,6 +259,11 @@ func (cfg SquatterConfig) url() string {
 // `since` = the last seq already held; replayed lines are flagged live=false).
 // It never retries: on failure the state says why (unreachable / refused).
 func (e *Engine) ConnectSquatter(ctx context.Context, id string) error {
+	return e.connectSquatter(ctx, id, false)
+}
+
+// connectSquatter is ConnectSquatter; quiet suppresses the error notice (automatic retries).
+func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) error {
 	q := e.getSquatter(id)
 	if q == nil {
 		return ErrNoSquatter
@@ -282,7 +290,9 @@ func (e *Engine) ConnectSquatter(ctx context.Context, id string) error {
 		q.state, q.problem, q.message = state, problem, msg
 		q.mu.Unlock()
 		q.publish()
-		e.bus.publish(Event{Kind: EvNotice, Level: LevelError, Text: msg})
+		if !quiet {
+			e.bus.publish(Event{Kind: EvNotice, Level: LevelError, Text: msg})
+		}
 		q.setLinks(LinkUnreachable, "")
 		return fmt.Errorf("squatter %s: %s: %w", cfg.Name, msg, err)
 	}
@@ -339,7 +349,9 @@ func (e *Engine) ReconnectSquatter(ctx context.Context, id string) error {
 
 // closeConn tears the connection down and marks sessions with link.
 func (q *squatter) closeConn(state, problem, msg, link string) {
+	q.cancelRetry() // closed on purpose: never reconnect behind the user's back
 	q.mu.Lock()
+	q.attempts = 0
 	c, done := q.cl, q.loopDone
 	q.cl, q.loopDone = nil, nil
 	q.state, q.problem, q.message = state, problem, msg

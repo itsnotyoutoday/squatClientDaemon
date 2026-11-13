@@ -116,7 +116,7 @@ func (q *squatter) onLost(c *wire.Client, err error) {
 		return
 	}
 	q.cl, q.loopDone = nil, nil
-	msg, hint := describeLoss(q.cfg.Name, err)
+	msg, hint := describeLoss(q.cfg.Name, err, !q.e.noAutoReconnect.Load())
 	q.state, q.problem, q.message = SqUnreachable, ProblemConnectionLo, msg
 	q.pending = 0
 	if q.awayTimer != nil {
@@ -127,6 +127,7 @@ func (q *squatter) onLost(c *wire.Client, err error) {
 	q.setLinks(LinkUnreachable, "*** "+msg+" "+hint)
 	q.publish()
 	q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: msg})
+	q.scheduleReconnect()
 }
 
 // ---- session creation ---------------------------------------------------------------
@@ -241,14 +242,21 @@ func (e *Engine) dismissRemote(s *session) error {
 
 // describeLoss turns the error that ended a squatter connection into text that
 // says what most likely happened, without promising more than we know.
-func describeLoss(name string, err error) (msg, hint string) {
+func describeLoss(name string, err error, auto bool) (msg, hint string) {
+	stopped := err == nil || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "eof") ||
+		strings.Contains(strings.ToLower(err.Error()), "going away") || strings.Contains(strings.ToLower(err.Error()), "closed")
 	switch {
-	case err == nil || errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "eof") ||
-		strings.Contains(strings.ToLower(err.Error()), "going away") || strings.Contains(strings.ToLower(err.Error()), "closed"):
+	case stopped && auto:
+		return fmt.Sprintf("Squatter %q closed the connection (it was probably stopped or restarted; the game sessions it held may have ended).", name),
+			"Reconnecting automatically; Reconnect in the Squatters dialog tries right away."
+	case stopped:
 		return fmt.Sprintf("Squatter %q closed the connection (it was probably stopped or restarted; the game sessions it held may have ended).", name),
 			"Reconnect to the squatter to see which sessions survived."
+	case auto:
+		return fmt.Sprintf("The link between this computer and squatter %q dropped (%v). Your game connections are held by the squatter and are not affected.", name, err),
+			"Reconnecting automatically; you will catch up on everything that happened meanwhile."
 	default:
-		return fmt.Sprintf("Lost the network connection to squatter %q (%v).", name, err),
-			"If the squatter is still running, your sessions are still running there: reconnect to catch up."
+		return fmt.Sprintf("The link between this computer and squatter %q dropped (%v). Your game connections are held by the squatter and are not affected.", name, err),
+			"Reconnect to the squatter to catch up on everything that happened meanwhile."
 	}
 }
