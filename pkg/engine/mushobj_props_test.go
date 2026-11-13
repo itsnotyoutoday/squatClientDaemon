@@ -552,6 +552,19 @@ func TestMutationTimeoutAndCancel(t *testing.T) {
 	})
 }
 
+func TestUserLockType(t *testing.T) {
+	for _, ok := range []string{"user:gate", "User:x_1", "Basic"} {
+		if err := engine.ValidateLockType(ok); err != nil {
+			t.Fatalf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"user:", "user:a b", "user:a;b", "x:y", "", "1a", "user:a/b"} {
+		if err := engine.ValidateLockType(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}
+
 func TestLockFlagsAndTest(t *testing.T) {
 	pboth(t, func(t *testing.T, c penv) {
 		m, err := c.e.SetLockFlag(ctxT(t), c.sid, "#123", "Use", "visual", true)

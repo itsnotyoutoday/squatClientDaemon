@@ -136,7 +136,7 @@ type Details struct {
 var (
 	reRealDbref = regexp.MustCompile(`^#\d+$`)
 	reFlagName  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	reLockType  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,31}$`)
+	reLockType  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]{0,31}|[Uu][Ss][Ee][Rr]:[A-Za-z0-9_]{1,31})$`)
 )
 
 const (
