@@ -153,7 +153,7 @@ string everywhere, `hasattr()` error strings, behaviour with `LOGIN`-restricted 
 4. A `think`-independent echo, e.g. `@echo <text>` that bypasses `$`-command/`^`-listen processing and
    `NOEVAL` filtering.
 
-When 1-2 exist the engine can prefer them (check `Core.Supports` for `Cobra.Edit 1`) and keep the softcode path as
+When 1-2 exist the engine can prefer them (detected from the GMCP package list the server advertises) and keep the softcode path as
 the fallback; the app-level API (`EditFetchObject` etc.) does not change.
 
 ## 9. App bindings and TypeScript shapes
