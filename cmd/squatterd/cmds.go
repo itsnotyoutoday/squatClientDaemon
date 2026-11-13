@@ -28,7 +28,7 @@ func cmdPair(o *options, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	code, exp, err := as.NewPairing()
+	code, exp, err := as.NewPairingTTL(o.pairValid)
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func cmdPair(o *options, w io.Writer) error {
 		host = "<this-host>"
 	}
 	fmt.Fprintf(w, "Pairing code:    %s\n", code)
-	fmt.Fprintf(w, "Valid until:     %s (10 minutes, single use)\n", exp.Format(time.RFC1123))
+	fmt.Fprintf(w, "Valid until:     %s (%s, single use)\n", exp.Format(time.RFC1123), time.Until(exp).Round(time.Minute))
 	fmt.Fprintf(w, "TLS fingerprint: %s\n", fingerprint(cert))
 	fmt.Fprintf(w, "Connect to:      wss://%s:%d/swp\n", host, o.port)
 	fmt.Fprintln(w, "In SquatClient: add a squatter with that address and enter the code; check the fingerprint matches.")

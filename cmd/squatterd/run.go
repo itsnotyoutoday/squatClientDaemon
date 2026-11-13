@@ -33,6 +33,7 @@ type options struct {
 	logLevel         string
 	maxSessions      int
 	maxClients       int
+	pairValid        time.Duration
 }
 
 func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
@@ -48,6 +49,7 @@ func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
 	fs.StringVar(&o.logLevel, "log-level", "info", "debug|info|warn|error")
 	fs.IntVar(&o.maxSessions, "max-sessions", 64, "maximum sessions (live + ended)")
 	fs.IntVar(&o.maxClients, "max-clients", 32, "maximum simultaneously connected clients")
+	fs.DurationVar(&o.pairValid, "valid", 0, "pair: how long the code stays valid, e.g. 30m, 2h, 24h (default 10m, max 168h)")
 	return fs, o
 }
 

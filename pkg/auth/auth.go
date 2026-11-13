@@ -223,8 +223,23 @@ func NormalizeCode(c string) string {
 	return strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(c))
 }
 
+// MaxPairCodeTTL is the longest validity a pairing code may be given.
+const MaxPairCodeTTL = 7 * 24 * time.Hour
+
 // NewPairing creates a code valid for PairCodeTTL and stores it.
 func (s *Store) NewPairing() (code string, expires time.Time, err error) {
+	return s.NewPairingTTL(PairCodeTTL)
+}
+
+// NewPairingTTL creates a single-use code valid for ttl (0 means PairCodeTTL;
+// capped at MaxPairCodeTTL) and stores it.
+func (s *Store) NewPairingTTL(ttl time.Duration) (code string, expires time.Time, err error) {
+	if ttl <= 0 {
+		ttl = PairCodeTTL
+	}
+	if ttl > MaxPairCodeTTL {
+		ttl = MaxPairCodeTTL
+	}
 	var sb strings.Builder
 	max := big.NewInt(int64(len(pairAlphabet)))
 	for i := 0; i < pairCodeLength; i++ {
@@ -247,7 +262,7 @@ func (s *Store) NewPairing() (code string, expires time.Time, err error) {
 			live = append(live, p)
 		}
 	}
-	exp := now.Add(PairCodeTTL)
+	exp := now.Add(ttl)
 	live = append(live, Pairing{Code: sb.String(), CreatedAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli()})
 	if err := atomicWrite(s.pairingPath(), live); err != nil {
 		return "", time.Time{}, fmt.Errorf("auth: %w", err)
