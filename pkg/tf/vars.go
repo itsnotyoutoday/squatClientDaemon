@@ -41,8 +41,12 @@ func (i *Interp) getVarStr(name string) string {
 }
 
 var partRe = regexp.MustCompile(`^P[0-9]+$`)
+var lastRe = regexp.MustCompile(`^-?L[0-9]*$`)
+var skipRe = regexp.MustCompile(`^-[0-9]+$`)
 
-// lookup resolves a name: positional parameters, match parts, locals, globals.
+// lookup resolves a name: positional parameters and their selectors (%*, %#,
+// %0, %N, %-N, %L, %Ln, %-L, %R), match parts (%P0.., %PL, %PR), %?,
+// locals, globals.
 func (i *Interp) lookup(name string) (Value, bool) {
 	var fr *frame
 	if len(i.frames) > 0 {
@@ -56,9 +60,50 @@ func (i *Interp) lookup(name string) (Value, bool) {
 			return I(int64(len(fr.params))), true
 		case name == "0":
 			return S(fr.name), true
-		case name == "L" && fr.match != nil:
-			return S(fr.match.left), true
-		case name == "R" && fr.match != nil:
+		case name == "?":
+			return i.last, true
+		case name == "R":
+			if len(fr.params) == 0 {
+				return Value{}, false
+			}
+			r := int64(0)
+			if i.rng != nil {
+				r = i.rng(int64(len(fr.params)))
+			}
+			return S(fr.params[r]), true
+		case lastRe.MatchString(name):
+			// L, L2: the last, second-to-last... parameter; -L, -L2: all
+			// except the last n.
+			neg := name[0] == '-'
+			d := strings.TrimPrefix(strings.TrimPrefix(name, "-"), "L")
+			n := 1
+			if d != "" {
+				n, _ = strconv.Atoi(d)
+			}
+			np := len(fr.params)
+			if neg {
+				if n >= np {
+					return Value{}, false
+				}
+				return S(strings.Join(fr.params[:np-n], " ")), true
+			}
+			if n < 1 || n > np {
+				return Value{}, false
+			}
+			return S(fr.params[np-n]), true
+		case skipRe.MatchString(name):
+			n, _ := strconv.Atoi(name[1:])
+			if n >= len(fr.params) {
+				return Value{}, false
+			}
+			return S(strings.Join(fr.params[n:], " ")), true
+		case name == "PL" || name == "PR":
+			if fr.match == nil {
+				return Value{}, false
+			}
+			if name == "PL" {
+				return S(fr.match.left), true
+			}
 			return S(fr.match.right), true
 		case partRe.MatchString(name):
 			if fr.match != nil {

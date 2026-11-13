@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -116,7 +117,8 @@ func (h *oracleHost) Echo(w string, spans []proto.Span) {
 		h.out = append(h.out, canonLine(l))
 	}
 }
-func (h *oracleHost) Now() time.Time { return h.now }
+func (h *oracleHost) SendToWorld(w, t string) error { return errors.New("Not connected.") }
+func (h *oracleHost) Now() time.Time                { return h.now }
 func (h *oracleHost) Schedule(d time.Duration, fn func()) func() {
 	return func() {}
 }

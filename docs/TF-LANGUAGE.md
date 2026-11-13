@@ -43,7 +43,9 @@ macro body when it runs.
 | `%name`, `%{name}` | variable (local first, then global); unset is empty |
 | `%1`..`%9`, `%{N}` | positional parameters (words of the arguments) |
 | `%*` | all arguments as typed; `%#` their count; `%0` the macro name |
-| `%L` `%R` | text left / right of the match (regexp triggers) |
+| `%PL` `%PR` | text left / right of the last regexp match; `%L` is the last positional parameter, `%R` a random one |
+| `%-N` `%{-N}` `%-L` | all parameters but the first N / but the last |
+| `%{sel-default}` | the default when the selector expands to nothing |
 | `%P0`..`%P9`, `%{P12}` | match parts: `P0` the whole match, `P1`.. captures |
 | `%{?name}` | `1` if the variable is set, else `0` |
 | `$[expr]` | value of an expression |
@@ -61,7 +63,7 @@ and then runs the result, which expands again:
 ```
 
 **Triggers** receive `%*` = the line, `%1..` = its words, `%P0` = the whole match,
-`%P1..` = glob wildcards or regexp groups in order, `%L`/`%R` for regexp
+`%P1..` = glob wildcards or regexp groups in order, `%PL`/`%PR` for regexp
 triggers.
 
 ## 3. Expressions
@@ -153,7 +155,7 @@ Patterns:
   `[a-z]` / `[^a-z]` classes, `{red|blue}` alternatives, `\*` a literal. Write
   `*dragon*` to match anywhere. Each wildcard becomes `%P1..`.
 * **simple**: the line must equal the pattern exactly.
-* **regexp**: Go (RE2) syntax, matches anywhere in the line, `%P0..`, `%L`, `%R`.
+* **regexp**: Go (RE2) syntax, matches anywhere in the line, `%P0..`, `%PL`, `%PR`.
 
 Dispatch: matching macros are ordered by priority (high first), then definition
 order. The first one fires; if it has `-F` the next fires too, and so on. Only
@@ -279,7 +281,7 @@ based; `strchr(s, set)` is the first position of any character of `set`, or -1;
 `replace(old, new, s)` replaces every occurrence of old in s (TF argument order); `substitute(text [, attrs [,
 inline]])` replaces the line being processed by a trigger).
 
-Regexp: `regmatch(pattern, string)` returns 1/0 and sets `%P0..%P9`, `%L`, `%R`
+Regexp: `regmatch(pattern, string)` returns 1/0 and sets `%P0..%P9`, `%PL`, `%PR`
 for the rest of the macro.
 
 Math: `abs sin cos tan asin acos atan exp ln log10 pow sqrt rand trunc mod`

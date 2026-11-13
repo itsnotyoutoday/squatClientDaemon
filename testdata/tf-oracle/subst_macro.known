@@ -1,0 +1,1 @@
+After a failed substitution (undefined macro) tf still runs the command with an empty result; here the command is abandoned.

@@ -1,0 +1,13 @@
+[bar] [bar] [barx] [] [bar] [dflt] [5]
+[bar] [6] [3]
+[50] [50] [% n] [100%]
+a
+b
+[
+%ERR
+[]
+[] [dflt] [] []
+[a b  c] [a b  c] [6]
+[x y] [3]
+[a=b]
+ORACLE_END

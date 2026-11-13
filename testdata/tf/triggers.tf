@@ -3,7 +3,7 @@
 /def -p1 -t'* arrives.' low = /echo low priority: %1
 /def -F -p9 -t'Bob arrives.' fall = /echo fall-through first
 /def -n2 -t'ping' shots = /echo pong
-/def -mregexp -t'^(\w+) tells you: (.*)$' tell = /echo tell from %P1 saying [%P2] left=[%L] right=[%R]
+/def -mregexp -t'^(\w+) tells you: (.*)$' tell = /echo tell from %P1 saying [%P2] left=[%PL] right=[%PR]
 /def -msimple -t'exact line' simple = /echo simple matched
 /def -t'secret*' -g hider = /echo hidden
 /def -t'*dragon*' -ahCred hl

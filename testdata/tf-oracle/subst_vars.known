@@ -1,0 +1,1 @@
+/set name = value: tf stores "= value" (and warns); here the spaces around = are accepted (TF-COMPAT section 1).

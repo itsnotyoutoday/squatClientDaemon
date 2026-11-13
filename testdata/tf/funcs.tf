@@ -10,7 +10,7 @@
 /echo [$[time()]] [$[ftime("%Y-%m-%d %H:%M:%S", 0)]] [$[mktime(2000, 1, 1, 0, 0, 0)]]
 /echo [$[ftime("%a %b %e %j %p %I", 86400)]]
 /echo [$[test("1+2")]] [$[eval("/echo hi")]]
-/echo [$[regmatch("(\\d+)-(\\d+)", "abc 12-34 def")]] [%P0] [%P1] [%P2] [%L] [%R]
+/echo [$[regmatch("(\\d+)-(\\d+)", "abc 12-34 def")]] [%P0] [%P1] [%P2] [%PL] [%PR]
 /echo [$[regmatch("zzz", "abc")]] [%P1]
 /echo [$[columns()]] [$[lines()]] [$[is_connected()]] [$[nactive()]] [$[world_info("name")]]
 /echo [$[strip_attr(encode_attr("hi@there", "Cred"))]]
