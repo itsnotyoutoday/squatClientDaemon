@@ -228,6 +228,8 @@ func (s *Server) SendString(x string) {
 	s.t.Helper()
 	s.Peer().SendString(x)
 }
+func (s *Server) EOR()                               { s.t.Helper(); s.Peer().EOR() }
+func (s *Server) GA()                                { s.t.Helper(); s.Peer().GA() }
 func (s *Server) SendLine(x string)                  { s.t.Helper(); s.Peer().SendLine(x) }
 func (s *Server) Will(o byte)                        { s.t.Helper(); s.Peer().Will(o) }
 func (s *Server) Wont(o byte)                        { s.t.Helper(); s.Peer().Wont(o) }
