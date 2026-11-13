@@ -51,7 +51,7 @@ func (e *Engine) Input(id, text string) error {
 		case "colortest":
 			// /colortest: print every colour mode (16, xterm-256, truecolor, styles, UTF-8)
 			for _, sp := range colorTestLines() {
-				s.addLine(proto.KindSystem, sp)
+				s.addLine(proto.KindGame, sp) // plain game lines: system lines are drawn in italic, which would hide the style test
 			}
 			return nil
 		case "secret":
