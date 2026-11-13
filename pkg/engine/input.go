@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
 // Input handles one line typed by the user for a session.
@@ -46,6 +47,12 @@ func (e *Engine) Input(id, text string) error {
 			}
 		case "reload":
 			e.Reload()
+			return nil
+		case "colortest":
+			// /colortest: print every colour mode (16, xterm-256, truecolor, styles, UTF-8)
+			for _, sp := range colorTestLines() {
+				s.addLine(proto.KindSystem, sp)
+			}
 			return nil
 		case "secret":
 			// /secret <text>: send text that must never be echoed, recorded or logged
