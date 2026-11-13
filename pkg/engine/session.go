@@ -67,6 +67,7 @@ type session struct {
 	started     bool
 
 	cap      capState     // Capture machinery (capture.go)
+	props    propsCache   // flag/power catalogues (mushobj_props.go)
 	remote   *remoteState // non-nil for sessions held by a squatter
 	noUnread bool         // appendLocked: do not count the next game line as unread
 }
