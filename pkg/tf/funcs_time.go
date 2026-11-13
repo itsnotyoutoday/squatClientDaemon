@@ -95,8 +95,20 @@ func strftime(t time.Time, f string) string {
 
 func (i *Interp) initTimeFuncs() {
 	i.def("time", 0, 0, func(i *Interp, _ []Value) (Value, error) { return I(i.host.Now().Unix()), nil })
-	i.def("mktime", 6, 6, func(i *Interp, a []Value) (Value, error) {
-		t := time.Date(int(a[0].Int()), time.Month(a[1].Int()), int(a[2].Int()), int(a[3].Int()), int(a[4].Int()), int(a[5].Int()), 0, i.location())
+	i.def("mktime", 1, 7, func(i *Interp, a []Value) (Value, error) {
+		// year [month [day [hour [minute [second [microsecond]]]]]]; omitted
+		// month and day default to 1, the rest to 0.
+		f := [7]int64{0, 1, 1, 0, 0, 0, 0}
+		for k := range a {
+			f[k] = a[k].Int()
+		}
+		if f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > 31 || f[3] < 0 || f[3] > 23 || f[4] < 0 || f[4] > 59 || f[5] < 0 || f[5] > 59 {
+			return I(-1), nil
+		}
+		t := time.Date(int(f[0]), time.Month(f[1]), int(f[2]), int(f[3]), int(f[4]), int(f[5]), int(f[6])*1000, i.location())
+		if f[6] != 0 {
+			return F(float64(t.Unix()) + float64(f[6])/1e6), nil
+		}
 		return I(t.Unix()), nil
 	})
 	i.def("ftime", 1, 2, func(i *Interp, a []Value) (Value, error) {

@@ -1,0 +1,1 @@
+winlines() is the full pane height here (tf reserves a status line); fg_world() is the foreground world name even without a socket.

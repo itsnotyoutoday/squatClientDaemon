@@ -113,7 +113,7 @@ func (i *Interp) initMiscFuncs() {
 	i.def("columns", 0, 0, func(i *Interp, _ []Value) (Value, error) { c, _ := i.host.Screen(); return I(int64(c)), nil })
 	i.def("lines", 0, 0, func(i *Interp, _ []Value) (Value, error) { _, l := i.host.Screen(); return I(int64(l)), nil })
 	i.def("winlines", 0, 0, func(i *Interp, _ []Value) (Value, error) { _, l := i.host.Screen(); return I(int64(l)), nil })
-	i.def("isatty", 0, 0, func(*Interp, []Value) (Value, error) { return I(0), nil })
+	i.def("isatty", 0, 0, func(*Interp, []Value) (Value, error) { return I(1), nil })
 	i.def("systype", 0, 0, func(*Interp, []Value) (Value, error) { return S("unix"), nil })
 }
 

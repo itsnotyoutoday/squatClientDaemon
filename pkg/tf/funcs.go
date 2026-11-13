@@ -22,6 +22,8 @@ func (i *Interp) initFuncs() {
 	i.initMathFuncs()
 	i.initTimeFuncs()
 	i.initMiscFuncs()
+	i.initInputFuncs()
+	i.initInfoFuncs()
 }
 
 // FuncNames lists the built-in function names.

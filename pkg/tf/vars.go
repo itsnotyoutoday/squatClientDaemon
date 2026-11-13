@@ -13,24 +13,66 @@ import (
 // that scripts commonly expect to exist. Others from TF's list are accepted
 // as ordinary variables (see docs/TF-COMPAT.md).
 var builtinVars = map[string]string{
-	"gag": "1", "hilite": "1", "matching": "glob", "mecho": "off", "quiet": "0",
-	"sub": "off", "max_recur": "0", "histsize": "1000", "login": "1",
-	"lpflag": "0", "more": "0", "wrap": "1", "wraplog": "0", "wrapspace": "0",
-	"scroll": "1", "sockmload": "0", "background": "1", "bamf": "0", "borg": "1",
-	"cleardone": "0", "clock": "1", "emulation": "ansi_attr", "insert": "1",
-	"isize": "3", "kecho": "0", "kbnum": "", "lpquote": "0", "meta_esc": "1",
-	"ansi_log": "0", "auto_fg": "1", "redef": "1", "refreshtime": "0",
-	"proxy_host": "", "shpause": "0", "visual": "0", "time_format": "%H:%M",
+	"gag": "on", "hilite": "on", "matching": "glob", "mecho": "off", "quiet": "off",
+	"sub": "off", "max_recur": "100", "histsize": "1000", "login": "on",
+	"lpflag": "off", "more": "off", "wrap": "on", "wraplog": "off", "wrapspace": "4",
+	"scroll": "off", "sockmload": "off", "background": "on", "bamf": "off", "borg": "on",
+	"cleardone": "off", "clock": "on", "emulation": "ansi_attr", "insert": "on",
+	"isize": "3", "kecho": "off", "kbnum": "", "lpquote": "off", "meta_esc": "nonprint",
+	"ansi_log": "off", "auto_fg": "on", "redef": "on", "refreshtime": "100000",
+	"proxy_host": "", "shpause": "on", "visual": "off", "time_format": "%H:%M",
 	"TZ": "", "LANG": "en_US.UTF-8", "prompt_sec": "0", "prompt_usec": "250000",
-	"textdiv": "", "version": "", "hiliteattr": "h", "max_iter": "0", "tabsize": "8",
-	"quitdone": "0", "snarf": "0", "qecho": "0", "wrapsize": "0", "kprefix": "", "bg_output": "1",
-	"expand_tabs": "1", "ptime": "1", "telopt": "0", "textencode": "utf-8", "backslash": "1",
-	"interactive": "1", "wordpunct": "", "gethostbyname": "1", "TERM": "xterm-256color",
+	"textdiv": "on", "version": "", "hiliteattr": "B", "max_iter": "0", "tabsize": "8",
+	"quitdone": "off", "snarf": "off", "qecho": "off", "wrapsize": "79", "kprefix": "", "bg_output": "on",
+	"expand_tabs": "on", "ptime": "1.0", "telopt": "off", "textencode": "utf-8", "backslash": "on",
+	"interactive": "off", "wordpunct": "_", "gethostbyname": "nonblocking", "TERM": "xterm-256color",
+	"hook": "on", "max_trig": "1000", "max_hook": "1000", "gpri": "0", "hpri": "0", "maildelay": "0:01",
+	"atcp": "off", "gmcp": "off", "warn_curly_re": "on", "oldslash": "on", "defcompile": "off",
+	"status_pad": "_", "status_height": "1",
+}
+
+// flagVars are TF's on/off ("enumerated") variables. Assigning 1/on (or any
+// non-zero number) stores "on"; 0/off stores "off". In an expression their
+// numeric value is 1 or 0 and their text is "on" or "off".
+var flagVars = map[string]bool{
+	"gag": true, "hilite": true, "mecho": true, "quiet": true, "login": true, "lpflag": true,
+	"more": true, "wrap": true, "wraplog": true, "scroll": true, "sockmload": true, "background": true,
+	"bamf": true, "borg": true, "cleardone": true, "clock": true, "insert": true, "kecho": true,
+	"lpquote": true, "ansi_log": true, "auto_fg": true, "redef": true, "shpause": true, "visual": true,
+	"textdiv": true, "quitdone": true, "snarf": true, "qecho": true, "bg_output": true,
+	"expand_tabs": true, "telopt": true, "backslash": true, "interactive": true, "hook": true,
+	"atcp": true, "gmcp": true, "warn_curly_re": true, "oldslash": true, "defcompile": true,
+}
+
+// flagValue normalises v for a flag variable.
+func flagValue(v Value) Value {
+	on := false
+	switch strings.ToLower(strings.TrimSpace(v.s)) {
+	case "on", "yes", "true":
+		on = true
+	case "off", "no", "false", "":
+	default:
+		n, _ := numPrefix(v)
+		on = n.Float() != 0
+	}
+	if on {
+		return Value{s: "on", num: true, isInt: true, i: 1, f: 1}
+	}
+	return Value{s: "off", num: true, isInt: true}
+}
+
+// flag reports whether a flag variable is on.
+func (i *Interp) flag(name string) bool {
+	v, ok := i.vars[name]
+	return ok && flagValue(v).i == 1
 }
 
 func (i *Interp) initVars() {
 	for k, v := range builtinVars {
 		i.vars[k] = S(v)
+		if flagVars[k] {
+			i.vars[k] = flagValue(S(v))
+		}
 	}
 	i.vars["version"] = S(i.opts.Version)
 }
@@ -160,7 +202,15 @@ func (i *Interp) setGlobal(name string, v Value) error {
 	if !i.live {
 		return fmt.Errorf("global assignment is not allowed during replay")
 	}
+	if flagVars[name] {
+		v = flagValue(v)
+	}
 	i.vars[name] = v
+	if name == "visual" {
+		if u, ok := i.host.(UIControl); ok {
+			u.SetVisual(v.i == 1)
+		}
+	}
 	return nil
 }
 

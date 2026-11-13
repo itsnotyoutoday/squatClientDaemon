@@ -91,10 +91,10 @@ func (i *Interp) dispatch(world, text string, spans []proto.Span, minPri int, re
 		if res != nil {
 			res.Fired = append(res.Fired, m.Name)
 		}
-		if m.Gag && i.getVarStr("gag") != "0" {
+		if m.Gag && i.flag("gag") {
 			lc.gag = true
 		}
-		if i.getVarStr("hilite") != "0" {
+		if i.flag("hilite") {
 			lc.spans = applyRange(lc.spans, 0, len(text), m.Attr)
 			for _, p := range m.parts {
 				if p.n < len(mi.idx) && mi.idx[p.n][0] >= 0 {

@@ -70,7 +70,7 @@ func (i *Interp) initLibCmds() {
 
 	i.reg("gag", "/gag [pattern [= response]]   (hide matching lines; no argument turns gagging on)", true, func(i *Interp, a string) error {
 		if strings.TrimSpace(a) == "" {
-			return i.setGlobal("gag", S("1"))
+			return i.setGlobal("gag", S("on"))
 		}
 		pat, body := splitEq(a)
 		_, err := i.defFrom("-ag -t"+quoteOpt(pat), body)
@@ -78,7 +78,7 @@ func (i *Interp) initLibCmds() {
 	})
 	i.reg("hilite", "/hilite [pattern [= response]]   (highlight matching lines using $hiliteattr)", true, func(i *Interp, a string) error {
 		if strings.TrimSpace(a) == "" {
-			return i.setGlobal("hilite", S("1"))
+			return i.setGlobal("hilite", S("on"))
 		}
 		attr := i.getVarStr("hiliteattr")
 		if attr == "" {
@@ -105,7 +105,7 @@ func (i *Interp) initLibCmds() {
 		switch strings.ToLower(a) {
 		case "":
 			state := "on"
-			if i.getVarStr("hook") == "0" {
+			if !i.flag("hook") {
 				state = "off"
 			}
 			i.echoText(i.curWorld(), "% Hooks are "+state)
@@ -177,7 +177,7 @@ func (i *Interp) initLibCmds() {
 	i.reg("nogag", "/nogag [pattern]   (remove gags; no argument turns gagging off)", false, func(i *Interp, a string) error {
 		pat := strings.TrimSpace(a)
 		if pat == "" {
-			return i.setGlobal("gag", S("0"))
+			return i.setGlobal("gag", S("off"))
 		}
 		if removeWhere(func(m *Macro) bool { return m.Gag && m.Trigger == pat }) == 0 {
 			return fmt.Errorf("/nogag: no such gag %q", pat)
@@ -187,7 +187,7 @@ func (i *Interp) initLibCmds() {
 	i.reg("nohilite", "/nohilite [pattern]   (remove hilites; no argument turns hiliting off)", false, func(i *Interp, a string) error {
 		pat := strings.TrimSpace(a)
 		if pat == "" {
-			return i.setGlobal("hilite", S("0"))
+			return i.setGlobal("hilite", S("off"))
 		}
 		if removeWhere(func(m *Macro) bool { return !m.Attr.IsZero() && m.Trigger == pat }) == 0 {
 			return fmt.Errorf("/nohilite: no such hilite %q", pat)

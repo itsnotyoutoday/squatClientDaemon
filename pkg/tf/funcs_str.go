@@ -231,7 +231,10 @@ func (i *Interp) initStringFuncs() {
 		}
 		return I(1), nil
 	})
-	i.def("encode_attr", 2, 2, func(_ *Interp, a []Value) (Value, error) {
+	i.def("encode_attr", 1, 2, func(_ *Interp, a []Value) (Value, error) {
+		if len(a) == 1 {
+			return a[0], nil
+		}
 		at, err := ParseAttr(a[1].s)
 		if err != nil {
 			return Value{}, err

@@ -205,7 +205,7 @@ func (h *oracleHost) Log(string, bool, string) error { return nil }
 
 // RunOurs runs the case through pkg/tf and returns canonical output.
 func RunOurs(src string) string {
-	h := &oracleHost{world: "main", now: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}
+	h := &oracleHost{world: "", now: time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}
 	i := tf.New(h, tf.Options{Rand: func(n int64) int64 { return 0 }})
 	_ = i.LoadString("oracle.tf", GenScript(src, "", 0))
 	if strings.Contains(src, ";@net") {

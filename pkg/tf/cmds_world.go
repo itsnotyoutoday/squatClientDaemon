@@ -71,11 +71,14 @@ func (i *Interp) initWorldCmds() {
 			w = v
 		}
 		rest = strings.TrimSpace(rest)
-		return i.host.Log(w, rest != "off" && rest != "", rest)
-	})
-	i.reg("input", "/input text   (insert text into the input line)", false, func(i *Interp, a string) error {
-		if i.live {
-			i.host.Input(i.curWorld(), a)
+		on := rest != "off" && rest != ""
+		if err := i.host.Log(w, on, rest); err != nil {
+			return err
+		}
+		if on {
+			i.nlogs++
+		} else if i.nlogs > 0 {
+			i.nlogs--
 		}
 		return nil
 	})

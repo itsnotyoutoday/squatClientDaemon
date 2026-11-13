@@ -25,6 +25,7 @@ func (i *Interp) initCommands() {
 	i.initVarCmds()
 	i.initMacroCmds()
 	i.initLibCmds()
+	i.initInputCmds()
 	i.initWorldCmds()
 	i.initMiscCmds()
 }
@@ -256,7 +257,7 @@ func (i *Interp) initMiscCmds() {
 	}
 	i.reg("exit", "/exit", false, quit)
 	i.reg("quit", "/quit", false, quit)
-	for _, n := range []string{"edit", "recordline", "watchdog", "watchname", "liststreams", "suspend", "sh", "core", "lcd"} {
+	for _, n := range []string{"edit", "recordline", "watchdog", "watchname", "liststreams", "sh", "core", "lcd"} {
 		n := n
 		i.reg(n, "/"+n+" (not available)", false, func(*Interp, string) error {
 			return fmt.Errorf("/%s: not implemented in this client (see docs/TF-COMPAT.md)", n)

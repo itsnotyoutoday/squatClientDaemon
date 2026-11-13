@@ -107,12 +107,6 @@ func (i *Interp) initMacroCmds() {
 		}
 		return nil
 	})
-	i.reg("dokey", "/dokey name", false, func(i *Interp, a string) error {
-		if i.live {
-			i.host.DoKey(i.curWorld(), strings.TrimSpace(a))
-		}
-		return nil
-	})
 	i.reg("load", "/load [-q] file", false, func(i *Interp, a string) error { return i.cmdLoad(a, false) })
 	i.reg("require", "/require [-q] file   (load once)", false, func(i *Interp, a string) error { return i.cmdLoad(a, true) })
 	i.reg("save", "/save file [glob]   (write macro definitions)", false, func(i *Interp, a string) error {

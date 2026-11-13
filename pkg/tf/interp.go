@@ -45,6 +45,10 @@ type matchInfo struct {
 // multiple goroutines (calls are serialised) but host callbacks must not
 // re-enter it.
 type Interp struct {
+	kbText []rune // shadow input buffer (when the Host has no InputBuffer)
+	kbPos  int
+	nlogs  int // open /log files (nlog())
+
 	mu   sync.Mutex
 	host Host
 	opts Options

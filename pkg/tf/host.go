@@ -70,6 +70,27 @@ type Host interface {
 	Quit() // /exit /quit
 }
 
+// InputBuffer is an optional extension a Host may implement to expose the
+// GUI input line to scripts (the kb* functions, /input, and the editing keys
+// of /dokey). Positions are character (rune) indexes. A Host that does not
+// implement it still works: the interpreter then keeps a private shadow
+// buffer so scripts that only talk to themselves behave consistently.
+type InputBuffer interface {
+	// InputBuffer returns the current input line and the cursor position.
+	InputBuffer() (text string, cursor int)
+	// SetInputBuffer replaces the input line and moves the cursor.
+	SetInputBuffer(text string, cursor int)
+}
+
+// UIControl is an optional Host extension for terminal-style screen control
+// that has a GUI meaning: the split input/status layout (/set visual),
+// repaint (/dokey redraw) and minimising the window (/suspend).
+type UIControl interface {
+	SetVisual(on bool)
+	Redraw()
+	Suspend()
+}
+
 // NopHost implements Host with no-ops (Now returns the wall clock). Embed it
 // in a test or adapter and override what matters.
 type NopHost struct{}
