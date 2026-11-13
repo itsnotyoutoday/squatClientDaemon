@@ -34,14 +34,14 @@ func (i *Interp) initVarCmds() {
 			i.echoText(i.curWorld(), fmt.Sprintf("/set %s=%s", n, quoteVal(val)))
 			return nil
 		}
-		return i.setVar(n, S(v))
+		return i.setGlobal(n, S(v))
 	})
 	i.reg("setenv", "/setenv name=value   (set and export)", false, func(i *Interp, a string) error {
 		n, v, has := splitAssign(a)
 		if n == "" || !has {
 			return fmt.Errorf("usage: /setenv name=value")
 		}
-		if err := i.setVar(n, S(v)); err != nil {
+		if err := i.setGlobal(n, S(v)); err != nil {
 			return err
 		}
 		i.exported[n] = true

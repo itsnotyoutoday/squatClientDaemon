@@ -19,6 +19,7 @@ const (
 	nWhile
 	nDo
 	nFor
+	nForLine // TF form: /for var start end command (one statement, expanded first)
 )
 
 type clause struct {
@@ -209,6 +210,18 @@ func (np *nparser) block(until []string) ([]node, string, error) {
 			if v == "" || from == "" || to == "" {
 				return nil, "", fmt.Errorf("usage: /for var start end body... /done")
 			}
+			hasDone := false
+			for j := np.p + 1; j < len(np.st); j++ {
+				if keyword(np.st[j]) == "done" {
+					hasDone = true
+				}
+			}
+			if strings.TrimSpace(r3) != "" && !hasDone {
+				// TinyFugue form: the command is the rest of this statement.
+				np.p++
+				out = append(out, node{kind: nForLine, fvar: v, ffrom: from, fto: to, text: r3})
+				continue
+			}
 			np.inject(r3)
 			body, term, err := np.block([]string{"done"})
 			if err != nil {
@@ -313,6 +326,8 @@ func (i *Interp) execNode(n *node) error {
 				}
 			}
 		}
+	case nForLine:
+		return i.execForLine(n)
 	case nFor:
 		from, err := i.evalExprText(n.ffrom)
 		if err != nil {
@@ -322,6 +337,7 @@ func (i *Interp) execNode(n *node) error {
 		if err != nil {
 			return i.fail(err)
 		}
+		defer i.restoreLocal(n.fvar)()
 		for x := from.Int(); x <= to.Int(); x++ {
 			if err := i.tick(); err != nil {
 				return err
@@ -380,4 +396,62 @@ func (i *Interp) execStmt(text string) error {
 		}
 	}
 	return i.fail(c.fn(i, args))
+}
+
+// execForLine runs the TinyFugue form "/for var start end command". As in TF
+// the whole line is substituted once before the loop, so a loop body that
+// wants the counter written %%var (or {var}); the body is substituted again
+// on every pass.
+func (i *Interp) execForLine(n *node) error {
+	var parts [3]string
+	for k, t := range []string{n.fvar, n.ffrom, n.fto} {
+		ex, err := i.expand(t)
+		if err != nil {
+			return i.fail(err)
+		}
+		parts[k] = ex
+	}
+	body, err := i.expand(n.text)
+	if err != nil {
+		return i.fail(err)
+	}
+	from, err := i.evalExprText(parts[1])
+	if err != nil {
+		return i.fail(err)
+	}
+	to, err := i.evalExprText(parts[2])
+	if err != nil {
+		return i.fail(err)
+	}
+	defer i.restoreLocal(parts[0])()
+	for x := from.Int(); x <= to.Int(); x++ {
+		if err := i.tick(); err != nil {
+			return err
+		}
+		if err := i.setLocal(parts[0], I(x)); err != nil {
+			return i.fail(err)
+		}
+		err := i.execBody(body)
+		if errors.Is(err, errBreak) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreLocal returns a func that puts the current frame's local variable
+// name back as it is now (a /for counter does not outlive its loop).
+func (i *Interp) restoreLocal(name string) func() {
+	fr := i.top()
+	old, had := fr.locals[name]
+	return func() {
+		if had {
+			fr.locals[name] = old
+		} else {
+			delete(fr.locals, name)
+		}
+	}
 }

@@ -40,6 +40,7 @@ const (
 	tID
 	tRef
 	tOp
+	tSub // $[expr] inside an expression: evaluated at run time
 )
 
 type token struct {
@@ -56,6 +57,13 @@ func lexExpr(src string) ([]token, error) {
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			k++
+		case c == '$' && k+1 < len(src) && src[k+1] == '[':
+			e := closerFor(src, k+1, '[', ']')
+			if e < 0 {
+				return nil, fmt.Errorf("unterminated $[ in expression")
+			}
+			out = append(out, token{k: tSub, s: src[k+2 : e-1]})
+			k = e
 		case isDigit(c) || (c == '.' && k+1 < len(src) && isDigit(src[k+1])):
 			e := k
 			if c == '0' && k+1 < len(src) && (src[k+1] == 'x' || src[k+1] == 'X') {
@@ -570,6 +578,9 @@ func (p *exprParser) primary() (evalFn, error) {
 	case tNum, tStr:
 		v := t.v
 		return func(*Interp) (Value, error) { return v, nil }, nil
+	case tSub:
+		src := t.s
+		return func(i *Interp) (Value, error) { return i.evalExprText(src) }, nil
 	case tRef:
 		name := t.s
 		return func(i *Interp) (Value, error) { v, _ := i.lookup(name); return v, nil }, nil

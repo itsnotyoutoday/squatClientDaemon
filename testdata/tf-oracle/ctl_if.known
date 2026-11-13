@@ -1,0 +1,1 @@
+The list-condition form "/if cmd %; /then ..." (and /while cmd %; /do ...) is not implemented; only /if (expr).

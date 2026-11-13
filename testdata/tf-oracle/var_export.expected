@@ -1,0 +1,6 @@
+[1]
+[val]
+[gone]
+/set v1=a
+/set v2=b
+ORACLE_END

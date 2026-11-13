@@ -119,7 +119,11 @@ func (i *Interp) lookup(name string) (Value, bool) {
 			}
 			return Value{}, false
 		}
-		if v, ok := fr.locals[name]; ok {
+	}
+	// Locals are dynamically scoped: the nearest running macro (outward
+	// through its callers) that /let the name wins over a global.
+	for k := len(i.frames) - 1; k >= 0; k-- {
+		if v, ok := i.frames[k].locals[name]; ok {
 			return v, true
 		}
 	}
@@ -135,13 +139,23 @@ func (i *Interp) setVar(name string, v Value) error {
 	if len(v.s) > maxValueLen {
 		return fmt.Errorf("value too long")
 	}
-	if len(i.frames) > 0 {
-		if fr := i.top(); fr.locals != nil {
-			if _, ok := fr.locals[name]; ok {
-				fr.locals[name] = v
-				return nil
-			}
+	for k := len(i.frames) - 1; k >= 0; k-- {
+		if _, ok := i.frames[k].locals[name]; ok {
+			i.frames[k].locals[name] = v
+			return nil
 		}
+	}
+	return i.setGlobal(name, v)
+}
+
+// setGlobal assigns a global variable (what /set does, even when a local of
+// the same name shadows it).
+func (i *Interp) setGlobal(name string, v Value) error {
+	if !validName(name) {
+		return fmt.Errorf("invalid variable name %q", name)
+	}
+	if len(v.s) > maxValueLen {
+		return fmt.Errorf("value too long")
 	}
 	if !i.live {
 		return fmt.Errorf("global assignment is not allowed during replay")

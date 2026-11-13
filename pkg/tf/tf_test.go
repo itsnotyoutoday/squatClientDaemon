@@ -120,7 +120,7 @@ func TestScopingAndVars(t *testing.T) {
 		"/listvar E",
 		"/export g",
 	)
-	want := []string{"in=changed", "out=1", "2", "2", "[]", "/setenv E=exported", "% /export: g is not set"}
+	want := []string{"in=local", "out=changed", "2", "2", "[]", "/setenv E=exported", "% /export: g is not set"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
