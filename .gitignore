@@ -5,3 +5,4 @@ dist/
 coverage.txt
 go.work
 go.work.sum
+.tf-oracle

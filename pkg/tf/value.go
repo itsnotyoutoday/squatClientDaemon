@@ -57,11 +57,81 @@ func B(b bool) Value {
 	return I(0)
 }
 
+// formatFloat renders a float like TinyFugue: 15 significant digits (%g
+// style, so 0.1+0.2 prints 0.3), and a trailing "." when the result would
+// otherwise look like an integer (so a float stays distinguishable: 1024.).
 func formatFloat(f float64) string {
-	if math.Abs(f) < 1e21 {
-		return strconv.FormatFloat(f, 'f', -1, 64)
+	s := strconv.FormatFloat(f, 'g', 15, 64)
+	if strings.ContainsAny(s, "e") {
+		// Go prints e+20 / e-07; C prints e+20 / e-07 as well, but with
+		// at least two exponent digits, which Go also does.
+		return s
 	}
-	return strconv.FormatFloat(f, 'g', -1, 64)
+	// TF appends the dot only to all-digit text, so negative floats stay bare.
+	if !strings.ContainsAny(s, ".-") {
+		s += "."
+	}
+	return s
+}
+
+// numPrefix coerces any value to a number the way TF does for arithmetic: a
+// leading numeric prefix ("12abc" is 12, "3.5x" is 3.5, " 5" is 5) and 0 for
+// text with none. The second result reports whether a prefix was found.
+func numPrefix(v Value) (Value, bool) {
+	if v.num {
+		return v, true
+	}
+	s := strings.TrimLeft(v.s, " \t")
+	k := 0
+	if k < len(s) && (s[k] == '-' || s[k] == '+') {
+		k++
+	}
+	d := k
+	for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+		k++
+	}
+	digits := k > d
+	isFloat := false
+	if k < len(s) && s[k] == '.' {
+		j := k + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if digits || j > k+1 {
+			digits = digits || j > k+1
+			isFloat = true
+			k = j
+		}
+	}
+	if !digits {
+		return I(0), false
+	}
+	if k < len(s) && (s[k] == 'e' || s[k] == 'E') {
+		j := k + 1
+		if j < len(s) && (s[j] == '-' || s[j] == '+') {
+			j++
+		}
+		if j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+			k = j
+			isFloat = true
+		}
+	}
+	t := s[:k]
+	if !isFloat {
+		if i, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return I(i), true
+		}
+	}
+	if f, err := strconv.ParseFloat(t, 64); err == nil && !math.IsInf(f, 0) {
+		if isFloat {
+			return F(f), true
+		}
+		return F(f), true
+	}
+	return I(0), false
 }
 
 func parseIntText(s string) (int64, bool) {
@@ -140,13 +210,14 @@ func (v Value) Int() int64 {
 	return int64(v.f)
 }
 
-// Truth is TF truthiness: numbers are true when non-zero, other text when
-// non-empty.
+// Truth is TF truthiness: the value's numeric form is non-zero. Text is read
+// by its leading number, so plain words (and the empty string) are false.
 func (v Value) Truth() bool {
 	if v.num {
 		return v.f != 0
 	}
-	return v.s != ""
+	n, _ := numPrefix(v)
+	return n.Float() != 0
 }
 
 // typeName is what whatis() reports.

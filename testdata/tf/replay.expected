@@ -5,7 +5,7 @@ line main gag=false fired=[gld]: <bg=3>some gold</>
 ## var seen
 var seen="" set=false
 ## line main you attack the orc
-send main: flee 
+send main: flee
 notify: under attack | 
 line main gag=true fired=[atk]: <fg=1,b>you attack the orc</>
 ## line main some gold

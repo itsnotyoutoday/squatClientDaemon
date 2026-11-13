@@ -270,7 +270,7 @@ func (p *exprParser) comma() (evalFn, error) {
 	}, nil
 }
 
-var assignOps = map[string]bool{"=": true, ":=": true, "+=": true, "-=": true, "*=": true, "/=": true}
+var assignOps = map[string]bool{":=": true, "+=": true, "-=": true, "*=": true, "/=": true}
 
 func (p *exprParser) assign() (evalFn, error) {
 	t := p.peek()
@@ -308,9 +308,11 @@ func (p *exprParser) ternary() (evalFn, error) {
 	if !p.accept("?") {
 		return c, nil
 	}
-	a, err := p.assign()
-	if err != nil {
-		return nil, err
+	var a evalFn
+	if !p.isOp(":") { // "n ? : e2" yields n when it is true
+		if a, err = p.assign(); err != nil {
+			return nil, err
+		}
 	}
 	if !p.accept(":") {
 		return nil, fmt.Errorf("expected ':' in ?: expression")
@@ -325,6 +327,9 @@ func (p *exprParser) ternary() (evalFn, error) {
 			return v, err
 		}
 		if v.Truth() {
+			if a == nil {
+				return v, nil
+			}
 			return a(i)
 		}
 		return b(i)
@@ -334,8 +339,7 @@ func (p *exprParser) ternary() (evalFn, error) {
 var binLevels = [][]string{
 	{"|", "||"},
 	{"&", "&&"},
-	{"==", "!=", "=~", "!~", "=/", "!/"},
-	{"<", ">", "<=", ">="},
+	{"==", "=", "!=", "=~", "!~", "=/", "!/", "<", ">", "<=", ">="},
 	{"+", "-"},
 	{"*", "/"},
 }
@@ -372,19 +376,20 @@ func (p *exprParser) binary(level int) (evalFn, error) {
 			left = func(i *Interp) (Value, error) {
 				a, err := l(i)
 				if err != nil || a.Truth() {
-					return B(err == nil), err
+					return a, err
 				}
-				b, err := r(i)
-				return B(b.Truth()), err
+				return r(i)
 			}
 		case "&", "&&":
 			left = func(i *Interp) (Value, error) {
 				a, err := l(i)
 				if err != nil || !a.Truth() {
-					return B(false), err
+					if err == nil && !a.num {
+						a = I(0)
+					}
+					return a, err
 				}
-				b, err := r(i)
-				return B(b.Truth()), err
+				return r(i)
 			}
 		default:
 			o := op
@@ -404,6 +409,22 @@ func (p *exprParser) binary(level int) (evalFn, error) {
 }
 
 func binop(op string, a, b Value) (Value, error) {
+	if op == "=" {
+		op = "=="
+	}
+	switch op {
+	case "==", "!=", "<", ">", "<=", ">=":
+		// TF compares numerically always (so any two words are "equal").
+		// Here text is compared as text when neither side starts with a
+		// number; otherwise both sides are coerced as in TF.
+		if !a.num || !b.num {
+			na, oka := numPrefix(a)
+			nb, okb := numPrefix(b)
+			if oka || okb {
+				a, b = na, nb
+			}
+		}
+	}
 	switch op {
 	case "==":
 		return B(cmpValues(a, b) == 0), nil
@@ -430,6 +451,8 @@ func binop(op string, a, b Value) (Value, error) {
 }
 
 func arith(op string, a, b Value) (Value, error) {
+	a, _ = numPrefix(a)
+	b, _ = numPrefix(b)
 	if (!a.num || a.isInt) && (!b.num || b.isInt) {
 		x, y := a.Int(), b.Int()
 		switch op {
@@ -486,11 +509,13 @@ func (p *exprParser) unary() (evalFn, error) {
 				case "!":
 					return B(!v.Truth()), nil
 				case "-":
+					v, _ = numPrefix(v)
 					if v.num && !v.isInt {
 						return F(-v.f), nil
 					}
 					return I(-v.Int()), nil
 				}
+				v, _ = numPrefix(v)
 				return v, nil
 			}, nil
 		case "++", "--":

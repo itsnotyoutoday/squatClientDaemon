@@ -2,8 +2,13 @@ package tf
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
+
+// Matching ignores case (as TinyFugue globs do). A {a|b} group matches a
+// whole word: it must start at the beginning of the text or after a space and
+// end at a space or the end of the text; alternatives may contain wildcards.
 
 // A glob pattern supports * ? [set] [^set] {alt1|alt2} and backslash escapes.
 // Each wildcard (*, ?, [..], {..}) yields one capture, in order.
@@ -23,7 +28,7 @@ type gtok struct {
 	r    rune
 	neg  bool
 	set  []rune // class: pairs lo,hi
-	alts []string
+	alts []*globPat
 }
 
 type globPat struct{ toks []gtok }
@@ -59,7 +64,7 @@ func compileGlob(p string) *globPat {
 			}
 			t := gtok{kind: gClass}
 			body := rs[k+1 : end]
-			if len(body) > 0 && (body[0] == '^' || body[0] == '!') {
+			if len(body) > 0 && body[0] == '^' {
 				t.neg = true
 				body = body[1:]
 			}
@@ -86,7 +91,11 @@ func compileGlob(p string) *globPat {
 				g.toks = append(g.toks, gtok{kind: gLit, r: c})
 				continue
 			}
-			g.toks = append(g.toks, gtok{kind: gAlt, alts: strings.Split(string(rs[k+1:end]), "|")})
+			t := gtok{kind: gAlt}
+			for _, a := range strings.Split(string(rs[k+1:end]), "|") {
+				t.alts = append(t.alts, compileGlob(a))
+			}
+			g.toks = append(g.toks, t)
 			k = end
 		default:
 			g.toks = append(g.toks, gtok{kind: gLit, r: c})
@@ -116,7 +125,7 @@ func (g *globPat) match(s string) (bool, [][2]int) {
 					return false
 				}
 				r, n := utf8.DecodeRuneInString(s[si:])
-				if r != t.r {
+				if r != t.r && unicode.ToLower(r) != unicode.ToLower(t.r) {
 					return false
 				}
 				si += n
@@ -139,7 +148,9 @@ func (g *globPat) match(s string) (bool, [][2]int) {
 				r, n := utf8.DecodeRuneInString(s[si:])
 				in := false
 				for j := 0; j+1 < len(t.set); j += 2 {
-					if r >= t.set[j] && r <= t.set[j+1] {
+					lo, hi := t.set[j], t.set[j+1]
+					if (r >= lo && r <= hi) || (unicode.ToLower(r) >= lo && unicode.ToLower(r) <= hi) ||
+						(unicode.ToUpper(r) >= lo && unicode.ToUpper(r) <= hi) {
 						in = true
 						break
 					}
@@ -154,10 +165,19 @@ func (g *globPat) match(s string) (bool, [][2]int) {
 				caps = caps[:len(caps)-1]
 				return false
 			case gAlt:
-				for _, a := range t.alts {
-					if strings.HasPrefix(s[si:], a) {
-						caps = append(caps, [2]int{si, si + len(a)})
-						if rec(ti+1, si+len(a)) {
+				if si > 0 && s[si-1] != ' ' {
+					return false
+				}
+				for e := len(s); e >= si; e-- {
+					if e < len(s) && s[e] != ' ' {
+						continue
+					}
+					for _, a := range t.alts {
+						if ok, _ := a.match(s[si:e]); !ok {
+							continue
+						}
+						caps = append(caps, [2]int{si, e})
+						if rec(ti+1, e) {
 							return true
 						}
 						caps = caps[:len(caps)-1]

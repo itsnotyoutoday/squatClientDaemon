@@ -84,7 +84,7 @@ func splitAt(s string, pct bool) []string {
 				k++
 			case n == ';':
 				if pct {
-					out = append(out, s[start:k])
+					out = append(out, strings.TrimRight(s[start:k], " \t"))
 					start = k + 2
 				}
 				k++
@@ -105,7 +105,7 @@ func splitAt(s string, pct bool) []string {
 				}
 			}
 		case c == ';':
-			out = append(out, s[start:k])
+			out = append(out, strings.TrimRight(s[start:k], " \t"))
 			start = k + 1
 		}
 	}

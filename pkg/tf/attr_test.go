@@ -161,7 +161,7 @@ func TestGlobMatcher(t *testing.T) {
 	}{
 		{"*", "", true}, {"a*", "abc", true}, {"*c", "abc", true}, {"a*c", "abc", true}, {"a*c", "ab", false},
 		{"a?c", "abc", true}, {"a?c", "ac", false}, {"[abc]x", "bx", true}, {"[^abc]x", "bx", false},
-		{"[a-c]x", "cx", true}, {"{foo|bar}baz", "barbaz", true}, {"{foo|bar}baz", "bazbaz", false},
+		{"[a-c]x", "cx", true}, {"{foo|bar}baz", "barbaz", false}, {"{foo|bar} baz", "bar baz", true}, {"{storm|chup*}*", "Storm jiggles", true}, {"{storm|chup*}*", "stormette jiggles", false}, {"ABC", "abc", true}, {"{foo|bar}baz", "bazbaz", false},
 		{`a\*b`, "a*b", true}, {`a\*b`, "axb", false}, {"héllo*", "héllo wörld", true}, {"?", "é", true},
 		{"[", "[", true}, {"{x", "{x", true}, {"", "", true}, {"", "a", false},
 		{"*a*a*a*a*a*a*a*a*b", strings.Repeat("a", 60), false}, // budget-bounded, must return

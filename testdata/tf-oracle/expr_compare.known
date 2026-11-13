@@ -1,0 +1,1 @@
+Improvement: == != < > <= >= compare as TEXT when neither side starts with a number (tf compares as numbers, so any two words are "equal").

@@ -1,7 +1,7 @@
 echo main: biggest: 9 9
-echo main: 1 
-echo main: 2 
-echo main: 3 
+echo main: 1
+echo main: 2
+echo main: 3
 ## hook main CONNECT main
 hook fired=true
 ## advance 300s

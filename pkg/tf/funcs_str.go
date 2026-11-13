@@ -244,10 +244,15 @@ func (i *Interp) initMathFuncs() {
 		return F(math.Abs(a[0].f)), nil
 	})
 	i.def("trunc", 1, 1, func(_ *Interp, a []Value) (Value, error) {
-		if a[0].IsInt() {
-			return a[0], nil
+		v, _ := numPrefix(a[0])
+		if v.IsInt() {
+			return v, nil
 		}
-		return F(math.Trunc(a[0].Float())), nil
+		f := math.Trunc(v.Float())
+		if f >= math.MaxInt64 || f <= math.MinInt64 {
+			return F(f), nil
+		}
+		return I(int64(f)), nil
 	})
 	i.def("pow", 2, 2, func(_ *Interp, a []Value) (Value, error) { return F(math.Pow(a[0].Float(), a[1].Float())), nil })
 	i.def("mod", 2, 2, func(_ *Interp, a []Value) (Value, error) {
