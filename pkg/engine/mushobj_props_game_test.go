@@ -51,7 +51,6 @@ type pgame struct {
 	override    func(cmd string) ([]string, bool)
 	noLsearch   bool   // lsearch(all,...) answers #-1 PERMISSION DENIED
 	catalogFmt  string // "table" (default), "paren", "dash", "none"
-	cobra       bool   // CobraMUSH: `&A obj` clears, `&A obj=` stores an empty value
 	noReplyCmds bool   // mutation commands are accepted silently but do nothing
 }
 
@@ -281,7 +280,7 @@ func (g *pgame) reply(cmd string) []string {
 			if o.alocked[a] {
 				return []string{"Permission denied."}
 			}
-			if g.cobra && hasEq && v == "" {
+			if hasEq && v == "" {
 				o.attrs[a] = ""
 				return []string{"Set."}
 			}

@@ -198,9 +198,8 @@ func (e *Engine) RenameAttr(ctx context.Context, sid, obj, from, to string, opts
 
 // DeleteAttr removes an attribute and verifies it is gone. Games clear attributes in different
 // ways, so it tries, in order, and re-reads after each:
-//  1. `&ATTR obj`           (no '=': CobraMUSH clears with this form; PennMUSH does too)
-//  2. `&ATTR obj=`          (an empty value: clears on PennMUSH, only empties it on CobraMUSH)
-//  3. `@wipe obj/ATTR`      (last resort; the name is validated, so it cannot contain wildcards)
+//  1. `&ATTR obj`           (no '=': clears on CobraMUSH and PennMUSH; `&ATTR obj=` only empties it)
+//  2. `@wipe obj/ATTR`      (fallback; the name is validated, so it cannot contain wildcards)
 //
 // A refusal from the game (permission denied, locked attribute...) stops at once with its reply.
 func (e *Engine) DeleteAttr(ctx context.Context, sid, obj, attr string, opts ...CaptureOpts) error {
@@ -208,7 +207,7 @@ func (e *Engine) DeleteAttr(ctx context.Context, sid, obj, attr string, opts ...
 		return err
 	}
 	co := capOpt(opts)
-	cmds := []string{"&" + attr + " " + obj, "&" + attr + " " + obj + "=", "@wipe " + obj + "/" + attr}
+	cmds := []string{"&" + attr + " " + obj, "@wipe " + obj + "/" + attr}
 	var last []string
 	for _, cmd := range cmds {
 		reply, err := e.mutate(ctx, sid, cmd, co)

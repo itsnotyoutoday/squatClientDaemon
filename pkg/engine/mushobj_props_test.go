@@ -708,12 +708,9 @@ func TestWarningsDetailsExamine(t *testing.T) {
 	})
 }
 
-// CobraMUSH clears an attribute with `&ATTR obj` (no '='); `&ATTR obj=` only empties it.
+// CobraMUSH and PennMUSH clear an attribute with `&ATTR obj` (no '='); `&ATTR obj=` only empties it.
 func TestDeleteAttrCobraMUSH(t *testing.T) {
 	pboth(t, func(t *testing.T, c penv) {
-		c.g.mu.Lock()
-		c.g.cobra = true
-		c.g.mu.Unlock()
 		if err := c.e.DeleteAttr(ctxT(t), c.sid, "#123", "CMD"); err != nil {
 			t.Fatal(err)
 		}
