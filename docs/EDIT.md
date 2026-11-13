@@ -194,3 +194,36 @@ that long: show a spinner and do not run two edits on one session expecting para
 
 None required: `app_edit.go` is in package `main` next to `app.go`, and Wails binds every exported method of `App`.
 The UI agent should add the three methods and the types above to `EngineAPI` (`frontend/src/api`) and the mock.
+
+## 10. Workspace additions (editor view)
+
+Added for the `/edit` workspace (`squatClient/docs/EDIT-WORKSPACE.md`). Engine: `pkg/engine/mushobj_ctl.go`;
+app: `internal/app/edit2.go`, `app_edit2.go`. Same conventions as section 9: results never reject, check `ok`.
+
+| Engine | Sends | Result |
+|---|---|---|
+| `ResolveObject(ctx, sid, target)` | `[num(T)]^\|^[locate(me,T,*)]^\|^[name(num(T))]^\|^[name(locate(me,T,*))]` | `Resolved{Dbref, Name}`; `ErrNoSuchObject`, `ErrAmbiguous` (`#-2`), `ErrPermission` |
+| `Controls(ctx, sid, dbref)` | `[controls(me,D)]` and `[owner(D)]^\|^[owner(me)]` | `Tri` `true`/`false`/`unknown` |
+| `AttrInfo(ctx, sid, dbref, attr)` | `[flags(D/A)]^\|^[lflags(D/A)]^\|^[owner(D/A)]` | `AttrDetail{Known, Flags, FlagNames, Owner, Writable}` |
+
+* `target` is validated with `ValidateObject` (no brackets, commas, `;`, `%`, `=`, `\`...): nothing unvalidated reaches the game.
+  `#n`, `me`, `here` resolve through `num()`; a plain name through `locate(me,<name>,*)` (so it finds things nearby, in
+  inventory and players by `*name`), falling back to `num()`.
+* `Controls`: `1` -> true, `0` -> false, anything else (error string, `Huh?`, empty) -> unknown, except that when
+  `owner(D)` equals `owner(me)` the answer is true. It never guesses `false`.
+* `AttrInfo.Writable` is `false` only when the attribute flag names contain `locked` or `safe`; otherwise `unknown`
+  (the game's reply on save is authoritative). `Known=false` when the game answered with errors for everything.
+* Tests: `pkg/engine/mushobj_ctl_test.go` (direct and via squatter, injection attempts), `internal/app/edit2_test.go`.
+  Not verified against a live game: `locate()` third argument semantics, `lflags(obj/attr)` and `controls()` on MUX/Rhost.
+
+```ts
+// window.go.main.App.EditResolve(sessionId, target): Promise<EditResolveResult>
+// window.go.main.App.EditControls(sessionId, dbref): Promise<EditControlsResult>
+// window.go.main.App.EditAttrInfo(sessionId, dbref, attr): Promise<EditAttrInfoResult>
+export type EditCodeWorkspace = EditCode | 'ambiguous';
+export interface EditResolveResult extends EditResult { dbref: string; name: string }
+export interface EditControlsResult extends EditResult { controls: 'true' | 'false' | 'unknown' }
+export interface EditAttrInfoResult extends EditResult {
+  known: boolean; flags: string; flagNames: string; owner: string; writable: 'true' | 'false' | 'unknown';
+}
+```
