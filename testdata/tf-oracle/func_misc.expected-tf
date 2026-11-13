@@ -1,0 +1,11 @@
+r int decimal string id:string id:string id:
+r int float string int
+[] [] [] [] []
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+ORACLE_END

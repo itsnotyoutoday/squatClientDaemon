@@ -1,0 +1,11 @@
+r int float string string int string
+r int float string int
+[] [] [] [] []
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+%ERR
+ORACLE_END

@@ -1,0 +1,1 @@
+whatis(1.5) says decimal for a literal real and id:string for a variable reference in tf (it sees the unevaluated operand); here float/string.

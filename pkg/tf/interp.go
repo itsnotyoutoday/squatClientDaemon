@@ -309,11 +309,15 @@ type timerRec struct {
 	every  time.Duration
 	cancel func()
 	next   time.Time
+	// explicit: the delay was given with -time (shown in /ps PTIME)
+	explicit bool
 }
 
-func (i *Interp) startTimer(t *timerRec) {
-	t.next = i.host.Now().Add(t.every)
-	t.cancel = i.host.Schedule(t.every, func() { i.fireTimer(t.id) })
+func (i *Interp) startTimer(t *timerRec) { i.startTimerAfter(t, t.every) }
+
+func (i *Interp) startTimerAfter(t *timerRec, d time.Duration) {
+	t.next = i.host.Now().Add(d)
+	t.cancel = i.host.Schedule(d, func() { i.fireTimer(t.id) })
 }
 
 func (i *Interp) fireTimer(id int) {
@@ -323,8 +327,10 @@ func (i *Interp) fireTimer(id int) {
 	if t == nil {
 		return
 	}
-	t.left--
-	if t.left <= 0 {
+	if t.left > 0 {
+		t.left--
+	}
+	if t.left == 0 {
 		delete(i.timers, id)
 	} else {
 		i.startTimer(t)

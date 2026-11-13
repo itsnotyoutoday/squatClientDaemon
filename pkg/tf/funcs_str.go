@@ -206,7 +206,12 @@ func (i *Interp) initStringFuncs() {
 			}
 		}
 		fr.match = mi
-		return I(int64(len(mi.parts))), nil
+		// the count runs through the last group that took part in the match
+		n := len(mi.parts)
+		for n > 1 && idx[2*(n-1)] < 0 {
+			n--
+		}
+		return I(int64(n)), nil
 	})
 	i.def("substitute", 1, 3, func(i *Interp, a []Value) (Value, error) {
 		if i.lineCtx == nil || !i.live {

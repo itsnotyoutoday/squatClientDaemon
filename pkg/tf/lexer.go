@@ -38,27 +38,29 @@ func closerFor(s string, start int, open, close byte) int {
 	return -1
 }
 
-// splitStatements splits a command line into statements at ';' and, unless
-// keepPct is set for a statement, at '%;'. Statements that begin with a
-// "body" command (/def, /repeat, /eval) keep any '%;' intact so that the
-// body is split when it eventually runs. Separators inside $[...], $(...)
-// and %{...} groups are not separators.
+// splitStatements splits a command line into statements at "%;". Separators
+// inside $[...], $(...) and %{...} groups are not separators. A plain ";" is
+// ordinary text, as in TinyFugue (so "/echo a;b" prints a;b). A statement that
+// begins with a "body" command (/def, /repeat, /eval) takes the rest of the
+// line, keeping any "%;" intact so the body is split when it eventually runs.
 func splitStatements(line string) []string {
 	var out []string
-	for _, chunk := range splitAt(line, false) {
-		if isBodyCmd(chunk) {
-			out = append(out, chunk)
-			continue
+	rest := line
+	for {
+		if isBodyCmd(rest) {
+			return append(out, rest)
 		}
-		out = append(out, splitAt(chunk, true)...)
+		k := sepIndex(rest)
+		if k < 0 {
+			return append(out, rest)
+		}
+		out = append(out, strings.TrimRight(rest[:k], " \t"))
+		rest = strings.TrimLeft(rest[k+2:], " \t")
 	}
-	return out
 }
 
-// splitBody splits a macro body at both ';' and '%;'.
-func splitBody(body string) []string {
-	return splitAt(body, true)
-}
+// splitBody splits a macro body at "%;".
+func splitBody(body string) []string { return splitAt(body, true) }
 
 func isBodyCmd(s string) bool {
 	s = strings.TrimLeftFunc(s, unicode.IsSpace)
@@ -70,25 +72,17 @@ func isBodyCmd(s string) bool {
 	return false
 }
 
-// splitAt splits at plain ';' always, and at "%;" when pct is true.
-func splitAt(s string, pct bool) []string {
-	var out []string
-	start := 0
+// sepIndex returns the index of the first "%;" separator outside groups, or -1.
+func sepIndex(s string) int {
 	for k := 0; k < len(s); k++ {
-		c := s[k]
-		switch {
+		switch c := s[k]; {
 		case c == '%' && k+1 < len(s):
-			n := s[k+1]
-			switch {
-			case n == '%':
+			switch s[k+1] {
+			case '%':
 				k++
-			case n == ';':
-				if pct {
-					out = append(out, strings.TrimRight(s[start:k], " \t"))
-					start = k + 2
-				}
-				k++
-			case n == '{':
+			case ';':
+				return k
+			case '{':
 				if e := closerFor(s, k+1, '{', '}'); e > 0 {
 					k = e - 1
 				}
@@ -104,12 +98,26 @@ func splitAt(s string, pct bool) []string {
 					k = e - 1
 				}
 			}
-		case c == ';':
-			out = append(out, strings.TrimRight(s[start:k], " \t"))
-			start = k + 1
 		}
 	}
-	return append(out, s[start:])
+	return -1
+}
+
+// splitAt splits s at every "%;" outside groups (pct is kept for callers that
+// pass false to mean "do not split").
+func splitAt(s string, pct bool) []string {
+	if !pct {
+		return []string{s}
+	}
+	var out []string
+	for {
+		k := sepIndex(s)
+		if k < 0 {
+			return append(out, s)
+		}
+		out = append(out, strings.TrimRight(s[:k], " \t"))
+		s = s[k+2:]
+	}
 }
 
 // words splits s on runs of whitespace.

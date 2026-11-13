@@ -2,7 +2,9 @@ package tf
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -151,43 +153,59 @@ func cmdSend(i *Interp, args string) error {
 
 // ---- timers and /quote ------------------------------------------------------
 
+// parseInterval reads a TF time: seconds, hours:minutes, or
+// hours:minutes:seconds (seconds may be fractional).
 func parseInterval(s string) (float64, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) > 3 || s == "" {
+		return 0, fmt.Errorf("bad time %q", s)
+	}
+	mult := []float64{1}
+	switch len(parts) {
+	case 2:
+		mult = []float64{3600, 60}
+	case 3:
+		mult = []float64{3600, 60, 1}
+	}
 	var total float64
-	for _, p := range strings.Split(s, ":") {
+	for k, p := range parts {
 		v := S(p)
 		if !v.num || v.Float() < 0 {
 			return 0, fmt.Errorf("bad time %q", s)
 		}
-		total = total*60 + v.Float()
+		total += v.Float() * mult[k]
 	}
 	return total, nil
 }
 
+// fmtDTime renders seconds the way /ps shows times: h:mm:ss from a minute up,
+// plain (fractional) seconds below.
+func fmtDTime(sec float64) string {
+	if sec < 60 {
+		return strconv.FormatFloat(math.Round(sec*1e6)/1e6, 'f', -1, 64)
+	}
+	t := int64(sec)
+	return fmt.Sprintf("%d:%02d:%02d", t/3600, t/60%60, t%60)
+}
+
 func (i *Interp) initMiscCmds() {
-	i.reg("repeat", "/repeat [-w<world>] -<seconds|h:m:s> <count> <command>   (without -time: run count times now)", true, cmdRepeat)
-	i.reg("ps", "/ps   (list /repeat timers)", false, func(i *Interp, _ string) error {
-		var ids []int
-		for id := range i.timers {
-			ids = append(ids, id)
-		}
-		sort.Ints(ids)
-		for _, id := range ids {
-			t := i.timers[id]
-			i.echoText(i.curWorld(), fmt.Sprintf("%d: every %gs, %d left: %s", id, t.every.Seconds(), t.left, t.cmd))
-		}
-		return nil
-	})
-	i.reg("kill", "/kill id...   (stop /repeat timers)", false, func(i *Interp, a string) error {
+	i.reg("repeat", "/repeat [-w[world]] [-n] [-<time>|-S] count command   (count may be i for endless; returns the process id)", true, cmdRepeat)
+	i.reg("ps", "/ps [-srq] [-w[world]] [pid]   (list /repeat processes)", false, cmdPs)
+	i.reg("kill", "/kill pid...   (stop /repeat processes)", false, func(i *Interp, a string) error {
+		var first error
 		for _, w := range words(a) {
 			v := S(w)
 			t := i.timers[int(v.Int())]
 			if t == nil {
-				return fmt.Errorf("/kill: no such process %s", w)
+				if first == nil {
+					first = fmt.Errorf("/kill: no process %s", w)
+				}
+				continue
 			}
 			t.cancel()
 			delete(i.timers, t.id)
 		}
-		return nil
+		return first
 	})
 	i.reg("quote", "/quote [-d<send|echo|exec>] [-w<world>] prefix 'file | #command   (shell forms are unavailable)", false, cmdQuote)
 	i.reg("restrict", "/restrict [shell|file|world]   (raise the restriction level; it cannot be lowered)", false, func(i *Interp, a string) error {
@@ -247,32 +265,47 @@ func (i *Interp) initMiscCmds() {
 }
 
 func cmdRepeat(i *Interp, args string) error {
-	o, rest, err := parseOpts(args, "w", "")
-	if err != nil {
-		return err
-	}
 	world := i.curWorld()
-	if w, ok := o['w']; ok {
-		world = w
-	}
 	var every float64
-	timed := false
-	if strings.HasPrefix(rest, "-") {
-		var tok string
-		tok, rest = firstWord(rest)
-		if every, err = parseInterval(tok[1:]); err != nil {
-			return fmt.Errorf("/repeat: %w", err)
+	timed, sync, first := false, false, false
+	rest := strings.TrimLeft(args, " \t")
+	for strings.HasPrefix(rest, "-") && len(rest) > 1 && rest[1] != ' ' {
+		tok, r := firstWord(rest)
+		rest = r
+		switch {
+		case tok == "-S":
+			sync = true
+		case tok == "-n":
+			first = true
+		case tok == "-P":
+			return fmt.Errorf("/repeat: -P (repeat on prompt) is not supported")
+		case strings.HasPrefix(tok, "-w"):
+			if w := tok[2:]; w != "" {
+				world = w
+			}
+		case isDigit(tok[1]) || tok[1] == '.':
+			var err error
+			if every, err = parseInterval(tok[1:]); err != nil {
+				return fmt.Errorf("/repeat: %w", err)
+			}
+			timed = true
+		default:
+			return fmt.Errorf("/repeat: invalid option %s", tok)
 		}
-		timed = true
 	}
 	cs, cmd := firstWord(rest)
+	infinite := cs == "i"
 	cv := S(cs)
-	if !cv.num || cmd == "" || cv.Int() < 1 {
-		return fmt.Errorf("usage: /repeat [-w<world>] -<seconds> <count> <command>")
+	if (!infinite && (!cv.num || cv.Int() < 1)) || cmd == "" {
+		return fmt.Errorf("/repeat: invalid repeat count (%s)", cs)
 	}
 	count := int(cv.Int())
-	if !timed {
-		if count > 10000 {
+	if infinite {
+		count = -1
+	}
+	if sync {
+		i.nextTmr++ // a synchronous repeat still uses up a process id
+		if count > 10000 || infinite {
 			return fmt.Errorf("/repeat: count too large")
 		}
 		for n := 0; n < count; n++ {
@@ -288,13 +321,71 @@ func cmdRepeat(i *Interp, args string) error {
 	if !i.live {
 		return nil
 	}
+	if !timed {
+		every = S(i.getVarStr("ptime")).Float()
+		if every <= 0 {
+			every = 1
+		}
+	}
 	if every < 0.001 {
 		every = 0.001
 	}
 	i.nextTmr++
-	t := &timerRec{id: i.nextTmr, world: world, cmd: cmd, left: count, every: durSeconds(every)}
+	t := &timerRec{id: i.nextTmr, world: world, cmd: cmd, left: count, every: durSeconds(every), explicit: timed}
 	i.timers[t.id] = t
-	i.startTimer(t)
+	if first {
+		i.startTimerAfter(t, 0)
+	} else {
+		i.startTimer(t)
+	}
+	i.last = I(int64(t.id))
+	return nil
+}
+
+func cmdPs(i *Interp, args string) error {
+	o, rest, err := parseOpts(args, "", "sr")
+	if err != nil {
+		return err
+	}
+	_, short := o['s']
+	pid := -1
+	if f := strings.TrimSpace(rest); f != "" {
+		pid = int(S(f).Int())
+	}
+	var ids []int
+	for id := range i.timers {
+		if pid < 0 || id == pid {
+			ids = append(ids, id)
+		}
+	}
+	sort.Ints(ids)
+	if short {
+		for _, id := range ids {
+			i.echoText(i.curWorld(), strconv.Itoa(id))
+		}
+		return nil
+	}
+	i.echoText(i.curWorld(), "  PID     NEXT T D WORLD       PTIME COUNT COMMAND")
+	now := i.host.Now()
+	for _, id := range ids {
+		t := i.timers[id]
+		next := t.next.Sub(now).Seconds()
+		if next < 0 {
+			next = 0
+		}
+		ptime, w := "", ""
+		if t.explicit {
+			ptime = fmtDTime(t.every.Seconds())
+		}
+		if t.world != i.curWorld() {
+			w = t.world
+		}
+		count := "i"
+		if t.left >= 0 {
+			count = strconv.Itoa(t.left)
+		}
+		i.echoText(i.curWorld(), fmt.Sprintf("%5d %8s %c %c %-9s %7s %5s %s", id, fmtDTime(next), 'r', ' ', w, ptime, count, t.cmd))
+	}
 	return nil
 }
 

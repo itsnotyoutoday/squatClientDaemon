@@ -1,4 +1,5 @@
-echo main: 1: every 5s, 3 left: /echo tick
+echo main:   PID     NEXT T D WORLD       PTIME COUNT COMMAND
+echo main:     1        5 r                   5     3 /echo tick
 ## advance 4s
 ## advance 2s
 echo main: tick
@@ -8,7 +9,10 @@ echo main: tick
 echo main: tick
 ## advance 5s
 echo main: ps now:
-echo main: 2: every 10s, 5 left: /echo never
+echo main:   PID     NEXT T D WORLD       PTIME COUNT COMMAND
+echo main:   PID     NEXT T D WORLD       PTIME COUNT COMMAND
+echo main:     2       10 r                  10     5 /echo never
+echo main:   PID     NEXT T D WORLD       PTIME COUNT COMMAND
 ## advance 100s
 echo main: immediate
 echo main: immediate

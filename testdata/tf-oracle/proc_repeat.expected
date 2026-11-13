@@ -1,0 +1,25 @@
+  PID     NEXT T D WORLD       PTIME COUNT COMMAND
+    1 NEXT r             1:00:00     3 /echo hello
+    2 NEXT r             0:30:00     1 /echo dinner
+1
+2
+  PID     NEXT T D WORLD       PTIME COUNT COMMAND
+    1 NEXT r             1:00:00     3 /echo hello
+    2 NEXT r             0:30:00     1 /echo dinner
+  PID     NEXT T D WORLD       PTIME COUNT COMMAND
+[3]
+%ERR
+  PID     NEXT T D WORLD       PTIME COUNT COMMAND
+    2 NEXT r             0:30:00     1 /echo dinner
+    3 NEXT r             1:00:00     1 /echo q
+sync
+sync
+  PID     NEXT T D WORLD       PTIME COUNT COMMAND
+    2 NEXT r             0:30:00     1 /echo dinner
+    3 NEXT r             1:00:00     1 /echo q
+    5 NEXT r                         2 /echo nosecs
+    6 NEXT r             1:00:00     i /echo forever
+%ERR
+5
+6
+ORACLE_END

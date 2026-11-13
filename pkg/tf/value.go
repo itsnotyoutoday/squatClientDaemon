@@ -228,7 +228,7 @@ func (v Value) typeName() string {
 	case v.num:
 		return "float"
 	}
-	return "str"
+	return "string"
 }
 
 func cmpValues(a, b Value) int {

@@ -137,6 +137,9 @@ func canonLine(l string) string {
 		return l
 	}
 	l = strings.TrimRight(l, " \t\r")
+	if m := psRe.FindStringSubmatch(l); m != nil {
+		return m[1] + " NEXT" + m[2] // time left depends on the real clock
+	}
 	if m := listRe.FindStringSubmatch(l); m != nil {
 		return "%L: " + m[1] // /list line; the macro number is not comparable
 	}
@@ -146,6 +149,7 @@ func canonLine(l string) string {
 	return l
 }
 
+var psRe = regexp.MustCompile(`^( *\d+) +(?:\d+:\d\d:\d\d|[\d.]+)( [rq] .*)$`)
 var listRe = regexp.MustCompile(`^(?:% )?(?:\d+: )?(/def .*)$`)
 var tsRe = regexp.MustCompile(`^\d\d:\d\d:\d\d # `)
 

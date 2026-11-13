@@ -57,6 +57,23 @@ func (i *Interp) callFunc(name string, args []Value) (Value, error) {
 		err := i.callMacroWith(m, strings.Join(strs, " "), strs, i.top().world, nil)
 		return i.last, err
 	}
+	// A built-in command can be called as a function with 0 or 1 argument (the
+	// command line); the result is the command's return value.
+	if c := i.cmds[name]; c != nil && len(args) <= 1 {
+		line := ""
+		if len(args) == 1 {
+			line = args[0].s
+		}
+		if !c.raw {
+			var err error
+			if line, err = i.expand(line); err != nil {
+				return Value{}, err
+			}
+		}
+		i.last = I(1)
+		err := c.fn(i, line)
+		return i.last, err
+	}
 	return Value{}, fmt.Errorf("unknown function %s()", name)
 }
 

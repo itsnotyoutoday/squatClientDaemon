@@ -1,0 +1,13 @@
+r 1 [bbb] [aa] [cc]
+r 4 [abc] [a] [b] [c] [] [x] [x]
+r 0 []
+r 3 [hello] [world]
+r 1 [y] []
+r 0 1 1
+r 0
+r 1 []
+r 1 [b]
+r 3 [ab] [b]
+r 1 [123]
+r 1 [abc]
+ORACLE_END

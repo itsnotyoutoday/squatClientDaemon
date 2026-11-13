@@ -12,7 +12,7 @@
 /kill 2
 /ps
 ;@advance 100s
-/repeat 2 /echo immediate
-/repeat -1:30 1 /echo ninety
+/repeat -S 2 /echo immediate
+/repeat -0:1:30 1 /echo ninety
 ;@advance 89s
 ;@advance 1s

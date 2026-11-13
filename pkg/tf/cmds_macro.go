@@ -56,10 +56,15 @@ func (i *Interp) initMacroCmds() {
 		}
 		return nil
 	})
-	i.reg("purge", "/purge [glob]   (remove all macros, or those whose name matches)", false, func(i *Interp, a string) error {
+	i.reg("purge", "/purge [-i] [glob]   (remove macros whose name matches; invisible ones only with -i)", false, func(i *Interp, a string) error {
+		o, a, err := parseOpts(a, "", "i")
+		if err != nil {
+			return err
+		}
+		_, inv := o['i']
 		a = strings.TrimSpace(a)
 		for _, m := range append([]*Macro(nil), i.macros.list...) {
-			if m.Invisible && a == "" {
+			if m.Invisible && !inv {
 				continue
 			}
 			if a == "" || globMatch(a, m.Name) {
@@ -150,19 +155,6 @@ func (i *Interp) setDisabled(a string, dis bool) error {
 		}
 		m.Disabled = dis
 	}
-	return nil
-}
-
-func (i *Interp) defShortcut(cmd, pat, opt string) error {
-	pat = strings.TrimSpace(pat)
-	if pat == "" {
-		return fmt.Errorf("usage: %s pattern", cmd)
-	}
-	m, err := i.parseDef("-" + opt + " -t" + quoteOpt(pat))
-	if err != nil {
-		return err
-	}
-	i.macros.add(m)
 	return nil
 }
 
