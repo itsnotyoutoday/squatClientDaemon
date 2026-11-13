@@ -39,6 +39,24 @@ were chosen and are noted here.
 | Colours | 16/8 colours | attribute strings also accept xterm-256 indices (`C196`), the `rgbRGB` cube, `gray0..23` and truecolour `#rrggbb`. Attribute letters `i` (italic) and `s` (strike) are additions. `B` is bold and `BC<colour>` is a background (a bare `B` immediately followed by `C` always means background). |
 | Extensions | | `/notify`, `/enable`, `/disable`, `/builtin`, `/return`, calling macros as functions, `-E`/`-c` on hooks. |
 
+## 1a. Policy: terminal-only TinyFugue features are out of scope
+
+SquatClient is a GUI client. Anything TinyFugue has *only because it ran in a text terminal* is **not implemented and not planned**.
+Scripts that use them still load: the commands/variables are **accepted and ignored** (no error), so a `.tf` file written for the
+terminal does not break here. Where a GUI equivalent exists, it is a UI setting, not a TF command.
+
+| TF feature | Why it is out | Here |
+|---|---|---|
+| `wrap`, `wraplog`, `wrapspace`, `wrapsize` | Line wrapping is done by the window | UI soft-wrap setting (settings.wrap); `wraplog` only affects `/log` text files |
+| `more`, `/more`-style paging, `morepaused`/`morescroll`/`moresize` | Terminal paging prompt | UI "pause when scrolled up" (settings.pauseOnScroll); functions return 0/neutral values |
+| `/visual`, `visual` | Screen mode toggle; the GUI is always "visual" | no-op |
+| `/redraw`, `/refresh`-style screen repaint, `/suspend`, `/core`, terminal signals (`SIGHUP`, `SIGTERM`, `SIGUSR*` hooks) | Terminal/process control | no-op / N/A |
+| Terminal geometry: status line rows, `status_width` layout details, `isatty`, `termcap`/`TERM` handling, `/lcd`-style cursor handling | Terminal-specific | status *fields* are kept (they drive the GUI status bar); geometry is the window's concern |
+| Keyboard-buffer functions (`kbhead kbtail kbpoint kbgoto kbdel kblen kbmatch kbwordleft kbwordright kb_visual_move`) and `kb*.tf`-style keymaps | Input line is a GUI widget | low priority: may be exposed later over the input widget; not required |
+| `/sh`, `/quote !`, `/ps`/`/kill` process commands | Shell access | kept only behind `/restrict` (default: denied), not terminal-dependent |
+
+`columns()` and `lines()` are kept and return the output pane's size in characters (useful to scripts); NAWS uses the same numbers.
+
 ## 2. Commands
 
 | Command | Status | Note |
