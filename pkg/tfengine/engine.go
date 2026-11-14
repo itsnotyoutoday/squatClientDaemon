@@ -127,7 +127,7 @@ type Engine struct {
 	renames     [][2]string     // /renameworld events of the running call
 	statusDirty bool
 	keySig      string // the bindings the host was last told about
-	muted       bool // world sync is running: its chatter is not shown
+	muted       bool   // world sync is running: its chatter is not shown
 	inKey       bool
 }
 

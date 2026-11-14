@@ -106,8 +106,8 @@ type Host interface {
 	// KeyBindings reports the key sequences scripts have bound whenever they change,
 	// so the input line knows which keystrokes to forward to Engine.Key.
 	KeyBindings(seqs []string)
-	Suspend()           // /suspend
-	Quit()              // /quit
+	Suspend() // /suspend
+	Quit()    // /quit
 }
 
 // HelpProvider is optionally implemented by a Host that has a help browser;
@@ -148,8 +148,8 @@ func (NopHost) SetStatus([]StatusField)          {}
 func (NopHost) SetLimit(string, func(string, string) bool) int {
 	return 1
 }
-func (NopHost) Var(string, string) {}
-func (NopHost) Dialog(string)      {}
+func (NopHost) Var(string, string)   {}
+func (NopHost) Dialog(string)        {}
 func (NopHost) KeyBindings([]string) {}
-func (NopHost) Suspend()           {}
-func (NopHost) Quit()              {}
+func (NopHost) Suspend()             {}
+func (NopHost) Quit()                {}
