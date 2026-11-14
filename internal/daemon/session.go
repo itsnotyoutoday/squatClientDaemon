@@ -34,6 +34,8 @@ type session struct {
 	caps       proto.Caps
 	remoteEcho bool
 	stopping   bool
+	stopReason string // the end reason recorded when stopping (default squatter_stopped)
+	handedOff  bool   // the connection was handed to another process (squatterd reload)
 	dirty      bool
 	closed     bool
 }
@@ -57,11 +59,13 @@ func humanReason(reason, detail string) string {
 		h = "disconnected by client"
 	case proto.EndSquatterStopped:
 		h = "squatterd stopped"
+	case proto.EndSquatterRestarted:
+		h = "squatterd was restarted and could not keep this connection (TLS)"
 	default:
 		h = reason
 	}
 	switch reason {
-	case proto.EndRemoteClosed, proto.EndClientQuit, proto.EndSquatterStopped:
+	case proto.EndRemoteClosed, proto.EndClientQuit, proto.EndSquatterStopped, proto.EndSquatterRestarted:
 		return h // the reason says it all
 	}
 	if detail != "" {
@@ -181,6 +185,9 @@ func (s *session) handle(ev conn.Event) {
 		reason, detail := ev.Reason, ev.Detail
 		if s.stopping {
 			reason, detail = proto.EndSquatterStopped, ""
+			if s.stopReason != "" {
+				reason = s.stopReason
+			}
 		}
 		s.endLocked(reason, detail, ev.LastText)
 	}
@@ -200,7 +207,9 @@ func (s *session) endLocked(reason, detail, lastText string) {
 }
 
 // markStoppedAtLoad turns a session found live on disk into an ended one.
-func (s *session) markStoppedAtLoad() {
+func (s *session) markStoppedAtLoad() { s.markEndedAtLoad(proto.EndSquatterStopped, "") }
+
+func (s *session) markEndedAtLoad(reason, detail string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	last := ""
@@ -213,7 +222,7 @@ func (s *session) markStoppedAtLoad() {
 			}
 		}
 	}
-	s.endLocked(proto.EndSquatterStopped, "", last)
+	s.endLocked(reason, detail, last)
 	close(s.done)
 }
 
