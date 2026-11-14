@@ -46,6 +46,13 @@ Version: **1**. Default port: **10327**. Endpoint: `wss://<host>:10327/swp`.
 
 `deviceId` = first 16 hex chars of sha256 of the raw 32-byte public key.
 
+### 2-. Restart notice
+
+Before a `squatterd reload` the daemon sends every client `{"t":"server.restarting"}` and then drops the
+connections; a client reconnects and replays from its last seq (old clients ignore the unknown type). A
+session whose connection the restart could not carry (a TLS connection to the game) ends with `endReason`
+`"squatter_restarted"`; all others continue as if nothing happened (docs/RELOAD.md).
+
 ### 2a. Named users: login with a key pair
 
 A client may log in as a named user. The hello then carries `"user":"nereus"` and proves possession of

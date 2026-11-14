@@ -1,6 +1,8 @@
 # Restarting the squatterd without losing connections (design note)
 
-Status: design only, nothing is built.
+Status: built and tested (Linux and macOS; not on Windows). `squatterd reload` restarts the running squatterd
+and the game connections survive: plain TCP games, including in the middle of a line and of an MCCP2
+compressed stream. TLS connections to a game end with reason `squatter_restarted`.
 
 Goal: upgrade or restart the squatterd (`squatterd reload`) while the game connections it holds stay up.
 Both references do it the same way (read in the trees under /Users/rock/mush):
@@ -67,3 +69,32 @@ stays no-echo, a TLS session ends cleanly, and a child that fails to start leave
 2. MCCP2 state export; the warning list for sessions that cannot survive.
 3. `admin.reload` and the client menu item.
 4. Optional: holder processes so TLS connections survive too.
+
+## As built
+
+- **`squatterd reload`** talks to the running process over a control socket (`<data-dir>/control.sock`,
+  mode 0600; when that path is too long for a unix socket, `/tmp/squatterd-<uid>/<hash>.sock` in a private
+  directory). It prints each step and exits non-zero if the reload failed. A second squatterd on the same
+  data directory refuses to start while the first one's control socket answers.
+- **Sequence:** the old process sends clients a `server.restarting` message, quiesces every session
+  (`daemon.PrepareHandoff`: reader stopped, scrollback and metadata flushed and closed), closes its HTTP
+  server, writes `handoff.json` and starts `<same binary path> <same arguments>` with the listener (fd 3), a
+  readiness pipe (fd 4) and one socket per carried session (fd 5...) inherited, `SQUATTERD_HANDOFF` naming the
+  file, in its own session (`setsid`). The new process adopts everything, serves, then writes `ready`. The old
+  one exits 0 without touching the connections. The binary path is the one at startup, so an upgrade is: put
+  the new binary at the same path (atomic rename), then `squatterd reload`.
+- **Rollback:** if the new process cannot start, exits, closes the pipe or is not ready within 30 s, the old
+  one kills it and takes the listener and the connections back (it starts a new Daemon from the same
+  handoff) and reports `...; this squatterd kept running`. Tested by replacing the binary with a broken one.
+  One limit: if the new process crashes AFTER it adopted the sockets and read bytes from them but before it
+  said ready, those bytes are lost to the old process; the connections themselves are not.
+- **State carried:** the telnet machine (negotiated options, terminal type position, window size, a half
+  parsed sequence, the MCCP2 decompressor mid-stream: `pkg/telnet/snapshot.go`), the line splitter (a partial
+  line that is not shown yet, an incomplete UTF-8 sequence, the colour in effect: `pkg/ansi/state.go`), the
+  no-echo flag and the clients' read positions (already on disk). Tests cut a stream at every byte position,
+  restore through JSON and compare with an uninterrupted run.
+- **Not carried:** TLS connections to a game and connections still being set up (they end as
+  `squatter_restarted`, with a line saying so), and attached clients (they reconnect and replay by sequence
+  number; SquatClient already does that).
+- **systemd:** the process id changes. Use `ExecReload=squatterd reload --data-dir ...` and do not let systemd
+  stop the old process on reload (`KillMode=process`); tracking by pidfile is still to do.

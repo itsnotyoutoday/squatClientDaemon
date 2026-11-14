@@ -39,6 +39,7 @@ devices.json          paired devices (0600): deviceId, name, publicKey, createdA
 users.json            named users (0600): name, role, disabled, keys[] (ssh keys and device keys: type, fingerprint, addedBy, lastSeen)
 user-pairing.json     one-time codes bound to a user (0600)
 audit.log             append-only JSON lines: every user/key/pairing change (who, what, which user)
+control.sock          unix control socket of the running squatterd (squatterd reload); handoff.json exists only during a reload
 pairing.json          outstanding pairing codes (0600), read fresh at every hello
 tls/cert.pem key.pem  auto-generated ECDSA P-256 cert (key 0600) unless --cert/--key are given
 sessions/<id>/

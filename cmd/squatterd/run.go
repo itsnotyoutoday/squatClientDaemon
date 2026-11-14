@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/internal/daemon"
@@ -121,7 +122,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		return 0
 	case "user":
 		return cmdUser(args, os.Stdin, stdout, stderr)
-	case "serve", "pair", "devices", "revoke", "status":
+	case "serve", "pair", "devices", "revoke", "status", "reload":
 	default:
 		fmt.Fprintf(stderr, "squatterd: unknown command %q\n\n", cmd)
 		printUsage(stderr)
@@ -150,12 +151,60 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		err = cmdRevoke(o, fs.Args(), stdout)
 	case "status":
 		err = cmdStatus(o, stdout)
+	case "reload":
+		err = cmdReload(o, stdout)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "squatterd:", err)
 		return 1
 	}
 	return 0
+}
+
+// server is the running squatterd: the daemon, the wire server and the HTTP server around one TCP
+// listener. It can be handed to a new process (reload_unix.go) and, if that fails, started again.
+type server struct {
+	o       *options
+	log     *slog.Logger
+	as      *auth.Store
+	cert    tlsCert
+	binding []byte
+	scheme  string
+
+	mu         sync.Mutex
+	d          *daemon.Daemon
+	srv        *wire.Server
+	hs         *http.Server
+	rawLn      *net.TCPListener
+	generation int // 0 for a fresh start, n after n reloads
+	errc       chan error
+	handedOver chan struct{} // closed when a new process took over: this one just exits
+	reloadMu   sync.Mutex
+}
+
+// startServing creates the daemon (continuing a handoff if h is set) and serves on rawLn.
+func (s *server) startServing(rawLn *net.TCPListener, h *daemon.Handoff) error {
+	d, err := daemon.New(daemon.Config{DataDir: s.o.dataDir, Logger: s.log, MaxSessions: s.o.maxSessions, Handoff: h})
+	if err != nil {
+		return err
+	}
+	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: s.as, ServerName: "squatterd/" + version, Logger: s.log, MaxClients: s.o.maxClients, TLSBinding: s.binding})
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelWarn)}
+	var ln net.Listener = rawLn
+	if !s.o.insecureLoopback {
+		hs.TLSConfig = tlsutil.ServerConfig(s.cert)
+		ln = tlsListener(ln, hs.TLSConfig)
+	}
+	s.mu.Lock()
+	s.d, s.srv, s.hs, s.rawLn = d, srv, hs, rawLn
+	s.mu.Unlock()
+	go func() {
+		// closing the server on purpose (a reload) is not a failure
+		if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			s.errc <- err
+		}
+	}()
+	return nil
 }
 
 func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)) error {
@@ -170,49 +219,75 @@ func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)
 	if err != nil {
 		return err
 	}
-	d, err := daemon.New(daemon.Config{DataDir: o.dataDir, Logger: log, MaxSessions: o.maxSessions})
-	if err != nil {
-		return err
-	}
+	s := &server{o: o, log: log, as: as, scheme: "wss", errc: make(chan error, 4), handedOver: make(chan struct{})}
 	// the TLS certificate is loaded first: its fingerprint is part of what an ssh-key login signs
-	var cert tlsCert
-	var binding []byte
-	if !o.insecureLoopback {
-		if cert, err = o.cert(); err != nil {
-			_ = d.Shutdown(context.Background())
+	if o.insecureLoopback {
+		s.scheme = "ws"
+	} else {
+		if s.cert, err = o.cert(); err != nil {
 			return err
 		}
-		binding = []byte(tlsutil.CertFingerprint(cert))
+		s.binding = []byte(tlsutil.CertFingerprint(s.cert))
+		log.Info("TLS fingerprint", "sha256", tlsutil.CertFingerprint(s.cert))
 	}
-	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: as, ServerName: "squatterd/" + version, Logger: log, MaxClients: o.maxClients, TLSBinding: binding})
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(o.bind, fmt.Sprint(o.port)))
-	if err != nil {
-		_ = d.Shutdown(context.Background())
+	// started by "squatterd reload": take over the listener and the game connections of the old process
+	var (
+		h      *daemon.Handoff
+		rawLn  *net.TCPListener
+		readyW *os.File
+	)
+	if path := os.Getenv(handoffEnv); path != "" {
+		if h, rawLn, readyW, err = takeOver(path, s); err != nil {
+			return err
+		}
+		defer h.Close()
+	} else {
+		if err := checkNoOtherServer(o.dataDir); err != nil {
+			return err
+		}
+		ln, err := net.Listen("tcp", net.JoinHostPort(o.bind, fmt.Sprint(o.port)))
+		if err != nil {
+			return err
+		}
+		rawLn = ln.(*net.TCPListener)
+	}
+	if err := s.startServing(rawLn, h); err != nil {
+		_ = rawLn.Close()
 		return err
 	}
-	scheme := "wss"
-	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
-	if o.insecureLoopback {
-		scheme = "ws"
-	} else {
-		hs.TLSConfig = tlsutil.ServerConfig(cert)
-		log.Info("TLS fingerprint", "sha256", tlsutil.CertFingerprint(cert))
-		ln = tlsListener(ln, hs.TLSConfig)
+	log.Info("squatterd listening", "version", version, "url", fmt.Sprintf("%s://%s/swp", s.scheme, rawLn.Addr()), "data-dir", o.dataDir, "generation", s.generation)
+	stopControl, err := s.startControl(ctx)
+	if err != nil {
+		log.Warn("control socket not available (squatterd reload will not work)", "err", err)
 	}
-	log.Info("squatterd listening", "version", version, "url", fmt.Sprintf("%s://%s/swp", scheme, ln.Addr()), "data-dir", o.dataDir)
+	if readyW != nil { // tell the old process we are serving
+		_, _ = readyW.WriteString("ready\n")
+		_ = readyW.Close()
+		_ = os.Remove(filepath.Join(o.dataDir, handoffFile))
+	}
 	if ready != nil {
-		ready(ln.Addr().String())
+		ready(rawLn.Addr().String())
 	}
-	errc := make(chan error, 1)
-	go func() { errc <- hs.Serve(ln) }()
 
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down: ending live sessions as squatter_stopped")
-	case err := <-errc:
+	case err := <-s.errc:
 		log.Error("server stopped", "err", err)
+	case <-s.handedOver:
+		log.Info("handed over to a new squatterd process; exiting")
+		if stopControl != nil {
+			stopControl(false)
+		}
+		return nil
 	}
+	if stopControl != nil {
+		stopControl(true)
+	}
+	s.mu.Lock()
+	d, srv, hs := s.d, s.srv, s.hs
+	s.mu.Unlock()
 	sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := d.Shutdown(sctx); err != nil { // clients still connected see the final session.state
