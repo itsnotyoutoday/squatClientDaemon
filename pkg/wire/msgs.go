@@ -52,6 +52,11 @@ type Hello struct {
 	Sig        string      `json:"sig"`
 	PairCode   string      `json:"pairCode,omitempty"`
 	Caps       *proto.Caps `json:"caps,omitempty"`
+	// SSH-key login (docs/SQUATTER-HUB.md): the user name, the public key (ssh wire encoding, base64)
+	// and the ssh signature (base64) over auth.SSHChallengeMessage. PublicKey and Sig are unused then.
+	User   string `json:"user,omitempty"`
+	SSHKey string `json:"sshKey,omitempty"`
+	SSHSig string `json:"sshSig,omitempty"`
 }
 
 // Challenge is the first message the daemon sends.
@@ -68,11 +73,13 @@ type Challenge struct {
 
 // Welcome completes authentication.
 type Welcome struct {
-	V        int                 `json:"v"`
-	T        string              `json:"t"`
-	Server   string              `json:"server"`
-	DeviceID string              `json:"deviceId"`
-	Role     string              `json:"role"`
+	V        int    `json:"v"`
+	T        string `json:"t"`
+	Server   string `json:"server"`
+	DeviceID string `json:"deviceId"`
+	Role     string `json:"role"`
+	// User is the named user of an ssh-key login ("" for a legacy paired device).
+	User     string              `json:"user,omitempty"`
 	Sessions []proto.SessionInfo `json:"sessions"`
 	// Features lists optional protocol features the daemon supports, e.g. "noEcho".
 	Features []string `json:"features,omitempty"`

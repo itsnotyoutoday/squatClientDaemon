@@ -119,6 +119,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 	case "version":
 		fmt.Fprintf(stdout, "squatterd %s (SWP v%d)\n", version, proto.Version)
 		return 0
+	case "user":
+		return cmdUser(args, os.Stdin, stdout, stderr)
 	case "serve", "pair", "devices", "revoke", "status":
 	default:
 		fmt.Fprintf(stderr, "squatterd: unknown command %q\n\n", cmd)
@@ -172,7 +174,17 @@ func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)
 	if err != nil {
 		return err
 	}
-	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: as, ServerName: "squatterd/" + version, Logger: log, MaxClients: o.maxClients})
+	// the TLS certificate is loaded first: its fingerprint is part of what an ssh-key login signs
+	var cert tlsCert
+	var binding []byte
+	if !o.insecureLoopback {
+		if cert, err = o.cert(); err != nil {
+			_ = d.Shutdown(context.Background())
+			return err
+		}
+		binding = []byte(tlsutil.CertFingerprint(cert))
+	}
+	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: as, ServerName: "squatterd/" + version, Logger: log, MaxClients: o.maxClients, TLSBinding: binding})
 
 	ln, err := net.Listen("tcp", net.JoinHostPort(o.bind, fmt.Sprint(o.port)))
 	if err != nil {
@@ -184,12 +196,6 @@ func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)
 	if o.insecureLoopback {
 		scheme = "ws"
 	} else {
-		cert, err := o.cert()
-		if err != nil {
-			_ = ln.Close()
-			_ = d.Shutdown(context.Background())
-			return err
-		}
 		hs.TLSConfig = tlsutil.ServerConfig(cert)
 		log.Info("TLS fingerprint", "sha256", tlsutil.CertFingerprint(cert))
 		ln = tlsListener(ln, hs.TLSConfig)

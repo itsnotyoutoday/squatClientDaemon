@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,8 +32,10 @@ var ErrClosed = errors.New("wire: client closed")
 
 // ClientOptions configures Dial.
 type ClientOptions struct {
-	Key               ed25519.PrivateKey // device key (required)
-	PairCode          string             // one-time pairing code (first connect only)
+	Key ed25519.PrivateKey // device key (required unless SSH is set)
+	// SSH logs in as a named user with an ssh key instead of a paired device key.
+	SSH               *SSHLogin
+	PairCode          string // one-time pairing code (first connect only)
 	DeviceName        string
 	ClientName        string // default "SquatClient"
 	Caps              proto.Caps
@@ -44,6 +47,14 @@ type ClientOptions struct {
 	ExpectKind       string
 	EventBuffer      int // default 256; the reader blocks (TCP backpressure) when full
 	HandshakeTimeout time.Duration
+}
+
+// SSHLogin is an ssh-key login. Sign must sign msg with the user's ssh private key (from ssh-agent or a
+// key file; the private key never leaves the caller) and return the public key (ssh wire encoding) and
+// the ssh signature (type + signature).
+type SSHLogin struct {
+	User string
+	Sign func(msg []byte) (keyBlob, sigBlob []byte, err error)
 }
 
 // Event is one of SessionState, Line, Gmcp, Backlog, Attached, Removed, Error, Closed.
@@ -128,6 +139,7 @@ type Client struct {
 	kind     string // "squatterd" or "tf-squatterd"
 	instance string // tf-squatterd: changes whenever TinyFugue restarts
 	role     string
+	user     string
 	sessions []proto.SessionInfo
 	features []string
 	serverFP atomic.Value // string
@@ -142,8 +154,8 @@ type Client struct {
 
 // Dial connects, authenticates and returns a ready Client.
 func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, error) {
-	if len(opts.Key) != ed25519.PrivateKeySize {
-		return nil, errors.New("wire: ClientOptions.Key is required")
+	if opts.SSH == nil && len(opts.Key) != ed25519.PrivateKeySize {
+		return nil, errors.New("wire: ClientOptions.Key (or SSH) is required")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -202,9 +214,23 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	if opts.ExpectKind != "" && opts.ExpectKind != c.kind {
 		return nil, &KindMismatchError{Want: opts.ExpectKind, Got: c.kind}
 	}
-	sig, err := auth.SignNonce(opts.Key, ch.Nonce)
-	if err != nil {
-		return nil, err
+	var sig string
+	var sshHello *Hello
+	if opts.SSH != nil {
+		nonce, derr := base64.StdEncoding.DecodeString(ch.Nonce)
+		if derr != nil {
+			return nil, fmt.Errorf("wire: bad challenge: %w", derr)
+		}
+		kb, sb, serr := opts.SSH.Sign(auth.SSHChallengeMessage(opts.SSH.User, nonce, []byte(c.ServerFingerprint())))
+		if serr != nil {
+			return nil, fmt.Errorf("wire: signing with the ssh key: %w", serr)
+		}
+		sshHello = &Hello{User: opts.SSH.User, SSHKey: base64.StdEncoding.EncodeToString(kb), SSHSig: base64.StdEncoding.EncodeToString(sb)}
+	} else {
+		var serr error
+		if sig, serr = auth.SignNonce(opts.Key, ch.Nonce); serr != nil {
+			return nil, serr
+		}
 	}
 	name := opts.ClientName
 	if name == "" {
@@ -212,7 +238,12 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	}
 	caps := opts.Caps
 	hello := Hello{V: proto.Version, T: THello, Client: name, DeviceName: opts.DeviceName,
-		PublicKey: auth.PublicKeyB64(opts.Key), Sig: sig, PairCode: opts.PairCode, Caps: &caps}
+		Sig: sig, PairCode: opts.PairCode, Caps: &caps}
+	if sshHello != nil {
+		hello.User, hello.SSHKey, hello.SSHSig = sshHello.User, sshHello.SSHKey, sshHello.SSHSig
+	} else {
+		hello.PublicKey = auth.PublicKeyB64(opts.Key)
+	}
 	b, _ := json.Marshal(hello)
 	if err := ws.Write(dctx, websocket.MessageText, b); err != nil {
 		return nil, fmt.Errorf("wire: sending hello: %w", err)
@@ -236,7 +267,7 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 			return nil, fmt.Errorf("wire: bad welcome: %w", err)
 		}
 		c.deviceID, c.server, c.sessions, c.features = w.DeviceID, w.Server, w.Sessions, w.Features
-		c.instance, c.role = w.Instance, w.Role
+		c.instance, c.role, c.user = w.Instance, w.Role, w.User
 		if w.Kind != "" {
 			c.kind = w.Kind
 		}
@@ -291,6 +322,9 @@ func (c *Client) ServerName() string { return c.server }
 
 // Sessions returns the session list from the welcome message.
 func (c *Client) Sessions() []proto.SessionInfo { return c.sessions }
+
+// User is the named user of an ssh-key login ("" for a paired device).
+func (c *Client) User() string { return c.user }
 
 // ServerFingerprint is the TLS fingerprint seen during the handshake ("" for ws://).
 func (c *Client) ServerFingerprint() string { return c.serverFP.Load().(string) }
@@ -377,6 +411,10 @@ func (c *Client) resolve(reqID string, v any) bool {
 func (c *Client) handle(data []byte) {
 	env, err := proto.ParseEnvelope(data)
 	if err != nil {
+		return
+	}
+	if isAccountResult(env.T) {
+		c.handleAccountResult(data)
 		return
 	}
 	switch env.T {

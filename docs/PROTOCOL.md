@@ -46,6 +46,43 @@ Version: **1**. Default port: **10327**. Endpoint: `wss://<host>:10327/swp`.
 
 `deviceId` = first 16 hex chars of sha256 of the raw 32-byte public key.
 
+### 2a. Login with an ssh key (named users)
+
+Instead of a device key, a client may log in as a named user with the ssh key pair it already has
+(docs/SQUATTER-HUB.md in the client repo). The hello then carries
+`"user":"nereus","sshKey":"<base64 ssh wire encoding of the public key>","sshSig":"<base64 ssh signature>"`
+(`publicKey` and `sig` are omitted; `pairCode` is only for the user's first key). The signature (the ssh
+signature encoding: string type, string signature; ed25519 only for now) is over
+`auth.SSHChallengeMessage(user, nonce, binding)`: four ssh strings, `"squatterd-auth-v1"`, the user name,
+the raw challenge nonce, and the server's TLS certificate fingerprint (the `AA:BB:...` text the client
+pinned; empty over `ws://`). Binding the fingerprint means a signature cannot be replayed to another
+server. The private key never leaves the client (ssh-agent or a key file). The daemon accepts the login
+if the user exists, is not disabled, and the public key is one of the user's authorised keys
+(`users.json`); with a valid one-time `pairCode` issued for that user (`squatterd user pair`) an unknown
+key is enrolled instead. Every failure is the same `auth_failed` and counts against the per-IP limiter.
+`welcome` then also carries `"user":"nereus"` and `role` is the user's role (`viewer`, `operator`,
+`admin`). Status: sessions are not yet separated per user; run one squatterd per account, or trust all
+users with all sessions (see the hub note).
+
+### 2b. Account and administration requests (named users)
+
+Requests carry `id`; the reply is `<type>.result` with `reqId` (or the usual `error`). All need a named
+user (an ssh-key login); an old paired device gets `forbidden`.
+
+| Request | Who | Effect |
+|---|---|---|
+| `user.pair {ttlSeconds?}` | any named user | a one-time code to enrol another device of the SAME user; reply `{user, code, expiresAt, fingerprint}` |
+| `admin.users` | admin | `{users:[{name, role, disabled, createdAt, online, keys:[{fingerprint, comment, addedBy, addedAt, lastSeen}]}]}`: metadata only, never session content |
+| `admin.user.add {name, role?}` | admin | create a user with no keys |
+| `admin.user.pair {name, ttlSeconds?}` | admin | the first-key code of a user who has NO keys; `forbidden` otherwise |
+| `admin.user.remove {name}`, `admin.user.disable {name, disabled}`, `admin.user.role {name, role}`, `admin.user.reset {name}` | admin | change the account; remove, disable and reset also disconnect the user's clients |
+| `admin.audit {n?}` | admin | the newest audit entries (default 100, max 500) |
+
+Rules: an admin cannot remove, disable, demote or reset their own account, nor the last active admin
+(`forbidden`). Adding a key to a user who already has keys is only possible from one of that user's own
+devices (`user.pair`) or the host shell, never by an admin (`forbidden`): an admin cannot take over an
+account, only reset it (which voids the old keys). Every change is written to `audit.log`.
+
 ## 3. Types
 
 ```ts
