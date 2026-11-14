@@ -40,6 +40,7 @@ CobraMUSH and Evennia (69 checks).
 | **status indicator**: variable `squat_status` + auto-installed status field | done |
 | TLS + ed25519 pairing, roles, `challenge.kind`, `welcome.kind/instance`, `ExpectKind` in the client library | done |
 | Go client library (`pkg/wire`): control, worlds, exec, GMCP, typed events | done |
+| **bridge restart without losing anything**: `tf-squatterd reload` / `update` / SIGUSR2 / `admin.reload`, TinyFugue-side rendezvous (`KNOCK`/`ATTACH`/`RESYNC`), versioned state file, rollback, recovery of a dead bridge (section 13b) | done |
 
 **Deliberately not done**
 
@@ -172,7 +173,7 @@ Two server kinds. The kind is **declared in the client's squatter record**,
 | Protocol | SWP v1 | TFSP v1 (SWP v1 core + extensions, section 6) |
 | Default port | 10327 | 10328 |
 | WebSocket path | `/swp` | `/tfsp` |
-| Data dir | `~/.squatterd` | `~/.tf-squatter` |
+| Data dir | `~/.squatterd` | `~/.squatterd/tf` (an existing `~/.tf-squatter` is kept in use; TinyFugue's `squat_dir` overrides) |
 | Device store | its own `devices.json` | its own `devices.json` (**no cross-trust**) |
 | Who owns game sockets | the daemon | TinyFugue |
 | Who runs triggers | the client (own engine) | **TF** (authoritative) |
@@ -749,11 +750,82 @@ parity.
 | Failure | Behaviour |
 |---|---|
 | TF exits | game connections die; bridge exits; log kept; sessions load `ended/squatter_stopped` at next start |
-| Bridge crashes or is killed | TF reaps, warns, keeps all game connections; `/squat on` restarts and re-dumps recall |
+| Bridge crashes or is killed | TF detaches (EOF), warns, keeps all game connections and its rendezvous open (section 13b); `/squat on` starts a bridge, or `tf-squatterd reload` / `tf-squatterd serve --knock` attaches one; TF re-announces every session with history |
 | Bridge too slow | TF drops it (4.2) |
 | Client disconnects | control reverts to `tf` for sessions it controlled (configurable `hold`) |
 | Game closes connection | session `ended` with reason; no reconnect (inherited) |
 | Two controllers in `both` | both may type; NAWS follows last typist |
+
+## 13b. Restarting the bridge: `tf-squatterd reload`, the rendezvous and `RESYNC`
+
+The game connections are TinyFugue's, so a bridge restart never drops one. What moves is the TFCTL channel and
+the bridge's own state. The mechanism is the same for a planned reload and for recovering a dead bridge: a new
+bridge **knocks** at a rendezvous that TinyFugue keeps open while squat is on.
+
+**Rendezvous (squat.c).** `/squat on` creates `<squat_dir>/ctl.token` (mode 0600; line 1 a random 256-bit token
+in hex, line 2 the socket path) and listens on a unix socket `<squat_dir>/tf.sock` (mode 0600; under
+`/tmp/tf-squat-<uid>/` when the path would be too long for a `sockaddr_un`). `/squat off` and TinyFugue exiting
+remove both. The initial bridge is still forked over the socketpair (fd 3) exactly as before.
+
+```
+bridge -> TF   KNOCK <token> <pid>        token compared in constant time; a bad token closes the connection
+TF -> bridge   HELLO 1 tf <instance> <tf pid> <features>     the candidate is HELD: nothing else changes
+bridge -> TF   ATTACH                     the bridge is fully started: take over
+bridge -> TF   RESYNC                     (on the channel, any time) forget what the bridge was told
+```
+
+* One candidate at a time (a second knock while one is held is refused; an unauthenticated one expires after 5 s,
+  a held one after 60 s). While it is held TinyFugue keeps talking to the attached bridge, so a candidate that
+  fails or vanishes before `ATTACH` changes nothing: that is the rollback.
+* On `ATTACH` TinyFugue flushes what is queued for the attached bridge, **closes that channel** (its EOF is the
+  "nothing more will come" marker: the old bridge has read every message TinyFugue ever sent it, none half
+  read) and continues on the new connection; lines produced meanwhile wait in the kernel buffer. TinyFugue's
+  own state (`known` sessions, control modes, instance id) is kept, so the new bridge continues seamlessly.
+* If the channel dies (EOF, write error, "too slow", the forked bridge exiting) TinyFugue **detaches**: it prints
+  `no bridge attached; waiting for one`, reverts control to itself, forgets which sessions it announced, and keeps
+  the rendezvous open; game connections, triggers and the keyboard are untouched. A bridge that attaches to a
+  detached TinyFugue gets every connection announced again (`SESS`, `CTRL`, then the usual history replay).
+* `RESYNC` makes TinyFugue forget what it announced and do the same on its next loop pass. A bridge sends it when
+  it starts without the state of a predecessor.
+* `/squat on` while detached starts a new bridge child without touching the rendezvous or the instance id.
+  `/squat status` shows `no bridge attached` and the socket path.
+
+**`tf-squatterd reload`** (also SIGUSR2 to the bridge, and the SWP/TFSP `admin.reload` request, PROTOCOL.md 2c)
+talks to the running bridge over `<data-dir>/control.sock` (mode 0600) and runs this sequence in the old process:
+
+1. send clients `server.restarting`, stop serving (they reconnect and replay by sequence number) and write a
+   **draft** of the bridge state to `<data-dir>/handoff.json` (0600, atomic);
+2. start `<same binary path> <same arguments>` with the listening socket (fd 3), a duplex channel to itself (fd 4)
+   and `TFSQUATTERD_HANDOFF=<state file>`. The new process validates the draft (**a too-new format is refused
+   here**), checks it belongs to the same TinyFugue instance, loads TLS, knocks, and says `ready`;
+3. the old process answers `commit`; the new one sends `ATTACH`; TinyFugue closes the old channel after flushing;
+   the old process reads to that EOF, writes the **final state** and says `go`; the new one loads it, serves and
+   says `up`; the old process exits;
+4. any failure before `ATTACH` (binary dies or hangs, cannot knock, refuses the state, timeout `30 s`) makes the
+   old process kill the child, take the listener back and serve again, still attached to TinyFugue: *a bad upgrade
+   changes nothing*. Reported as `...; this tf-squatterd kept running` and in `reload.status.last`. Failure after
+   `ATTACH` (a crash between two lines of code) leaves TinyFugue detached but fine; `tf-squatterd reload` with no
+   bridge running then starts one that knocks (`serve --knock`, no state, so a `RESYNC` and a history replay).
+5. If the old process dies after `ATTACH` before handing over its state, the new one waits 30 s, then asks for a
+   `RESYNC` and rebuilds from TinyFugue's own history (seq numbers restart; clients replay).
+
+**State file** (`handoff.json`; the rules of docs/RELOAD.md): `format` 1, `minReader`, sections `bridge` (TinyFugue's
+instance, pid, features) and `sessions` (per session: world/host/port/state, ended reason, last text, control
+axes and controller, **per-device read marks**, latest GMCP/MSDP values, the ANSI colour in effect, last seq).
+Scrollback stays on disk (`sessions/<id>/log.ndjson`, reopened, sequence numbers continue); devices and pending
+pairing codes are in `devices.json` / `pairing.json` and are re-read. A reader skips unknown optional sections
+and refuses (cleanly, before anything is touched) a newer `minReader`, an unknown or newer `required` section or
+a corrupt file. Not carried: the failed-login lockout counters (they restart) and requests in flight when the
+clients were dropped.
+
+**`tf-squatterd update`** replaces the binary, then reloads the running bridge onto it (none running: the new
+binary is used at the next `/squat on`).
+
+**Limits.** Connected clients drop at the switch (SquatClient reconnects and replays, after `server.restarting`);
+a request a client had in flight is lost. Windows has no reload (inherited sockets, unix control socket); the
+rendezvous in TinyFugue is unix-only like squat itself. Anything running as the same user can read
+`ctl.token`: the rendezvous is as private as the data directory, the same trust as the data directory's
+`devices.json`.
 
 ## 14. Phases and acceptance
 

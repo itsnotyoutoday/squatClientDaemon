@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -29,4 +30,9 @@ func checkNoOtherServer(string) error { return nil }
 func (s *server) startControl(context.Context) (func(bool), error) {
 	return nil, errNoReload
 }
-func cmdReload(*options, io.Writer) error { return errNoReload }
+func cmdReload(*options, io.Writer) error           { return errNoReload }
+func (s *server) doReload(bool, func(string)) error { return errNoReload }
+func (s *server) reloadHook() func(bool) error      { return nil }
+func printReloadStatus(o *options, w io.Writer) {
+	fmt.Fprintln(w, "running:     (reload is not supported on this platform)")
+}

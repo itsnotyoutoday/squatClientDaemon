@@ -1,18 +1,24 @@
 # Builds static binaries (no Go needed to run them) for Linux and FreeBSD servers and publishes
 # them, with checksums, as a GitHub Release when a version tag is pushed:
 #
-#   git tag v0.1.0 && git push origin v0.1.0          (a tag with a dash, v0.1.0-test1, is a pre-release)
+#   git tag v0.0.1-rel && git push origin v0.0.1-rel           final release (the files and version are 0.0.1)
+#   git tag v0.0.1-alpha1 && git push origin v0.0.1-alpha1     pre-release (also -beta1)
+# No other tag name builds anything.
 #
 # It can also be run by hand from the Actions tab to try the build; the files are then kept as artifacts.
 name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+-rel', 'v[0-9]+.[0-9]+.[0-9]+-alpha*', 'v[0-9]+.[0-9]+.[0-9]+-beta*']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -29,7 +35,7 @@ jobs:
       - name: Version
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-${GITHUB_SHA::7}"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; v="${v%-rel}"; else v="0.0.0-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Build every platform
         env:
@@ -85,4 +91,4 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ !endsWith(github.ref_name, '-rel') }}

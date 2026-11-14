@@ -1,0 +1,86 @@
+{
+  "format": 2,
+  "minReader": 2,
+  "createdAt": 1760000000000,
+  "generation": 3,
+  "sections": {
+    "ended": {
+      "v": 1,
+      "data": [
+        "s-cccc03"
+      ]
+    },
+    "reload": {
+      "v": 1,
+      "data": {}
+    },
+    "sessions": {
+      "v": 1,
+      "required": true,
+      "data": [
+        {
+          "id": "s-aaaa01",
+          "file": 0,
+          "conn": {
+            "telnet": {
+              "state": 0,
+              "cmd": 0,
+              "us": "GB8=",
+              "him": "AVY=",
+              "remoteEcho": true,
+              "ttypeIdx": 2,
+              "cols": 100,
+              "rows": 30
+            },
+            "liner": {
+              "buf": "UGFzc3dvcmQ6IA==",
+              "parser": {
+                "fg": 0,
+                "bg": 0
+              },
+              "lastText": "Welcome back"
+            },
+            "echo": true
+          },
+          "remoteEcho": true,
+          "caps": {
+            "truecolor": true,
+            "utf8": true,
+            "screenreader": false
+          }
+        },
+        {
+          "id": "s-bbbb02",
+          "file": 1,
+          "conn": {
+            "telnet": {
+              "state": 0,
+              "cmd": 0,
+              "ttypeIdx": 0,
+              "cols": 80,
+              "rows": 24
+            },
+            "liner": {
+              "parser": {
+                "fg": 0,
+                "bg": 0
+              }
+            }
+          },
+          "caps": {
+            "truecolor": true,
+            "utf8": true,
+            "screenreader": false
+          },
+          "ext": {
+            "tls": {
+              "v": 1,
+              "required": true,
+              "data": "AAECIG5vdCBhIHJlYWwgVExTIHN0YXRlIP8="
+            }
+          }
+        }
+      ]
+    }
+  }
+}

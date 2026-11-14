@@ -32,6 +32,8 @@ squatterd is a persistent session holder (think `screen` / `tinyfugue` for MUDs)
 
 `session.attach` holds `session.mu` while it (1) asks `scrollback.Replay(since, hasSince, maxBacklog)`, (2) enqueues `attached` and the `backlog` frames (<= 500 entries and <= 256 KiB each, last one `done:true`), (3) registers the peer. Live entries are only produced under the same lock, so the peer's queue is `attached, backlog..., done, live...`: no duplicate, no gap.
 
+Settings live in `<data-dir>/config.json` (`auto_update`, `update_channel`; see the README); `update-state.json` next to it remembers the last update check.
+
 ## Data layout (`--data-dir`, default `~/.squatterd`, mode 0700)
 
 ```

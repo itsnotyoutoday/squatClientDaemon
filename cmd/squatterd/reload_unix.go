@@ -5,8 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/internal/daemon"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
 // Restarting the squatterd without losing the game connections (docs/RELOAD.md).
@@ -36,14 +36,20 @@ import (
 const (
 	handoffEnv  = "SQUATTERD_HANDOFF"
 	handoffFile = "handoff.json"
-	controlSock = "control.sock"
 
 	fdListener = 3
 	fdReady    = 4
 	fdSessions = 5
-
-	readyTimeout = 30 * time.Second
 )
+
+// readyTimeout is how long the old process waits for the new one to report ready before it rolls back.
+// SQUATTERD_RELOAD_TIMEOUT (a Go duration) overrides it; it exists for the tests of a hanging binary.
+var readyTimeout = func() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("SQUATTERD_RELOAD_TIMEOUT")); err == nil && d > 0 {
+		return d
+	}
+	return daemon.ReloadTimeout
+}()
 
 // exePath is this binary's path as it was when the process started; a binary replaced on disk later
 // (the upgrade) is then found at the same path, not as "path (deleted)".
@@ -55,39 +61,28 @@ var exePath = func() string {
 	return strings.TrimSuffix(p, " (deleted)")
 }()
 
-// maxSockPath is a safe length for a unix socket path (sun_path is 104 bytes on macOS, 108 on Linux).
-const maxSockPath = 100
+func controlPath(dataDir string) (string, error) { return daemon.ControlPath(dataDir) }
 
-// controlPath is where the control socket of a data directory lives: inside it, or, when that path is
-// too long for a unix socket, in a private per-user directory under /tmp named after the data directory.
-func controlPath(dataDir string) (string, error) {
-	abs, err := filepath.Abs(dataDir)
+// reloadHook is what admin.reload calls (daemon.Config.Reload).
+func (s *server) reloadHook() func(force bool) error { return s.adminReload }
+
+// printReloadStatus adds the reload lines of "squatterd status" when a squatterd runs on the data dir.
+func printReloadStatus(o *options, w io.Writer) {
+	st, err := daemon.ReloadInfo(o.dataDir)
 	if err != nil {
-		return "", err
+		fmt.Fprintln(w, "running:     no (no squatterd answers on the control socket)")
+		return
 	}
-	p := filepath.Join(abs, controlSock)
-	if len(p) <= maxSockPath {
-		return p, nil
-	}
-	dir := fmt.Sprintf("/tmp/squatterd-%d", os.Getuid())
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return "", err
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o077 != 0 || !fi.IsDir() {
-		return "", fmt.Errorf("%s is not a private directory of this user", dir)
-	}
-	sum := sha256.Sum256([]byte(abs))
-	return filepath.Join(dir, hex.EncodeToString(sum[:8])+".sock"), nil
+	writeReloadStatus(w, st)
 }
 
 // takeOver reads the handoff of a "squatterd reload" and wraps the inherited descriptors.
 func takeOver(path string, s *server) (*daemon.Handoff, *net.TCPListener, *os.File, error) {
 	_ = os.Unsetenv(handoffEnv)
 	b, err := daemon.ReadBundle(path)
+	// the file may hold TLS key material: it goes as soon as it has been read (also when it was refused;
+	// the old process, which rolls back from its own memory, does not need it either)
+	_ = os.Remove(path)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -124,6 +119,9 @@ func checkNoOtherServer(dataDir string) error {
 		return fmt.Errorf("another squatterd is already running on %s (its control socket answers)", dataDir)
 	}
 	_ = os.Remove(p)
+	// a handoff file left by a reload that died: not used (no SQUATTERD_HANDOFF) and it may hold
+	// partial game output, so it does not stay around
+	_ = os.Remove(filepath.Join(dataDir, handoffFile))
 	return nil
 }
 
@@ -173,36 +171,76 @@ func (s *server) control(c net.Conn) {
 	}
 	_ = c.SetReadDeadline(time.Time{})
 	say := func(f string, a ...any) { fmt.Fprintf(c, f+"\n", a...) }
-	switch strings.TrimSpace(line) {
+	js := func(prefix string, v any) {
+		b, _ := json.Marshal(v)
+		say("%s %s", prefix, b)
+	}
+	f := strings.Fields(line)
+	if len(f) == 0 {
+		say("error: empty command")
+		return
+	}
+	s.mu.Lock()
+	d, g := s.d, s.generation
+	s.mu.Unlock()
+	switch f[0] {
 	case "status":
-		s.mu.Lock()
-		g := s.generation
-		s.mu.Unlock()
 		say("pid %d", os.Getpid())
 		say("version %s", version)
 		say("generation %d", g)
 		say("ok")
+	case "info":
+		js("info", d.ReloadStatus())
+		say("ok")
+	case "plan":
+		js("plan", d.ReloadPlan())
+		say("ok")
 	case "reload":
-		if err := s.reload(func(m string) { say("%s", m) }); err != nil {
+		force := len(f) > 1 && f[1] == "force"
+		if err := s.doReload(force, func(m string) { say("%s", m) }); err != nil {
+			var ref *daemon.ReloadRefused
+			if errors.As(err, &ref) {
+				js("refused", ref.Plan)
+				return
+			}
 			say("error: %v", err)
 			return
 		}
 		say("ok")
-		close(s.handedOver) // the new process serves now: this one exits
 	default:
 		say("error: unknown command")
 	}
 }
 
+// adminReload is daemon.Config.Reload: an admin.reload request from a client.
+func (s *server) adminReload(force bool) error { return s.doReload(force, func(string) {}) }
+
+// doReload runs a reload; on success this process is done (it exits once the answer is out).
+func (s *server) doReload(force bool, progress func(string)) error {
+	if err := s.reload(force, progress); err != nil {
+		return err
+	}
+	s.handOverOnce.Do(func() { close(s.handedOver) }) // the new process serves now: this one exits
+	return nil
+}
+
 // reload hands the listener and the game connections to a new copy of this binary.
-func (s *server) reload(progress func(string)) error {
+func (s *server) reload(force bool, progress func(string)) error {
 	if !s.reloadMu.TryLock() {
 		return errors.New("a reload is already in progress")
 	}
 	defer s.reloadMu.Unlock()
+	select {
+	case <-s.handedOver:
+		return errors.New("this squatterd already handed over to a new process; ask again")
+	default:
+	}
 	s.mu.Lock()
 	d, srv, hs, ln, gen := s.d, s.srv, s.hs, s.rawLn, s.generation
 	s.mu.Unlock()
+	if plan := d.ReloadPlan(); len(plan.End) > 0 && !force {
+		return &daemon.ReloadRefused{Plan: plan}
+	}
 	lnFile, err := ln.File() // a duplicate of the listening socket
 	if err != nil {
 		return fmt.Errorf("listener: %w", err)
@@ -210,15 +248,19 @@ func (s *server) reload(progress func(string)) error {
 	defer lnFile.Close()
 
 	progress("quiescing the sessions")
+	started := time.Now()
 	h, err := d.PrepareHandoff(gen + 1)
-	if err != nil {
-		return err
+	if h == nil {
+		return err // nothing was handed over: this process is untouched
 	}
-	progress(fmt.Sprintf("%d connection(s) carried over, %d ended (TLS or still connecting)", len(h.Bundle.Sessions), len(h.Bundle.Ended)))
+	progress(fmt.Sprintf("%d connection(s) carried over, %d ended (could not be migrated, or still connecting)", len(h.Bundle.Sessions), len(h.Bundle.Ended)))
 	_ = hs.Close() // stop accepting and drop the clients (they were told to reconnect)
 	srv.Close()
 
-	fail := func(cause error) error { return s.rollback(h, lnFile, cause) }
+	fail := func(cause error) error { return s.rollback(h, lnFile, gen, started, cause) }
+	if err != nil { // a store did not close cleanly: do not go on, but keep every connection
+		return fail(fmt.Errorf("closing the session stores: %w", err))
+	}
 	path := filepath.Join(s.o.dataDir, handoffFile)
 	if err := daemon.WriteBundle(path, h.Bundle); err != nil {
 		return fail(err)
@@ -266,7 +308,7 @@ func (s *server) reload(progress func(string)) error {
 	case <-time.After(readyTimeout):
 		_ = cmd.Process.Kill()
 		<-exited
-		return fail(errors.New("the new process was not ready in time"))
+		return fail(fmt.Errorf("the new process was not ready within %s", readyTimeout))
 	}
 	progress("the new squatterd is serving")
 	h.Close()
@@ -274,7 +316,7 @@ func (s *server) reload(progress func(string)) error {
 }
 
 // rollback takes the sockets back after a failed handoff and serves again from this process.
-func (s *server) rollback(h *daemon.Handoff, lnFile *os.File, cause error) error {
+func (s *server) rollback(h *daemon.Handoff, lnFile *os.File, gen int, started time.Time, cause error) error {
 	_ = os.Remove(filepath.Join(s.o.dataDir, handoffFile))
 	ln, err := net.FileListener(lnFile)
 	if err != nil {
@@ -282,41 +324,81 @@ func (s *server) rollback(h *daemon.Handoff, lnFile *os.File, cause error) error
 		return fmt.Errorf("%v; and the listener could not be recovered: %w", cause, err)
 	}
 	tcp := ln.(*net.TCPListener)
+	// the generation stays what it was: this process is still the serving one
+	h.Bundle.Generation = gen
 	if err := s.startServing(tcp, h); err != nil {
 		h.Close()
 		return fmt.Errorf("%v; and this squatterd could not resume: %w", cause, err)
 	}
+	s.rebindControl()
+	s.mu.Lock()
+	d := s.d
+	s.mu.Unlock()
+	d.ResumeAdopted()
+	d.RecordReload(proto.ReloadResult{At: time.Now().UnixMilli(), Ok: false, Generation: gen, Carried: len(h.Bundle.Sessions),
+		Ended: h.Bundle.Ended, DurationMs: time.Since(started).Milliseconds(), Error: cause.Error()}, gen)
 	h.Close()
 	return fmt.Errorf("%v; this squatterd kept running", cause)
 }
 
+// rebindControl takes the control socket path back after a failed reload: a new process that got as far
+// as starting its control socket (which replaces the old one's path) and then died would otherwise leave
+// this process, which keeps serving, unreachable for `squatterd status` and `reload`.
+func (s *server) rebindControl() {
+	stop, err := s.startControl(context.Background())
+	if err != nil {
+		s.log.Warn("control socket not available after the rollback (squatterd reload will not work)", "err", err)
+		return
+	}
+	s.mu.Lock()
+	old := s.stopCtl
+	s.stopCtl = stop
+	s.mu.Unlock()
+	if old != nil {
+		go old(false) // the listener of the first bind (it also serves the reload that is just finishing): once that reply is out
+	}
+}
+
 // cmdReload is "squatterd reload": it asks the running squatterd to restart itself.
 func cmdReload(o *options, w io.Writer) error {
-	p, err := controlPath(o.dataDir)
-	if err != nil {
+	out, err := daemon.RequestReload(o.dataDir, o.force)
+	for _, l := range out.Steps {
+		fmt.Fprintln(w, l)
+	}
+	var ref *daemon.ReloadRefused
+	switch {
+	case errors.As(err, &ref):
+		return fmt.Errorf("%v (run it again with --force)", ref)
+	case errors.Is(err, daemon.ErrNotRunning):
+		return fmt.Errorf("%v (is it running with --data-dir %s?)", err, o.dataDir)
+	case err != nil:
 		return err
 	}
-	c, err := net.DialTimeout("unix", p, 3*time.Second)
-	if err != nil {
-		return fmt.Errorf("no running squatterd answers on %s (is it running with --data-dir %s?)", p, o.dataDir)
+	fmt.Fprintf(w, "reloaded: the new squatterd (pid %d, generation %d) is serving; clients reconnect and replay on their own\n", out.Status.PID, out.Status.Generation)
+	return nil
+}
+
+func writeReloadStatus(w io.Writer, st proto.ReloadStatus) {
+	fmt.Fprintf(w, "running:     yes (pid %d, uptime %s)\n", st.PID, (time.Duration(st.UptimeMs) * time.Millisecond).Round(time.Second))
+	fmt.Fprintf(w, "generation:  %d (reloads since %s)\n", st.Generation, time.UnixMilli(st.ServiceSince).Format("2006-01-02 15:04:05"))
+	switch l := st.Last; {
+	case l == nil:
+		fmt.Fprintln(w, "last reload: never")
+	case l.Ok:
+		fmt.Fprintf(w, "last reload: %s ok, %d connection(s) carried, %d ended in %dms\n", time.UnixMilli(l.At).Format("2006-01-02 15:04:05"), l.Carried, len(l.Ended), l.DurationMs)
+	default:
+		fmt.Fprintf(w, "last reload: %s FAILED and was rolled back: %s\n", time.UnixMilli(l.At).Format("2006-01-02 15:04:05"), l.Error)
 	}
-	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(readyTimeout + 30*time.Second))
-	if _, err := io.WriteString(c, "reload\n"); err != nil {
-		return err
-	}
-	sc := bufio.NewScanner(c)
-	for sc.Scan() {
-		line := sc.Text()
-		switch {
-		case line == "ok":
-			fmt.Fprintln(w, "reloaded: the new squatterd is serving; clients reconnect and replay on their own")
-			return nil
-		case strings.HasPrefix(line, "error: "):
-			return errors.New(strings.TrimPrefix(line, "error: "))
-		default:
-			fmt.Fprintln(w, line)
+	if st.Plan != nil {
+		fmt.Fprintf(w, "next reload: carries %d session(s)", len(st.Plan.Carry))
+		if len(st.Plan.End) == 0 {
+			fmt.Fprintln(w)
+			return
 		}
+		fmt.Fprintf(w, ", would END %d:", len(st.Plan.End))
+		for _, s := range st.Plan.End {
+			fmt.Fprintf(w, " %s (%s)", s.ID, s.Reason)
+		}
+		fmt.Fprintln(w, "  [needs --force]")
 	}
-	return errors.New("the squatterd closed the connection without saying whether it worked; check `squatterd status`")
 }

@@ -34,6 +34,9 @@ type ServerConfig struct {
 	ExtraFeatures []string
 	// Instance, if set, is announced in welcome.
 	Instance string
+	// UpdateAvailable, if set, is called for each welcome; a non-empty result is announced as
+	// welcome.updateAvailable (the newest released version when it is newer than the running one).
+	UpdateAvailable func() string
 	// TLSBinding is the server's TLS certificate fingerprint (tlsutil format; nil without TLS). An
 	// ssh-key login signs it together with the challenge, so a signature cannot be used on another server.
 	TLSBinding []byte
@@ -344,7 +347,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	if infos == nil {
 		infos = []proto.SessionInfo{}
 	}
-	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: c.role, User: userName, Sessions: infos, Features: s.features(), Kind: s.cfg.Kind, Instance: s.cfg.Instance}); err != nil {
+	upd := ""
+	if s.cfg.UpdateAvailable != nil {
+		upd = s.cfg.UpdateAvailable()
+	}
+	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: c.role, User: userName, Sessions: infos, Features: s.features(), Kind: s.cfg.Kind, Instance: s.cfg.Instance, UpdateAvailable: upd, Reload: s.reloadInfo()}); err != nil {
 		c.Close("welcome write failed")
 		return
 	}
@@ -421,7 +428,7 @@ func (c *client) readLoop() {
 			continue
 		}
 		if !known {
-			if !s.handleAccount(c, cf, data) {
+			if !s.handleAccount(c, cf, data) && !s.handleReload(c, cf, data) {
 				s.dispatchExt(c, cf, data)
 			}
 			continue
@@ -550,6 +557,18 @@ func (s *Server) features() []string {
 	if _, ok := s.cfg.Backend.(SecretSender); ok {
 		f = append(f, FeatureNoEcho)
 	}
+	if _, ok := s.cfg.Backend.(ReloadBackend); ok {
+		f = append(f, FeatureReload)
+	}
 	f = append(f, s.cfg.ExtraFeatures...)
 	return f
+}
+
+// reloadInfo is the welcome's reload status, if the backend can reload.
+func (s *Server) reloadInfo() *proto.ReloadStatus {
+	if rb, ok := s.cfg.Backend.(ReloadBackend); ok {
+		st := rb.ReloadStatus()
+		return &st
+	}
+	return nil
 }

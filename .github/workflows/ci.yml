@@ -1,7 +1,14 @@
 name: ci
+# Runs on pull requests, on pushes to main, and by hand: not on every branch push or tag.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,7 +24,8 @@ jobs:
       - name: staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+          # the vendored crypto/tls copy (pkg/tlsmigrate/tls) is upstream Go code with a few patches: not linted
+          staticcheck $(go list ./... | grep -v tlsmigrate/tls)
       - name: test (race)
         run: go test -race -count=1 ./...
       - name: fuzz smoke

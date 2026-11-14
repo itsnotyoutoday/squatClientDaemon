@@ -13,6 +13,7 @@ import (
 
 	"github.com/itsnotyoutoday/squatClientDaemon/internal/daemon"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/auth"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/selfupdate"
 )
 
 type tlsCert = tls.Certificate
@@ -94,6 +95,9 @@ func fingerprint(c tlsCert) string {
 func cmdStatus(o *options, w io.Writer) error {
 	fmt.Fprintf(w, "version:     %s\n", version)
 	fmt.Fprintf(w, "data dir:    %s\n", o.dataDir)
+	if v := selfupdate.LoadState(selfupdate.StatePath(o.dataDir)).AvailableFor(version); v != "" {
+		fmt.Fprintf(w, "update:      %s available (run: squatterd update)\n", v)
+	}
 	if _, err := os.Stat(o.dataDir); err != nil {
 		fmt.Fprintln(w, "             (does not exist yet; created on first run)")
 		return nil
@@ -114,6 +118,7 @@ func cmdStatus(o *options, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	printReloadStatus(o, w)
 	fmt.Fprintf(w, "sessions:    %d on disk\n", len(ss))
 	for _, s := range ss {
 		st := s.State

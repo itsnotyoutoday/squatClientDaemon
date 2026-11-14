@@ -36,6 +36,7 @@ type session struct {
 	stopping   bool
 	stopReason string // the end reason recorded when stopping (default squatter_stopped)
 	handedOff  bool   // the connection was handed to another process (squatterd reload)
+	paused     bool   // adopted from a handoff and not reading yet (until Daemon.ResumeAdopted)
 	dirty      bool
 	closed     bool
 }

@@ -34,6 +34,8 @@ Usage:
   squatterd reload [flags]      restart the running squatterd (new binary, same data dir) without losing
                                 the game connections; clients reconnect and replay on their own
   squatterd user ...            manage named users and their ssh keys ("squatterd user" lists the commands)
+  squatterd update [--check]    look for a newer release; without --check install it and reload (never ends a
+                                session unless --force). Settings: ~/.squatterd/config.json (auto_update, update_channel)
   squatterd status [flags]      show data dir, TLS fingerprint, sessions on disk
   squatterd version
 

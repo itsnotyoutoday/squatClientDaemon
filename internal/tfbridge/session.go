@@ -502,3 +502,76 @@ func (s *session) dropExpect() {
 	s.wantUntil = time.Time{}
 	s.mu.Unlock()
 }
+
+// capture is the session's part of a handoff state. With release the store is closed (flushed) and the
+// log kept: the next process opens it.
+func (s *session) capture(release bool) SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.flushPromptLocked() // a held prompt is part of the scrollback
+	}
+	_ = s.store.Sync()
+	_, last := s.store.Bounds()
+	st := SessionState{ID: s.id, World: s.world, Host: s.host, Port: s.port, TLS: s.tls, State: s.state, StartedAt: s.startedAt,
+		EndedAt: s.endedAt, EndReason: s.endReason, LastText: s.lastText, Fg: s.fg, RemoteEcho: s.remoteEcho, Input: s.input,
+		Automation: s.automation, Controller: s.controller, CtrlName: s.ctrlName, Parser: s.parser.State(), LastSeq: last}
+	if len(s.acks) > 0 {
+		st.Acks = make(map[string]uint64, len(s.acks))
+		for k, v := range s.acks {
+			st.Acks[k] = v
+		}
+	}
+	if len(s.gmcpLatest) > 0 {
+		st.Gmcp = make(map[string]json.RawMessage, len(s.gmcpLatest))
+		for k, v := range s.gmcpLatest {
+			st.Gmcp[k] = v
+		}
+	}
+	if len(s.msdpLatest) > 0 {
+		st.Msdp = make(map[string]any, len(s.msdpLatest))
+		for k, v := range s.msdpLatest {
+			st.Msdp[k] = v
+		}
+	}
+	if release && !s.closed {
+		s.closed = true
+		if s.pendTimer != nil {
+			s.pendTimer.Stop()
+		}
+		_ = s.store.Close()
+	}
+	return st
+}
+
+// restoreSession reopens a session of a previous process: its scrollback is on disk, the rest is in st.
+func restoreSession(b *Bridge, st SessionState) (*session, error) {
+	s, err := newSession(b, st.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.world, s.host, s.port, s.tls, s.state = st.World, st.Host, st.Port, st.TLS, st.State
+	s.startedAt, s.endedAt, s.endReason, s.lastText = st.StartedAt, st.EndedAt, st.EndReason, st.LastText
+	s.fg, s.remoteEcho = st.Fg, st.RemoteEcho
+	if st.Input != "" {
+		s.input = st.Input
+	}
+	if st.Automation != "" {
+		s.automation = st.Automation
+	}
+	s.controller, s.ctrlName = st.Controller, st.CtrlName
+	for k, v := range st.Acks {
+		s.acks[k] = v
+	}
+	for k, v := range st.Gmcp {
+		s.gmcpLatest[k] = v
+	}
+	for k, v := range st.Msdp {
+		s.msdpLatest[k] = v
+	}
+	s.parser.SetState(st.Parser)
+	if _, last := s.store.Bounds(); last != st.LastSeq {
+		b.log.Warn("tfbridge: restored scrollback does not end where the old process left it", "id", st.ID, "have", last, "want", st.LastSeq)
+	}
+	return s, nil
+}

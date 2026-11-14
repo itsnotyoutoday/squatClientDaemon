@@ -2,6 +2,7 @@ package tfbridge
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -127,6 +128,7 @@ func Decode(line string) []string {
 // ctl is the bridge's end of the control channel.
 type ctl struct {
 	conn net.Conn
+	br   *bufio.Reader // bytes already read from conn (the knock handshake), may be nil
 	wmu  sync.Mutex
 }
 
@@ -141,7 +143,11 @@ func (c *ctl) send(fields ...string) error {
 
 // readLoop calls h for every message until EOF or an error.
 func (c *ctl) readLoop(h func([]string)) error {
-	sc := bufio.NewScanner(c.conn)
+	var src io.Reader = c.conn
+	if c.br != nil {
+		src = c.br
+	}
+	sc := bufio.NewScanner(src)
 	sc.Buffer(make([]byte, 0, 64<<10), MaxCtlLine)
 	for sc.Scan() {
 		h(Decode(sc.Text()))

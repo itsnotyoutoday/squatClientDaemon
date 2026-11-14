@@ -197,11 +197,7 @@ func noneDbref(v string) string {
 }
 
 func fields(s string) []string {
-	var out []string
-	for _, f := range strings.Fields(s) {
-		out = append(out, f)
-	}
-	return out
+	return append([]string(nil), strings.Fields(s)...)
 }
 
 // parseRecords splits "a~:~b~|~c~:~d" into records of n+ fields; records

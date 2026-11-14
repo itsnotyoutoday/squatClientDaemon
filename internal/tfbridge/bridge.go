@@ -32,6 +32,9 @@ type Config struct {
 	RingSize    int           // scrollback entries per session (default 50000)
 	Version     string
 	ReqTimeout  time.Duration // how long a request to TinyFugue may take (default 5s)
+	// Restore, if set, makes the bridge continue the sessions of a previous process (a reload): their
+	// scrollback on disk is kept and their state taken from it. Without it a start is fresh.
+	Restore *State
 }
 
 // Bridge implements wire.Backend, wire.ExtBackend and wire.SecretSender on top
@@ -56,12 +59,16 @@ type Bridge struct {
 	worldAcc []proto.TFWorld
 
 	worldsMu sync.Mutex // one world.list request at a time
+
+	handover atomic.Bool // the control channel is about to be taken over: Run must not delete the sessions
+	reloader Reloader
 }
 
 var (
-	_ wire.Backend      = (*Bridge)(nil)
-	_ wire.ExtBackend   = (*Bridge)(nil)
-	_ wire.SecretSender = (*Bridge)(nil)
+	_ wire.Backend       = (*Bridge)(nil)
+	_ wire.ExtBackend    = (*Bridge)(nil)
+	_ wire.SecretSender  = (*Bridge)(nil)
+	_ wire.ReloadBackend = (*Bridge)(nil)
 )
 
 // New returns a Bridge talking TFCTL over conn. Old session logs from a
@@ -84,21 +91,112 @@ func New(cfg Config, conn net.Conn) (*Bridge, error) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	sdir := filepath.Join(cfg.DataDir, "sessions")
-	if err := os.RemoveAll(sdir); err != nil {
-		return nil, fmt.Errorf("tfbridge: %w", err)
+	if cfg.Restore == nil {
+		if err := os.RemoveAll(sdir); err != nil {
+			return nil, fmt.Errorf("tfbridge: %w", err)
+		}
 	}
 	if err := os.MkdirAll(sdir, 0o700); err != nil {
 		return nil, fmt.Errorf("tfbridge: %w", err)
 	}
-	return &Bridge{cfg: cfg, log: log, ctl: &ctl{conn: conn}, ready: make(chan struct{}), done: make(chan struct{}),
-		sessions: map[string]*session{}, peers: map[uint64]wire.Peer{}, pending: map[string]chan []string{}}, nil
+	b := &Bridge{cfg: cfg, log: log, ctl: &ctl{conn: conn}, ready: make(chan struct{}), done: make(chan struct{}),
+		sessions: map[string]*session{}, peers: map[uint64]wire.Peer{}, pending: map[string]chan []string{}}
+	if cfg.Restore != nil {
+		for _, ss := range cfg.Restore.Sessions {
+			s, err := restoreSession(b, ss)
+			if err != nil {
+				return nil, fmt.Errorf("tfbridge: restoring session %s: %w", ss.ID, err)
+			}
+			b.sessions[ss.ID] = s
+		}
+	}
+	return b, nil
 }
+
+// NewAttached returns a Bridge on a channel that knocked successfully (Knock). TinyFugue's HELLO was
+// already read, so the bridge is ready at once; Run starts reading when the caller says so (after
+// Attach, and after the state of the previous process is available).
+func NewAttached(cfg Config, k *Knocked) (*Bridge, error) {
+	b, err := New(cfg, k.Conn)
+	if err != nil {
+		return nil, err
+	}
+	b.ctl.br = k.br
+	b.instance, b.tfPID, b.tfFeat = k.Instance, k.TFPID, append([]string(nil), k.Features...)
+	b.readyOnce.Do(func() { close(b.ready) })
+	return b, nil
+}
+
+// Reload hooks (the service implements them; Bridge only forwards admin.reload and reload.status).
+type Reloader interface {
+	ReloadStatus() proto.ReloadStatus
+	// StartReload runs a reload asynchronously on behalf of a client.
+	StartReload(by string) error
+}
+
+// SetReloader enables reload.status and admin.reload.
+func (b *Bridge) SetReloader(r Reloader) { b.mu.Lock(); b.reloader = r; b.mu.Unlock() }
+
+// ReloadStatus implements wire.ReloadBackend.
+func (b *Bridge) ReloadStatus() proto.ReloadStatus {
+	b.mu.Lock()
+	r := b.reloader
+	b.mu.Unlock()
+	if r == nil {
+		return proto.ReloadStatus{}
+	}
+	return r.ReloadStatus()
+}
+
+// RequestReload implements wire.ReloadBackend (admin.reload). A bridge never ends a game connection by
+// restarting, so the plan carries every session and force makes no difference.
+func (b *Bridge) RequestReload(p wire.Peer, force, dryRun bool) (proto.ReloadPlan, error) {
+	b.mu.Lock()
+	r := b.reloader
+	b.mu.Unlock()
+	plan := proto.ReloadPlan{Carry: []proto.PlanSession{}, End: []proto.PlanSession{}}
+	for _, s := range b.sessionList() {
+		plan.Carry = append(plan.Carry, proto.PlanSession{ID: s.id, Name: s.info("").Name})
+	}
+	if r == nil {
+		return plan, wire.Errf(proto.ErrReloadUnsupported, "this tf-squatterd cannot reload itself here")
+	}
+	if dryRun {
+		return plan, nil
+	}
+	by := ""
+	if p != nil {
+		by = p.DeviceName()
+	}
+	return plan, r.StartReload(by)
+}
+
+// Capture returns the bridge's state for a handoff. With release it also closes every session's store
+// (flushed, logs kept) and the bridge no longer serves them; call it only after Run has returned.
+func (b *Bridge) Capture(generation int, release bool) (State, error) {
+	b.mu.Lock()
+	instance, pid, feat := b.instance, b.tfPID, append([]string(nil), b.tfFeat...)
+	b.mu.Unlock()
+	st := State{Generation: generation, CreatedAt: nowMs(), Bridge: BridgeState{Instance: instance, TFPID: pid, Features: feat}}
+	for _, s := range b.sessionList() {
+		st.Sessions = append(st.Sessions, s.capture(release))
+	}
+	return st, nil
+}
+
+// SetHandover marks that the control channel is about to be taken over by another process (TinyFugue
+// closes ours): Run then leaves the sessions and their logs alone when the channel ends. Clearing it
+// again is the rollback.
+func (b *Bridge) SetHandover(on bool) { b.handover.Store(on) }
 
 // Run reads TinyFugue's messages until the channel closes. It returns nil on
 // a clean close (TinyFugue exited or /squat off).
 func (b *Bridge) Run() error {
 	err := b.ctl.readLoop(b.handle)
 	close(b.done)
+	if b.handover.Load() {
+		return err // the sessions are carried on by the next process
+	}
 	b.mu.Lock()
 	for _, s := range b.sessions {
 		s.close()

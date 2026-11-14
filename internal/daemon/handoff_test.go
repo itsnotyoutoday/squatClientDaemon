@@ -1,6 +1,7 @@
 package daemon_test
 
 import (
+	"crypto/tls"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -17,10 +18,20 @@ import (
 // startEnvFrom is startEnv for a Daemon the test built itself (here: one continuing a handoff).
 func startEnvFrom(t *testing.T, dir string, cfg daemon.Config) *env {
 	t.Helper()
+	return startEnvPaused(t, dir, cfg, true)
+}
+
+// startEnvPaused is startEnvFrom with control over ResumeAdopted: squatterd calls it only after it told
+// the old process it is ready.
+func startEnvPaused(t *testing.T, dir string, cfg daemon.Config, resume bool) *env {
+	t.Helper()
 	cfg.DataDir, cfg.FlushEvery = dir, 200*time.Millisecond
 	d, err := daemon.New(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resume {
+		d.ResumeAdopted()
 	}
 	as, err := auth.Open(dir)
 	if err != nil {
@@ -108,7 +119,16 @@ func TestHandoffKeepsTheGameConnection(t *testing.T) {
 	}
 }
 
-// A TLS connection to the game cannot be handed over: it ends with a clear reason, the plain one lives.
+// cbcServer is a TLS game that negotiates TLS 1.2 with a CBC cipher: such a session cannot be migrated.
+func cbcServer(t *testing.T) *fakemush.Server {
+	return fakemush.New(t, fakemush.WithTLSConfig(func(c *tls.Config) {
+		c.MaxVersion = tls.VersionTLS12
+		c.CipherSuites = []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA}
+	}))
+}
+
+// A TLS connection to the game that cannot be migrated (TLS 1.2 with a CBC cipher) cannot be handed
+// over: it ends with a clear reason, the plain one lives.
 func TestHandoffEndsTLSSessionsOnly(t *testing.T) {
 	noLeaks(t)
 	dir := t.TempDir()
@@ -116,7 +136,7 @@ func TestHandoffEndsTLSSessionsOnly(t *testing.T) {
 	key, _ := auth.GenerateKey()
 	a := e1.clientWithKey("a", defCaps, key, true)
 	plain := fakemush.New(t)
-	secure := fakemush.New(t, fakemush.WithTLS())
+	secure := cbcServer(t)
 	sp := a.connect(plain.Host(), plain.Port(), func(w *proto.World) { w.Name = "plain" })
 	ss := a.connect(secure.Host(), secure.Port(), func(w *proto.World) { w.Name = "secure"; w.TLS = true; w.TLSVerify = "insecure" })
 	a.state(sp.ID, connected)

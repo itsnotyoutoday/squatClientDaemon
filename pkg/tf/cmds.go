@@ -260,6 +260,7 @@ func (i *Interp) initMiscCmds() {
 	for _, n := range []string{"edit", "recordline", "watchdog", "watchname", "liststreams", "sh", "core", "lcd"} {
 		n := n
 		i.reg(n, "/"+n+" (not available)", false, func(*Interp, string) error {
+			//lint:ignore ST1005 message mimics TinyFugue's own text
 			return fmt.Errorf("/%s: no such command. Type /help for help.", n)
 		})
 	}

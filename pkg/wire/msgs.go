@@ -88,11 +88,20 @@ type Welcome struct {
 	// TinyFugue process restarts, so a client knows every old session is gone.
 	Kind     string `json:"kind,omitempty"`
 	Instance string `json:"instance,omitempty"`
+	// Reload is the daemon's reload status (generation, uptime, last reload result); additive, only
+	// sent by a daemon that supports reload (feature "reload").
+	Reload *proto.ReloadStatus `json:"reload,omitempty"`
+	// UpdateAvailable is the newest released version when it is newer than the running daemon
+	// (set only by squatterd with auto_update on; absent otherwise). Informational.
+	UpdateAvailable string `json:"updateAvailable,omitempty"`
 }
 
 // FeatureNoEcho: the daemon honours SendReq.NoEcho (the line is delivered to the
 // game but never recorded, echoed or logged).
 const FeatureNoEcho = "noEcho"
+
+// FeatureReload: the daemon answers reload.status and admin.reload.
+const FeatureReload = "reload"
 
 // ErrorMsg is the daemon's error message.
 type ErrorMsg struct {

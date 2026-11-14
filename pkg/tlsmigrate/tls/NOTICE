@@ -1,0 +1,43 @@
+This directory contains a copy of the Go standard library package crypto/tls
+(BSD-style license: see LICENSE and PATENTS, both from the Go distribution).
+
+Base version: see UPSTREAM_GO_VERSION (source: $GOROOT/src/crypto/tls of that release).
+
+Purpose: Go's crypto/tls cannot export a live connection. This copy adds
+ExportState / ImportState (and a KeyUpdate initiator) so an established TLS
+session can be handed to another process. Everything else is unmodified.
+
+LOCAL PATCHES (every line marked "LOCAL PATCH" or in a new file)
+
+New files (not upstream):
+  migrate.go          ExportState, ImportState, Discard, KeyUpdate, MigrationState
+  migrate_codec.go    MarshalBinary / UnmarshalMigrationState
+  migrate*_test.go    tests
+  internal/           small stand-ins for Go-internal packages the std copy imports
+                      (godebug, byteorder, fips140tls, boring, hkdf, tls12, tls13, hpke)
+  UPSTREAM_GO_VERSION, LICENSE, PATENTS, NOTICE
+
+Edits to upstream files:
+  cipher_suites.go    prefixNonceAEAD and xorNonceAEAD keep a copy of the AEAD key (field
+                      "key") so a TLS 1.2 session's keys can be exported; AES-GCM uses
+                      cipher.NewGCM instead of crypto/internal/fips140/aes/gcm;
+                      golang.org/x/sys/cpu replaces internal/cpu.
+  conn.go             Conn gains migrated and keyUpdatePending (atomic bools);
+                      Close/closeNotify send no close_notify after ExportState+Discard;
+                      handleKeyUpdate clears keyUpdatePending.
+  handshake_client_tls13.go
+                      handleNewSessionTicket ignores tickets when resumptionSecret is nil
+                      (a migrated connection has none).
+  import paths only (every file importing a Go-internal package): crypto/internal/fips140/{tls13,
+                      tls12,hkdf} -> internal/{tls13,tls12,hkdf}; crypto/internal/fips140/mlkem ->
+                      crypto/mlkem; crypto/internal/hpke -> internal/hpke; internal/godebug,
+                      internal/byteorder, crypto/tls/internal/fips140tls, crypto/internal/boring
+                      -> internal/*; gofmt reordered import blocks.
+                      golang.org/x/crypto (cryptobyte, chacha20poly1305) is a normal module
+                      dependency (the std tree vendors the same packages).
+
+Behavioural differences from the standard library: FIPS 140 / BoringCrypto modes are
+not supported (internal/fips140tls.Required is always false); GODEBUG settings
+(tls10server, tlsrsakex, ...) are not read (always the Go defaults); AES-GCM nonce
+reuse hardening of the FIPS module is not applied (the record layer never reuses a
+nonce: the sequence number is the nonce).

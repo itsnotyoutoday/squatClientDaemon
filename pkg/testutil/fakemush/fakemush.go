@@ -19,9 +19,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tlsmigrate"
+	ftls "github.com/itsnotyoutoday/squatClientDaemon/pkg/tlsmigrate/tls"
 )
 
-// Telnet constants (duplicated so this package has no module dependencies).
+// Telnet constants (duplicated so this package needs nothing of the daemon; only the TLS options use
+// pkg/tlsmigrate).
 const (
 	IAC  = 255
 	DONT = 254
@@ -53,6 +57,17 @@ type Option func(*Server)
 // valid for 127.0.0.1 and localhost.
 func WithTLS() Option { return func(s *Server) { s.useTLS = true } }
 
+// WithTLSConfig adjusts the server's TLS configuration (use it to force a version or cipher suites:
+// MinVersion/MaxVersion/CipherSuites). It implies WithTLS.
+func WithTLSConfig(f func(*tls.Config)) Option {
+	return func(s *Server) { s.useTLS = true; s.tlsTweak = append(s.tlsTweak, f) }
+}
+
+// WithKeyUpdate makes the server's TLS connections able to send a TLS 1.3 KeyUpdate (Peer.KeyUpdate):
+// the standard library never initiates one, so the server then uses the vendored crypto/tls of
+// pkg/tlsmigrate instead. It implies WithTLS.
+func WithKeyUpdate() Option { return func(s *Server) { s.useTLS = true; s.forkTLS = true } }
+
 // WithGreeting sends text (verbatim) as soon as a connection is accepted.
 func WithGreeting(text string) Option { return func(s *Server) { s.greeting = text } }
 
@@ -65,6 +80,8 @@ type Server struct {
 	t          testing.TB
 	ln         net.Listener
 	useTLS     bool
+	tlsTweak   []func(*tls.Config)
+	forkTLS    bool
 	greeting   string
 	firstDelay time.Duration
 	cert       tls.Certificate
@@ -91,7 +108,19 @@ func New(t testing.TB, opts ...Option) *Server {
 	}
 	if s.useTLS {
 		s.cert, s.leaf = selfSigned(t)
-		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{s.cert}, MinVersion: tls.VersionTLS12})
+		tc := &tls.Config{Certificates: []tls.Certificate{s.cert}, MinVersion: tls.VersionTLS12}
+		for _, f := range s.tlsTweak {
+			f(tc)
+		}
+		if s.forkTLS {
+			fc, err := tlsmigrate.ConfigFromStd(tc)
+			if err != nil {
+				t.Fatalf("fakemush: %v", err)
+			}
+			ln = forkListener{ln, fc}
+		} else {
+			ln = tls.NewListener(ln, tc)
+		}
 	}
 	s.ln = ln
 	s.wg.Add(1)
@@ -367,6 +396,10 @@ func (p *Peer) Reset() {
 		if u, ok := tc.NetConn().(*net.TCPConn); ok {
 			u.SetLinger(0)
 		}
+	} else if tc, ok := p.c.(*tlsmigrate.Conn); ok {
+		if u, ok := tc.NetConn().(*net.TCPConn); ok {
+			u.SetLinger(0)
+		}
 	} else if u, ok := p.c.(*net.TCPConn); ok {
 		u.SetLinger(0)
 	}
@@ -581,6 +614,49 @@ func (p *Peer) ExpectLine(want string) {
 func (p *Peer) WaitEOF() {
 	p.t.Helper()
 	p.Eventually(func() bool { p.mu.Lock(); defer p.mu.Unlock(); return p.eof }, "client EOF")
+}
+
+// forkListener accepts connections speaking the vendored crypto/tls (server side).
+type forkListener struct {
+	net.Listener
+	cfg *ftls.Config
+}
+
+func (l forkListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return ftls.Server(c, l.cfg), nil
+}
+
+// KeyUpdate sends a TLS 1.3 KeyUpdate (our sending keys are updated; with requestPeer the client is
+// asked to update its own too). Needs WithKeyUpdate and a TLS 1.3 connection.
+func (p *Peer) KeyUpdate(requestPeer bool) {
+	p.t.Helper()
+	tc, ok := p.c.(*tlsmigrate.Conn)
+	if !ok {
+		p.t.Fatalf("fakemush: KeyUpdate needs WithKeyUpdate")
+	}
+	p.wmu.Lock()
+	defer p.wmu.Unlock()
+	if err := tc.KeyUpdate(requestPeer); err != nil {
+		p.t.Fatalf("fakemush: KeyUpdate: %v", err)
+	}
+}
+
+// TLSInfo returns the negotiated TLS version and cipher suite of the connection (0, 0 without TLS or
+// before the handshake finished).
+func (p *Peer) TLSInfo() (version, suite uint16) {
+	switch tc := p.c.(type) {
+	case *tls.Conn:
+		cs := tc.ConnectionState()
+		return cs.Version, cs.CipherSuite
+	case *tlsmigrate.Conn:
+		cs := tc.ConnectionState()
+		return cs.Version, cs.CipherSuite
+	}
+	return 0, 0
 }
 
 // ---- certificates ----

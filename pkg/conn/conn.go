@@ -140,6 +140,9 @@ type Conn struct {
 	handoff atomic.Bool   // set by Handoff: the reader stops without ending the connection
 	adopted bool          // built by Adopt: no initial "connected" event, the session already exists
 	exited  chan struct{} // closed when the reader goroutine has returned
+
+	paused     bool      // built by AdoptPaused: the reader starts at Resume (or Close)
+	resumeOnce sync.Once // guards the start of a paused reader
 }
 
 func (cfg *Config) normalise() error {
@@ -293,7 +296,7 @@ func connect(ctx context.Context, cfg Config) (net.Conn, *DialError) {
 	}
 	hctx, cancel := context.WithTimeout(ctx, cfg.HandshakeTimeout)
 	defer cancel()
-	tcn := tls.Client(raw, tc)
+	tcn := newTLSClient(raw, tc) // migratable when the config allows (tlshandoff.go)
 	if err := tcn.HandshakeContext(hctx); err != nil {
 		raw.Close()
 		return nil, &DialError{Reason: dialReason(ctx, proto.EndTLSError), Err: err}
@@ -333,6 +336,7 @@ func (c *Conn) Close() {
 			c.cancel()
 		}
 	})
+	c.Resume() // a paused reader must run once to see that the connection is closed
 	<-c.done
 }
 

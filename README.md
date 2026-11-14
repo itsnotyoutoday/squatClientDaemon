@@ -1,5 +1,72 @@
 # squatClientDaemon: squatterd and the SquatClient engine
 
+## Quickstart
+
+You need a Linux or FreeBSD machine that stays on (a shell account, a VPS, a home server). No Go, no root, nothing system-wide: everything goes in your home directory.
+
+**1. Install.** As your normal user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh
+```
+
+(`wget -qO- <same url> | sh` works too.) It picks the right download for your CPU, checks its checksum and asks four questions (answers come from your terminal, even when piped from curl). Press Enter to accept a default:
+
+```
+Set up standalone squatterd? [y/n]                 (default y)
+Set up TinyFugue support (tf-squatterd)? [y/n]     (default n)
+Enable automatic updates? [y/n]                    (default n)
+Install the programs into which folder?            (default ~/.local/bin)
+```
+
+**2. Start it** and leave it running (a `tmux` or `screen` window is fine):
+
+```sh
+squatterd
+```
+
+If the command is not found, `~/.local/bin` is not on your PATH; the installer prints the one line to add, or run `~/.local/bin/squatterd`.
+
+**3. Pair SquatClient.** In a second window:
+
+```sh
+squatterd pair
+```
+
+It prints a one-time code, the TLS fingerprint and a `host:port`. In SquatClient add a squatter with that `host:port` and code, and check that the fingerprint matches (it is pinned on first use). The code is needed once per device.
+
+Done: your game connections now stay up when SquatClient is closed. **TinyFugue users:** answer yes to the second question; TinyFugue starts `tf-squatterd` itself (`/squat on`, then `/squat pair`).
+
+### Keeping it up to date
+
+* **By hand (default).** `squatterd update --check` says whether a newer release exists; `squatterd update` downloads it, verifies its checksum, swaps the binary (the old one stays as `squatterd.old`) and reloads the running daemon onto it.
+* **Automatically.** Answer yes to "automatic updates" (or set `"auto_update": true` in `~/.squatterd/config.json`). squatterd then checks once a day and installs a new release itself, but only at a moment when it would not end any of your game sessions; otherwise it waits and tries again later.
+* **Never an interruption.** A reload keeps plain game connections up. Plain and TLS game connections (TLS 1.3, or TLS 1.2 with an AES-GCM or ChaCha20 suite, which is what every current game server uses) are carried across a reload without a new handshake. The exceptions are a TLS 1.2 connection with an old CBC cipher suite and a connection still being set up: an update that would end one of those is held back and told to you instead (`squatterd status` shows "update X available"; SquatClient is told too). `squatterd update --force` does it anyway.
+* A `dev` build (made with `go build`) never updates.
+
+Run the installer again at any time to upgrade or add the other program; your data in `~/.squatterd` is never touched.
+
+### Installer switches
+
+Every question has a switch, so it also runs unattended (with no terminal and no switches it uses the defaults):
+
+| Switch | Meaning |
+|---|---|
+| `--standalone` / `--no-standalone` | install squatterd or not |
+| `--tf` / `--no-tf` | install tf-squatterd or not |
+| `--auto-update` / `--no-auto-update` | write `auto_update` into the config file |
+| `--dir PATH` | install folder (default `~/.local/bin`) |
+| `--version v0.0.1` | a specific release (default: the newest, pre-releases included) |
+| `--yes` | do not ask; use the defaults for anything not given as a switch |
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh -s -- --yes --standalone --tf --auto-update
+```
+
+Prefer to do it by hand? Download `squatclientdaemon-<version>-linux-amd64.tar.gz` (or `arm64`, `freebsd-amd64`, ...) from the [Releases page](https://github.com/itsnotyoutoday/squatClientDaemon/releases), unpack it and run the binaries. Or `make build` if you have Go. You can read the installer first: [`install.sh`](install.sh).
+
+## About
+
 **squatterd** is an optional persistent session holder for MUDs/MUSHes, in the spirit of `screen` or `tinyfugue`. Run it as an ordinary user on any machine; the SquatClient desktop app (or any SWP client) attaches, replays what it missed while away, and continues live. When you close the app the game connection stays up.
 
 * The daemon **never logs in for you** and **stores no game credentials**: your client sends login lines.
@@ -8,33 +75,16 @@
 
 This repository also holds the shared Go engine packages (`pkg/...`) used by the SquatClient app. See `docs/STRUCTURE.md`, `docs/PROTOCOL.md` (SWP v1) and `docs/DAEMON.md`.
 
-## What is in the box
+### What is in the box
 
 | Program | What it is | Who needs it |
 |---|---|---|
 | `squatterd` | A small always-on program that holds your game connections while SquatClient is closed (like `screen`). | Anyone who wants persistent sessions. |
 | `tf-squatterd` | A helper that TinyFugue starts itself (`/squat on`) so SquatClient can attach to a running TinyFugue. | Only TinyFugue users. |
 
-Both are single static files: **no Go, no root, no installer**.
+Both are single static files: **no Go, no root**.
 
-## Quickstart (no build needed)
-
-1. Download the archive for your system from the [Releases page](https://github.com/itsnotyoutoday/squatClientDaemon/releases) (Linux `amd64` for most servers, `arm64` for Raspberry Pi 4/5 and ARM servers) and unpack it:
-   ```sh
-   tar xzf squatclientdaemon-*-linux-amd64.tar.gz && cd squatclientdaemon-*-linux-amd64
-   ```
-2. Start it and leave it running (inside `screen` or `tmux` is fine, see the systemd section for a service):
-   ```sh
-   ./squatterd                     # port 10327, TLS, data in ~/.squatterd
-   ```
-3. In a second window on the same machine, make a one-time pairing code:
-   ```sh
-   ./squatterd pair                # prints the code, its expiry, the TLS fingerprint and a host:port hint
-   ```
-
-Prefer to build it yourself? `make build` (needs Go) produces the same static binaries.
-
-In SquatClient add a squatter with the `host:port` and the pairing code, and confirm the TLS fingerprint matches what `squatterd pair` printed (it is pinned on first use). The client generates an ed25519 key; the daemon remembers its public key, so the code is needed only once per device.
+## Commands
 
 Other commands (`squatterd` with no arguments prints them all):
 
@@ -49,13 +99,58 @@ squatterd version
 
 `serve` flags: `--port 10327 --bind 0.0.0.0 --data-dir ~/.squatterd --cert F --key F --insecure-loopback --max-sessions 64 --max-clients 32 --log-level info`.
 
+## Updates and settings
+
+```
+squatterd update --check        say whether a newer release exists (changes nothing)
+squatterd update                download it, verify its SHA-256 against the release's SHA256SUMS, replace the
+                                running binary (the old one stays as squatterd.old) and, if a squatterd is
+                                running, reload it onto the new binary (docs/RELOAD.md) ...
+squatterd update --force        ... even if that ends sessions
+tf-squatterd update [--check]   the same for the TinyFugue bridge; a running bridge is reloaded onto the new binary
+tf-squatterd reload             restart the TinyFugue bridge in place (game connections are TinyFugue's: nothing drops;
+                                with no bridge running, start one that attaches; docs/TF-SQUATTER.md 13b)
+```
+
+The reload only happens when it would not end any session. A reload carries plain and TLS game connections across;
+it cannot carry a TLS 1.2 CBC-suite connection or one still connecting: if there are such sessions, `squatterd update` installs the new binary, lists
+those sessions, and leaves the running daemon alone; `squatterd reload` (or a restart) switches when you choose.
+A `dev` build (`go build` without a version) never updates.
+
+**Automatic updates** (`auto_update` on): the running squatterd looks for a newer release at most once every 24
+hours and installs it only when no session would end; otherwise it logs it, remembers it, and tries again each
+hour without asking the network again. The remembered version shows in `squatterd status` and is sent to
+clients in the SWP `welcome` message as `updateAvailable`.
+
+### Settings: `~/.squatterd/config.json`
+
+One small file read by both programs (the installer writes it; edit it by hand any time, and restart for
+`auto_update` to take effect):
+
+```json
+{
+  "auto_update": false,
+  "update_channel": "prerelease"
+}
+```
+
+| Field | Values | Default |
+|---|---|---|
+| `auto_update` | `true` / `false` | `false` |
+| `update_channel` | `"stable"` (ignore pre-releases) or `"prerelease"` (newest release of any kind) | `"prerelease"` while only pre-releases exist |
+
+Command-line flags win over the file: `--auto-update` / `--no-auto-update` (serve) and `--channel stable|prerelease`.
+A missing file or field means the default; unknown fields are ignored; an unreadable file gives a warning and the
+defaults. When squatterd runs with `--data-dir DIR` its file is `DIR/config.json`; tf-squatterd always reads
+`~/.squatterd/config.json` (override: `--config-dir`).
+
 ## tf-squatterd: the TinyFugue bridge
 
 `make build` also produces **`tf-squatterd`**, the helper that lets a running [TinyFugue](https://github.com/itsnotyoutoday/tinyfugue)
 (branch `squatterbridge`) be paired with SquatClient: TinyFugue keeps the game connections and runs its own triggers,
 and the app attaches to them. You do not start it yourself: put it on your `PATH` (or `/set squat_bin=...` in
 TinyFugue) and run `/squat on` and `/squat pair` inside TinyFugue. It listens on `127.0.0.1:10328` (`/tfsp`) with the
-same TLS pinning and ed25519 device keys as `squatterd`. Build and pairing steps are in the
+same TLS pinning and ed25519 device keys as `squatterd`. Its data (devices, certificate, sessions) lives in `~/.squatterd/tf/`, apart from squatterd's files in `~/.squatterd/` (they would collide). An older install that used `~/.tf-squatter` keeps using that directory in place, untouched, as long as `~/.squatterd/tf` does not exist, so existing pairings and the TLS fingerprint survive; TinyFugue's `squat_dir` variable overrides the location. Build and pairing steps are in the
 [SquatClient README](https://github.com/itsnotyoutoday/squatclient#tinyfugue-and-the-tf-bridge); the protocol is in
 `docs/TF-SQUATTER.md`.
 
@@ -70,6 +165,9 @@ same TLS pinning and ed25519 device keys as `squatterd`. Build and pairing steps
 
 ```
 ~/.squatterd/
+  config.json                       settings shared with tf-squatterd (auto_update, update_channel)
+  update-state.json                 when the last update check ran, and the newer version it found
+  tf/                               tf-squatterd's own data (same layout: devices.json, tls/, sessions/)
   devices.json  pairing.json        paired devices / pending codes (0600)
   tls/cert.pem  tls/key.pem
   sessions/s-3f9a1c/meta.json       session description, end reason, per-device read marks

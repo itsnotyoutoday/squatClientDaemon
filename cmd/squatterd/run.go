@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/internal/daemon"
@@ -35,6 +36,10 @@ type options struct {
 	maxSessions      int
 	maxClients       int
 	pairValid        time.Duration
+	check            bool
+	force            bool
+	channel          string
+	autoUpdate       *bool // nil: use config.json
 }
 
 func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
@@ -51,6 +56,11 @@ func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
 	fs.IntVar(&o.maxSessions, "max-sessions", 64, "maximum sessions (live + ended)")
 	fs.IntVar(&o.maxClients, "max-clients", 32, "maximum simultaneously connected clients")
 	fs.DurationVar(&o.pairValid, "valid", 0, "pair: how long the code stays valid, e.g. 30m, 2h, 24h (default 10m, max 168h)")
+	fs.BoolVar(&o.check, "check", false, "update: only look for a newer release, install nothing")
+	fs.BoolVar(&o.force, "force", false, "update, reload: even if that ends sessions that cannot be handed over (a TLS 1.2 CBC-cipher game connection, one still connecting)")
+	fs.StringVar(&o.channel, "channel", "", "update: stable|prerelease (default: update_channel in config.json)")
+	fs.BoolFunc("auto-update", "serve: check for and install updates in the background (overrides config.json)", func(string) error { t := true; o.autoUpdate = &t; return nil })
+	fs.BoolFunc("no-auto-update", "serve: never update by itself (overrides config.json)", func(string) error { f := false; o.autoUpdate = &f; return nil })
 	return fs, o
 }
 
@@ -122,7 +132,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		return 0
 	case "user":
 		return cmdUser(args, os.Stdin, stdout, stderr)
-	case "serve", "pair", "devices", "revoke", "status", "reload":
+	case "serve", "pair", "devices", "revoke", "status", "reload", "update":
 	default:
 		fmt.Fprintf(stderr, "squatterd: unknown command %q\n\n", cmd)
 		printUsage(stderr)
@@ -153,6 +163,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		err = cmdStatus(o, stdout)
 	case "reload":
 		err = cmdReload(o, stdout)
+	case "update":
+		err = cmdUpdate(ctx, o, stdout, stderr)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "squatterd:", err)
@@ -171,24 +183,27 @@ type server struct {
 	binding []byte
 	scheme  string
 
-	mu         sync.Mutex
-	d          *daemon.Daemon
-	srv        *wire.Server
-	hs         *http.Server
-	rawLn      *net.TCPListener
-	generation int // 0 for a fresh start, n after n reloads
-	errc       chan error
-	handedOver chan struct{} // closed when a new process took over: this one just exits
-	reloadMu   sync.Mutex
+	mu           sync.Mutex
+	d            *daemon.Daemon
+	srv          *wire.Server
+	hs           *http.Server
+	rawLn        *net.TCPListener
+	generation   int // 0 for a fresh start, n after n reloads
+	errc         chan error
+	handedOver   chan struct{} // closed when a new process took over: this one just exits
+	reloadMu     sync.Mutex
+	handOverOnce sync.Once
+	update       atomic.Value      // string: newest version found that is not installed yet
+	stopCtl      func(remove bool) // stops the control socket (nil when there is none)
 }
 
 // startServing creates the daemon (continuing a handoff if h is set) and serves on rawLn.
 func (s *server) startServing(rawLn *net.TCPListener, h *daemon.Handoff) error {
-	d, err := daemon.New(daemon.Config{DataDir: s.o.dataDir, Logger: s.log, MaxSessions: s.o.maxSessions, Handoff: h})
+	d, err := daemon.New(daemon.Config{DataDir: s.o.dataDir, Logger: s.log, MaxSessions: s.o.maxSessions, Handoff: h, Reload: s.reloadHook()})
 	if err != nil {
 		return err
 	}
-	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: s.as, ServerName: "squatterd/" + version, Logger: s.log, MaxClients: s.o.maxClients, TLSBinding: s.binding})
+	srv := wire.NewServer(wire.ServerConfig{Backend: d, Auth: s.as, ServerName: "squatterd/" + version, Logger: s.log, MaxClients: s.o.maxClients, TLSBinding: s.binding, UpdateAvailable: s.updateAvailable})
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelWarn)}
 	var ln net.Listener = rawLn
 	if !s.o.insecureLoopback {
@@ -257,14 +272,33 @@ func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)
 		return err
 	}
 	log.Info("squatterd listening", "version", version, "url", fmt.Sprintf("%s://%s/swp", s.scheme, rawLn.Addr()), "data-dir", o.dataDir, "generation", s.generation)
-	stopControl, err := s.startControl(ctx)
+	s.startAutoUpdate(ctx)
+	stopControlFn, err := s.startControl(ctx)
 	if err != nil {
 		log.Warn("control socket not available (squatterd reload will not work)", "err", err)
+	}
+	s.mu.Lock()
+	s.stopCtl = stopControlFn
+	s.mu.Unlock()
+	stopControl := func(remove bool) { // the current one: a rollback replaces it (rebindControl)
+		s.mu.Lock()
+		f := s.stopCtl
+		s.mu.Unlock()
+		if f != nil {
+			f(remove)
+		}
+	}
+	if readyW != nil && os.Getenv("SQUATTERD_TEST_DIE_BEFORE_READY") != "" {
+		// test hook (reload_tls_e2e_test.go): a new process that adopted everything (TLS sessions
+		// included, state file read and deleted) and dies before it says ready, so that the old process
+		// must take the connections back from its own copy of the state
+		os.Exit(7)
 	}
 	if readyW != nil { // tell the old process we are serving
 		_, _ = readyW.WriteString("ready\n")
 		_ = readyW.Close()
-		_ = os.Remove(filepath.Join(o.dataDir, handoffFile))
+		_ = os.Remove(filepath.Join(o.dataDir, handoffFile)) // the secret-bearing file does not stay around
+		s.d.ResumeAdopted()                                  // only now do the adopted connections start reading (see daemon.adopt)
 	}
 	if ready != nil {
 		ready(rawLn.Addr().String())
@@ -277,14 +311,10 @@ func serve(ctx context.Context, o *options, stderr io.Writer, ready func(string)
 		log.Error("server stopped", "err", err)
 	case <-s.handedOver:
 		log.Info("handed over to a new squatterd process; exiting")
-		if stopControl != nil {
-			stopControl(false)
-		}
+		stopControl(false)
 		return nil
 	}
-	if stopControl != nil {
-		stopControl(true)
-	}
+	stopControl(true)
 	s.mu.Lock()
 	d, srv, hs := s.d, s.srv, s.hs
 	s.mu.Unlock()

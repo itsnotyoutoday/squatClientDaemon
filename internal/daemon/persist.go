@@ -11,9 +11,16 @@ import (
 
 const metaName = "meta.json"
 
+// MetaVersion is the version of meta.json written by this binary ("v" in the file; absent = 0 = the
+// original layout, which is the same as 1). Additive optional fields do not change it; anything an
+// older binary must not silently lose or misread does, and an older binary then refuses to start on
+// the data (ErrStateTooNew) instead of rewriting it.
+const MetaVersion = 1
+
 // meta is the persisted description of a session (<data>/sessions/<id>/meta.json).
 // The scrollback lives next to it in log.ndjson (pkg/scrollback).
 type meta struct {
+	V         int               `json:"v,omitempty"`
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
 	Host      string            `json:"host"`
@@ -33,6 +40,7 @@ type meta struct {
 func sessionsDir(dataDir string) string { return filepath.Join(dataDir, "sessions") }
 
 func writeMeta(dir string, m *meta) error {
+	m.V = MetaVersion
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -64,7 +72,10 @@ func readMeta(dir string) (*meta, error) {
 	}
 	var m meta
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("%s: %w", dir, err)
+		return nil, fmt.Errorf("%s: %w: %v", dir, ErrStateCorrupt, err)
+	}
+	if m.V > MetaVersion {
+		return nil, fmt.Errorf("%s: %w: session metadata version %d, this squatterd understands %d", dir, ErrStateTooNew, m.V, MetaVersion)
 	}
 	if m.ID == "" || m.ID != filepath.Base(dir) {
 		return nil, fmt.Errorf("%s: meta id mismatch", dir)

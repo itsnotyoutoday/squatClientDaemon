@@ -34,6 +34,11 @@ type Config struct {
 	// Handoff, if set, makes this Daemon the continuation of one that called PrepareHandoff (squatterd
 	// reload, see handoff.go): the sessions in it are adopted instead of being marked stopped.
 	Handoff *Handoff
+
+	// Reload, if set, restarts the squatterd without dropping game connections (squatterd reload, see
+	// reload.go and cmd/squatterd). It is what admin.reload calls, on its own goroutine, after the plan
+	// was checked. Nil: this daemon cannot reload itself and says so.
+	Reload func(force bool) error
 }
 
 // Daemon is the session registry. It implements wire.Backend.
@@ -50,9 +55,15 @@ type Daemon struct {
 
 	pmu   sync.RWMutex
 	peers map[uint64]wire.Peer
+
+	rmu sync.Mutex
+	rs  reloadState
 }
 
-var _ wire.Backend = (*Daemon)(nil)
+var (
+	_ wire.Backend       = (*Daemon)(nil)
+	_ wire.ReloadBackend = (*Daemon)(nil)
+)
 
 // New opens (creating if needed) the data dir and loads persisted sessions.
 // Sessions that were not ended are loaded as ended/squatter_stopped.
@@ -73,8 +84,16 @@ func New(cfg Config) (*Daemon, error) {
 	if err := os.MkdirAll(sessionsDir(cfg.DataDir), 0o700); err != nil {
 		return nil, fmt.Errorf("daemon: %w", err)
 	}
+	if cfg.Handoff != nil {
+		// check everything BEFORE adopting anything: a handoff this binary cannot take over completely is
+		// refused, the old process (which waits for our ready signal) carries on with every connection
+		if err := checkHandoff(cfg); err != nil {
+			return nil, err
+		}
+	}
 	ctx, end := context.WithCancel(context.Background())
 	d := &Daemon{cfg: cfg, log: log, ctx: ctx, end: end, sessions: map[string]*session{}, peers: map[uint64]wire.Peer{}}
+	d.initReload()
 	if err := d.load(); err != nil {
 		end()
 		return nil, err
@@ -89,6 +108,20 @@ func (d *Daemon) load() error {
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
 	}
+	opened := map[string]*session{}
+	fail := func(err error) error {
+		// nothing was resumed and nothing was ended: drop our own descriptors, close the stores
+		for _, s := range opened {
+			if s.c != nil {
+				s.c.Discard()
+			}
+			s.mu.Lock()
+			s.closed = true
+			s.mu.Unlock()
+			_ = s.store.Close()
+		}
+		return err
+	}
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
@@ -96,6 +129,9 @@ func (d *Daemon) load() error {
 		dir := filepath.Join(sessionsDir(d.cfg.DataDir), e.Name())
 		m, err := readMeta(dir)
 		if err != nil {
+			if errors.Is(err, ErrStateTooNew) {
+				return fail(err) // data of a newer squatterd: refuse rather than misread or rewrite it
+			}
 			d.log.Warn("daemon: skipping unreadable session", "dir", dir, "err", err)
 			continue
 		}
@@ -104,19 +140,68 @@ func (d *Daemon) load() error {
 			d.log.Warn("daemon: cannot open session", "id", m.ID, "err", err)
 			continue
 		}
+		opened[m.ID] = s
 		hs, carried := d.handoffFor(m.ID)
 		switch {
 		case m.State == proto.StateEnded:
 			close(s.done)
 		case carried:
 			if err := d.adopt(s, hs, d.cfg.Handoff.Files[hs.File]); err != nil {
-				d.log.Warn("daemon: cannot adopt connection", "id", m.ID, "err", err)
-				s.markEndedAtLoad(proto.EndSquatterRestarted, "could not take over the connection: "+err.Error())
+				return fail(fmt.Errorf("daemon: cannot adopt the connection of session %s: %w", m.ID, err))
 			}
 		default:
 			s.markStoppedAtLoad()
 		}
-		d.sessions[m.ID] = s
+	}
+	d.smu.Lock()
+	for id, s := range opened {
+		d.sessions[id] = s
+	}
+	d.smu.Unlock()
+	for _, s := range opened {
+		if s.c != nil && s.paused {
+			d.wg.Add(1)
+			go s.pump()
+		}
+	}
+	return nil
+}
+
+// checkHandoff validates a handoff against the data directory without touching any socket.
+func checkHandoff(cfg Config) error {
+	h := cfg.Handoff
+	if len(h.Files) < len(h.Bundle.Sessions) {
+		return fmt.Errorf("%w: %d sessions but %d descriptors", ErrStateCorrupt, len(h.Bundle.Sessions), len(h.Files))
+	}
+	for _, hs := range h.Bundle.Sessions {
+		if hs.File < 0 || hs.File >= len(h.Files) || h.Files[hs.File] == nil {
+			return fmt.Errorf("%w: session %s has no descriptor", ErrStateCorrupt, hs.ID)
+		}
+		m, err := readMeta(filepath.Join(sessionsDir(cfg.DataDir), hs.ID))
+		if err != nil {
+			return fmt.Errorf("daemon: carried session %s: %w", hs.ID, err)
+		}
+		if m.State == proto.StateEnded {
+			return fmt.Errorf("%w: carried session %s is recorded as ended", ErrStateCorrupt, hs.ID)
+		}
+		w := proto.World{Name: m.Name, Host: m.Host, Port: m.Port, TLS: m.TLS, TLSVerify: m.TLSVerify, Encoding: m.Encoding}
+		cc := conn.Config{World: w, Caps: hs.Caps, Proxied: true}
+		if cfg.ConnTweak != nil {
+			cfg.ConnTweak(&cc)
+		}
+		switch {
+		case m.TLS && len(hs.TLS) == 0:
+			return fmt.Errorf("%w: carried TLS session %s has no TLS state", ErrStateCorrupt, hs.ID)
+		case !m.TLS && len(hs.TLS) > 0:
+			return fmt.Errorf("%w: carried session %s is not TLS but has TLS state", ErrStateCorrupt, hs.ID)
+		case len(hs.TLS) > 0:
+			err = conn.CheckHandoffTLS(cc, hs.Conn, hs.TLS)
+		default:
+			err = conn.CheckHandoff(cc, hs.Conn)
+		}
+		if err != nil {
+			return fmt.Errorf("daemon: carried session %s: %w", hs.ID, err)
+		}
 	}
 	return nil
 }

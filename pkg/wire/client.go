@@ -140,6 +140,7 @@ type Client struct {
 	server   string
 	kind     string // "squatterd" or "tf-squatterd"
 	instance string // tf-squatterd: changes whenever TinyFugue restarts
+	reload   *proto.ReloadStatus
 	role     string
 	user     string
 	sessions []proto.SessionInfo
@@ -277,6 +278,7 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 		}
 		c.deviceID, c.server, c.sessions, c.features = w.DeviceID, w.Server, w.Sessions, w.Features
 		c.instance, c.role, c.user = w.Instance, w.Role, w.User
+		c.reload = w.Reload
 		if w.Kind != "" {
 			c.kind = w.Kind
 		}

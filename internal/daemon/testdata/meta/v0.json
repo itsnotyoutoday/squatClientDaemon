@@ -1,0 +1,13 @@
+{
+  "id": "s-legacy1",
+  "name": "Legacy MUSH",
+  "host": "mush.example.org",
+  "port": 4201,
+  "tls": false,
+  "tlsVerify": "strict",
+  "encoding": "utf-8",
+  "state": "connected",
+  "startedAt": 1700000000000,
+  "lastText": "You say, \"hello\"",
+  "acks": {"dev-1": 12}
+}

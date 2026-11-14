@@ -43,6 +43,7 @@ Version: **1**. Default port: **10327**. Endpoint: `wss://<host>:10327/swp`.
    rate limited (5 failures / 5 min / source IP -> 5 min lockout).
 4. Success: `{"t":"welcome","server":"squatterd/0.1.0","deviceId":"<hex sha256(pubkey)[:16]>","role":"owner","sessions":[SessionInfo...]}`
    `welcome` also carries optional `"features":[...]` (v1 defines `"noEcho"`); unknown features must be ignored.
+   `welcome` may also carry `"updateAvailable":"0.2.0"`: squatterd (with `auto_update` on in its `config.json`) found a release newer than itself and has not installed it yet (for example because a session would end). Purely informational; clients may show it and must ignore it if absent.
 
 `deviceId` = first 16 hex chars of sha256 of the raw 32-byte public key.
 
@@ -50,7 +51,7 @@ Version: **1**. Default port: **10327**. Endpoint: `wss://<host>:10327/swp`.
 
 Before a `squatterd reload` the daemon sends every client `{"t":"server.restarting"}` and then drops the
 connections; a client reconnects and replays from its last seq (old clients ignore the unknown type). A
-session whose connection the restart could not carry (a TLS connection to the game) ends with `endReason`
+session whose connection the restart could not carry (a TLS 1.2 connection with a non-AEAD cipher suite, or one still being set up) ends with `endReason`
 `"squatter_restarted"`; all others continue as if nothing happened (docs/RELOAD.md).
 
 ### 2a. Named users: login with a key pair
@@ -98,6 +99,38 @@ Rules: an admin cannot remove, disable, demote or reset their own account, nor t
 (`forbidden`). Adding a key to a user who already has keys is only possible from one of that user's own
 devices (`user.pair`) or the host shell, never by an admin (`forbidden`): an admin cannot take over an
 account, only reset it (which voids the old keys). Every change is written to `audit.log`.
+
+### 2c. Reload status and `admin.reload`
+
+A daemon that can restart itself without dropping game connections (squatterd on Linux/macOS; docs/RELOAD.md)
+advertises the feature `"reload"` and adds `"reload": ReloadStatus` to `welcome`. All fields are additive; a
+client ignores what it does not know, a daemon that does not know these requests ignores them.
+
+```
+ReloadStatus = {supported, generation, pid?, startedAt, serviceSince, uptimeMs, last?: ReloadResult, plan?: ReloadPlan}
+ReloadResult = {at, ok, generation, carried, ended?: [sessionId], durationMs?, error?}
+ReloadPlan   = {carry: [{id, name}], end: [{id, name, reason}]}      reason: "tls" (a TLS session that cannot be migrated) | "connecting"
+```
+
+`generation` counts the successful reloads since the service first started, `serviceSince`/`startedAt` are
+unix milliseconds (first start of the chain / this process), `uptimeMs` is this process's. `last` is the
+outcome of the latest attempt, successful or rolled back (`ok:false` with `error`; the old process kept
+running, `generation` is then unchanged); absent if there never was one. `plan` says what a reload would do
+now: `carry` sessions survive, `end` sessions would end with `endReason` `squatter_restarted`.
+
+| Request | Who | Reply |
+|---|---|---|
+| `reload.status {id}` | any client | `reload.status.result {reqId, status: ReloadStatus}` |
+| `admin.reload {id, force?, dryRun?}` | admin, or an old full-trust paired device (`role` `owner`); viewer and operator get `forbidden` | `admin.reload.result {reqId, accepted, dryRun, plan}` |
+
+`admin.reload` answers BEFORE the restart begins; the reload starts a moment later, sends `server.restarting` and
+drops all connections like any reload, and the client reconnects and reads the outcome from `welcome.reload.last`.
+If the plan has sessions in `end` and `force` is not true, nothing is started and the reply is an `error` with
+code `reload_would_end_sessions` (the message names the sessions); repeat with `"force":true` to go ahead.
+`dryRun:true` only returns the plan (same refusal rule unless `force`). A daemon that cannot reload itself answers
+`error` code `reload_unsupported` (Windows). tf-squatterd supports both requests (feature `reload`, docs/TF-SQUATTER.md 13b): a bridge
+reload never ends a game connection, so its `plan.end` is always empty and `force` changes nothing; `last` is the outcome of the
+latest attempt (`ok:false` with `error` for a rolled-back one).
 
 ## 3. Types
 
