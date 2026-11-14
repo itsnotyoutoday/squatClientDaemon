@@ -60,6 +60,8 @@ type SaveOpts struct {
 var DefaultFailurePatterns = []string{
 	"#-1", "permission denied", "you can't", "you cannot", "you don't have permission",
 	"i don't see that here", "huh?", "invalid attribute", "not a valid attribute", "bad attribute",
+	// other wordings of "there is no such thing here" (CobraMUSH, PennMUSH, TinyMUX...)
+	"i can't see that", "i can't find", "couldn't find that", "i don't know which one", "i don't know what you mean",
 }
 
 const (
@@ -135,7 +137,10 @@ func (e *Engine) probe(ctx context.Context, sid string, co CaptureOpts, fail []s
 	}
 	co.MarkerCmd = cmd
 	co.Accept = func(p string) bool {
-		return strings.HasPrefix(p, base+"-") || (fail != nil && matchAny(p, fail)) || (extra != nil && extra(p))
+		// The game's refusals are always swallowed with the capture, whether or not this query
+		// looks at them: evaluating num()/locate()/controls() on a missing object makes some
+		// games print "I can't see that here." as a separate line, and it must not reach the output.
+		return strings.HasPrefix(p, base+"-") || matchAny(p, DefaultFailurePatterns) || (fail != nil && matchAny(p, fail)) || (extra != nil && extra(p))
 	}
 	cmds := make([]string, 0, len(order))
 	for _, tag := range order {

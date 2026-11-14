@@ -58,8 +58,10 @@ type Fake struct {
 	ExecOn bool
 	// ScriptsOn: TinyFugue accepts script uploads (squat_scripts). Set before use.
 	ScriptsOn bool
-	loaded    []string
-	unnamed   int
+	// OnSend, when set, is called with the session id and text of every accepted SEND (to make the "game" answer).
+	OnSend  func(sid, text string)
+	loaded  []string
+	unnamed int
 }
 
 type ask struct{ m []string }
@@ -250,6 +252,9 @@ func (f *Fake) respond(m []string) {
 			f.Send("ERR", m[1], "not_controller", "TinyFugue has control of this session")
 		} else {
 			f.Send("OK", m[1])
+			if f.OnSend != nil {
+				f.OnSend(m[2], m[5])
+			}
 		}
 	case "CTRL_SET":
 		isTakeover := (m[3] == "input" && m[4] != "tf") || (m[3] == "automation" && m[4] == "client")

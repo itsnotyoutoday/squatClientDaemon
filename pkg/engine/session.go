@@ -73,6 +73,8 @@ type session struct {
 	gameTypeSrc string
 	probeTimer  func()
 	probeTries  int
+	probeStrict bool // the probe was armed by taking the keyboard: only a clear MU* answer counts
+	armedProbe  bool
 	bannerSeen  int
 	noUnread    bool // appendLocked: do not count the next game line as unread
 }

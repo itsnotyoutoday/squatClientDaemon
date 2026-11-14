@@ -216,6 +216,9 @@ func (s *session) applyRemoteInfo(in proto.SessionInfo) {
 		if n := s.lossNoticeLocked(old, tf); n != "" {
 			after = append(after, func() { s.publishLoss(n) })
 		}
+		if old.Input == "tf" && tf.Input != "tf" {
+			after = append(after, s.armProbe) // the user took the keyboard: find out what game this is
+		}
 		s.info.TF = &tf
 	}
 	if in.State == proto.StateEnded {

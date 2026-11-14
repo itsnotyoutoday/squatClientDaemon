@@ -228,3 +228,40 @@ func TestEscapesRoundTrip(t *testing.T) {
 		t.Fatal("still has newline")
 	}
 }
+
+// Some games (CobraMUSH, PennMUSH variants) print "I can't see that here." as a separate line while
+// they evaluate num()/locate()/controls() on an object that is not there. Those lines arrive between
+// the capture markers: they must be swallowed with the capture and not turn up in the output (this
+// was seen as a burst of "I can't see that here." after leaving the Object Editor).
+func TestEditorQueriesSwallowTheGamesRefusalMessages(t *testing.T) {
+	both(t, func(t *testing.T, c capEnv) {
+		c.sim.mu.Lock()
+		c.sim.override = func(cmd string) ([]string, bool) {
+			i := strings.Index(cmd, ":")
+			if !strings.HasPrefix(cmd, "think ") || i < 0 || !strings.Contains(cmd, "#999") {
+				return nil, false
+			}
+			tag := cmd[len("think "):i]
+			switch {
+			case strings.Contains(cmd, "num(#999)"):
+				return []string{"I can't see that here.", "I can't see that here.", tag + ":#-1^|^#-1^|^#-1 NOT FOUND^|^#-1 NOT FOUND"}, true
+			case strings.Contains(cmd, "controls(me,#999)"):
+				return []string{"I can't see that here.", tag + ":#-1 NO SUCH OBJECT"}, true
+			}
+			return []string{"Couldn't find that player.", tag + ":#-1"}, true
+		}
+		c.sim.mu.Unlock()
+		if _, err := c.e.ResolveObject(ctxT(t), c.sid, "#999"); !errors.Is(err, engine.ErrNoSuchObject) {
+			t.Fatalf("want ErrNoSuchObject, got %v", err)
+		}
+		if _, err := c.e.Controls(ctxT(t), c.sid, "#999"); err != nil {
+			t.Fatalf("Controls: %v", err)
+		}
+		c.assertClean(t)
+		for _, l := range c.shown() {
+			if strings.Contains(l, "can't see") || strings.Contains(l, "Couldn't find") {
+				t.Fatalf("the game's refusal reached the user's output: %q", l)
+			}
+		}
+	})
+}

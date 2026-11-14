@@ -602,3 +602,74 @@ func TestTFRecordConnectWithALoginHereSendsTheClientsLogin(t *testing.T) {
 		t.Fatalf("login line sent: %v", got)
 	}
 }
+
+// The game type of a TinyFugue session that was already running is found by one probe when the user
+// takes the keyboard; while TinyFugue holds it nothing is sent and no attempt is used up.
+func TestTFGameTypeIsProbedWhenTheKeyboardIsTaken(t *testing.T) {
+	v := newTFEnv(t)
+	v.fake.OnSend = func(sid, text string) {
+		switch {
+		case text == "think [version()]":
+			v.fake.Line(sid, "g", "", "game", "PennMUSH version 1.8.8 patchlevel 3 [11/01/2025]")
+		case strings.HasPrefix(text, "think "):
+			v.fake.Line(sid, "g", "", "game", strings.TrimPrefix(text, "think "))
+		}
+	}
+	e, r := v.connect(t)
+	id := v.session(t, e, r)
+	time.Sleep(600 * time.Millisecond)
+	if got := v.fake.SendTexts(); len(got) != 0 {
+		t.Fatalf("something was sent while TinyFugue holds the keyboard: %v", got)
+	}
+	if si, _ := e.Session(id); si.GameType != "" {
+		t.Fatalf("type %q without any evidence", si.GameType)
+	}
+	if err := e.SetControl(id, "input", "both"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 12*time.Second, "the probe finds the server", func() bool {
+		si, _ := e.Session(id)
+		return si.GameType == "pennmush" && si.GameTypeSource == "probe"
+	})
+}
+
+func TestTFProbeAnswerThatIsNotAMUSHLeavesTheTypeUnknown(t *testing.T) {
+	v := newTFEnv(t)
+	v.fake.OnSend = func(sid, text string) {
+		switch {
+		case strings.HasPrefix(text, "think [version()]"), text == "@version":
+			v.fake.Line(sid, "g", "", "game", "Huh?  I don't understand that.")
+		case strings.HasPrefix(text, "think "):
+			v.fake.Line(sid, "g", "", "game", strings.TrimPrefix(text, "think "))
+		}
+	}
+	e, r := v.connect(t)
+	id := v.session(t, e, r)
+	if err := e.SetControl(id, "input", "both"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 12*time.Second, "the probe was sent", func() bool {
+		for _, s := range v.fake.SendTexts() {
+			if s == "think [version()]" {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(800 * time.Millisecond)
+	if si, _ := e.Session(id); si.GameType != "" {
+		t.Fatalf("an unclear answer made it %q; it must stay unknown", si.GameType)
+	}
+}
+
+func waitFor(t *testing.T, d time.Duration, what string, pred func() bool) {
+	t.Helper()
+	end := time.Now().Add(d)
+	for time.Now().Before(end) {
+		if pred() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}

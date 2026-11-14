@@ -1127,3 +1127,20 @@ func TestPromptThatBecomesALineIsNotShownTwice(t *testing.T) {
 		t.Fatalf("growing prompt = %v", g)
 	}
 }
+
+func TestFeaturesAnnouncedToClientsIncludeScriptsOnlyWhenTinyFugueAllowsThem(t *testing.T) {
+	has := func(fs []string, want string) bool {
+		for _, f := range fs {
+			if f == want {
+				return true
+			}
+		}
+		return false
+	}
+	if has(featuresFor([]string{"lines", "exec"}), "scripts") {
+		t.Fatal("scripts announced although TinyFugue did not offer them")
+	}
+	if !has(featuresFor([]string{"lines", "scripts"}), "scripts") {
+		t.Fatal("scripts offered by TinyFugue were not announced")
+	}
+}

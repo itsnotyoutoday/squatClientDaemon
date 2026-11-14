@@ -162,6 +162,8 @@ func featuresFor(tf []string) []string {
 			f = append(f, wire.FeatureExec)
 		case "ask":
 			f = append(f, wire.FeatureAsk)
+		case "scripts":
+			f = append(f, wire.FeatureScripts) // TinyFugue's squat_scripts is on: clients may send scripts
 		}
 	}
 	return f

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -154,7 +155,7 @@ func (s *session) noteBannerLocked(plain string) {
 // scheduleProbe asks the game for its version after d unless the type is known.
 func (s *session) scheduleProbe(d time.Duration) {
 	s.mu.Lock()
-	if s.gameType != "" || s.probeTimer != nil || s.probeTries >= probeMaxTries || s.info.State == "ended" {
+	if s.gameType != "" || s.probeTimer != nil || s.probeTries >= probeMaxTries || s.info.State == "ended" || s.tfLockedLocked() {
 		s.mu.Unlock()
 		return
 	}
@@ -162,11 +163,34 @@ func (s *session) scheduleProbe(d time.Duration) {
 		s.mu.Lock()
 		s.probeTimer = nil
 		s.mu.Unlock()
-		if _, err := s.e.DetectGameType(s.e.ctx, s.id); err != nil {
+		if _, err := s.e.DetectGameType(s.e.ctx, s.id); err != nil && !errors.Is(err, errProbeLocked) {
 			s.scheduleProbe(probeRetry)
 		}
 	})
 	s.mu.Unlock()
+}
+
+// errProbeLocked: TinyFugue holds the keyboard of this connection, so the probe cannot be typed.
+// It does not use up an attempt; taking the keyboard arms the probe again (armProbe).
+var errProbeLocked = errors.New("TinyFugue has the keyboard: the game type is probed when you take it")
+
+// tfLockedLocked reports a TinyFugue session whose keyboard is TinyFugue's (s.mu held).
+func (s *session) tfLockedLocked() bool { return s.info.TF != nil && s.info.TF.Input == "tf" }
+
+// armProbe runs the probe once for a connection whose type is still unknown, soon after the user
+// took the keyboard of a TinyFugue session that was already running (nothing else would probe it:
+// the banner is long gone and no login line is sent from here). Unlike the probe after a login,
+// only a reply that names a MU* server counts: an answer such as "Huh?" from some other kind of
+// game does not make it a MU*.
+func (s *session) armProbe() {
+	s.mu.Lock()
+	if s.gameType != "" || s.armedProbe || s.info.State != "connected" || s.info.TF == nil {
+		s.mu.Unlock()
+		return
+	}
+	s.armedProbe, s.probeStrict, s.probeTries = true, true, 0
+	s.mu.Unlock()
+	s.scheduleProbe(probeSoon)
 }
 
 // noteUserLine watches what the user types: a connect line is the moment a MU* login happens, so
@@ -192,7 +216,12 @@ func (e *Engine) DetectGameType(ctx context.Context, id string) (string, error) 
 		s.mu.Unlock()
 		return t, nil
 	}
+	if s.tfLockedLocked() {
+		s.mu.Unlock()
+		return "", errProbeLocked
+	}
 	s.probeTries++
+	strict := s.probeStrict
 	s.mu.Unlock()
 	lines, err := e.Capture(ctx, id, []string{"think [version()]"}, CaptureOpts{Timeout: 4 * time.Second})
 	if err != nil {
@@ -211,6 +240,9 @@ func (e *Engine) DetectGameType(ctx context.Context, id string) (string, error) 
 			}
 			t = ParseVersionReply(plain)
 		}
+	}
+	if strict && GameTypeFamily(t) != FamilyMUSH || strict && t == GameMUSH {
+		return "", nil // no clear MU* answer: leave the type unknown (the user can set it)
 	}
 	s.mu.Lock()
 	s.setGameTypeLocked(t, GameSourcePrb)

@@ -30,7 +30,11 @@ type Sim struct {
 }
 
 // Start builds a Sim; everything is torn down when the test ends.
-func Start(t testing.TB) *Sim {
+func Start(t testing.TB) *Sim { return StartWith(t, DefaultFeatures) }
+
+// StartWith is Start with the feature list the simulated TinyFugue announces (for example
+// DefaultFeatures+",scripts" when its squat_scripts is on).
+func StartWith(t testing.TB, features string) *Sim {
 	t.Helper()
 	dir := t.TempDir()
 	as, err := auth.Open(dir)
@@ -44,7 +48,7 @@ func Start(t testing.TB) *Sim {
 		t.Fatal(err)
 	}
 	go func() { _ = b.Run() }()
-	fake.Hello("inst-1", DefaultFeatures)
+	fake.Hello("inst-1", features)
 	inst, err := waitReady(b)
 	if err != nil {
 		t.Fatal(err)

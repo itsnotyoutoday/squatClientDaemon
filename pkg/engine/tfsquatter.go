@@ -58,11 +58,15 @@ func (s *session) applyControl(cs wire.ControlStateMsg) {
 	}
 	old := tf
 	tf.Input, tf.Automation, tf.ControllerDevice = cs.Input, cs.Automation, cs.Device
+	tookKeyboard := old.Input == "tf" && tf.Input != "tf"
 	s.info.TF = &tf
 	notice := s.lossNoticeLocked(old, tf)
 	s.publishInfoLocked()
 	s.mu.Unlock()
 	s.publishLoss(notice)
+	if tookKeyboard {
+		s.armProbe()
+	}
 }
 
 // selfControl marks the span of one of this client's own control requests; the
