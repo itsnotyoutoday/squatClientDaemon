@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']   # documentation-only pushes do not need a test run
   pull_request:
   workflow_dispatch:
 

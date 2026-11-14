@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs squatterd and/or tf-squatterd for the CURRENT USER ONLY. No root, no Go, nothing system-wide.
 #
-#   curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/main/install.sh | sh
 #
 # It asks five questions (what to install, auto-updates, which folder; answers are read from your terminal, even when piped from curl). Every question
 # has a switch, so it also runs unattended:

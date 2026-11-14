@@ -7,7 +7,7 @@ You need a Linux or FreeBSD machine that stays on (a shell account, a VPS, a hom
 **1. Install.** As your normal user:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/main/install.sh | sh
 ```
 
 (`wget -qO- <same url> | sh` works too.) It picks the right download for your CPU, checks its checksum and asks five questions (answers come from your terminal, even when piped from curl). Press Enter to accept a default:
@@ -92,7 +92,7 @@ Every question has a switch, so it also runs unattended (with no terminal and no
 | `--yes` | do not ask; use the defaults for anything not given as a switch |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh -s -- --yes --standalone --tf --auto-update
+curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/main/install.sh | sh -s -- --yes --standalone --tf --auto-update
 ```
 
 Prefer to do it by hand? Download `squatclientdaemon-<version>-linux-amd64.tar.gz` (or `arm64`, `freebsd-amd64`, ...) from the [Releases page](https://github.com/itsnotyoutoday/squatClientDaemon/releases), unpack it and run the binaries. Or `make build` if you have Go. You can read the installer first: [`install.sh`](install.sh).
