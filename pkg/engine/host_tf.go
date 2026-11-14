@@ -324,3 +324,8 @@ func (h *tfHost) Help(world, topic string) {
 func (h *tfHost) Suspend() { go h.e.Suspend() }
 
 func (h *tfHost) Quit() { h.e.bus.publish(Event{Kind: EvQuit}) }
+
+// KeyBindings tells the UI which keys scripts have bound (EvWindow "keys:<seq>\n<seq>...").
+func (h *tfHost) KeyBindings(seqs []string) {
+	h.e.bus.publish(Event{Kind: EvWindow, Text: "keys:" + strings.Join(seqs, "\n")})
+}

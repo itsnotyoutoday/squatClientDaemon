@@ -29,6 +29,7 @@ func (a *Engine) start(in *gtfparser.Interp) {
 		a.warn("stdlib.tf: " + err.Error())
 	}
 	a.muted = false
+	a.pushKeys(in)
 }
 
 // afterCall is the housekeeping every call ends with.
@@ -39,6 +40,7 @@ func (a *Engine) afterCall(in *gtfparser.Interp) {
 		a.statusDirty = false
 		a.pushStatus(in)
 	}
+	a.pushKeys(in)
 	if in.Quit {
 		in.Quit = false
 		a.host.Quit()
@@ -66,4 +68,18 @@ func (a *Engine) pushStatus(in *gtfparser.Interp) {
 		}
 	}
 	a.host.SetStatus(out)
+}
+
+// pushKeys tells the host when the set of bound keys changed.
+func (a *Engine) pushKeys(in *gtfparser.Interp) {
+	var seqs []string
+	for _, b := range in.Bindings() {
+		seqs = append(seqs, gtfparser.AsciiToPrint(b.Seq))
+	}
+	sig := strings.Join(seqs, "\x00")
+	if sig == a.keySig {
+		return
+	}
+	a.keySig = sig
+	a.host.KeyBindings(seqs)
 }

@@ -103,6 +103,9 @@ type Host interface {
 	// wrapspace, wrappunct, visual, more, ...).
 	Var(name, value string)
 	Dialog(name string) // open a GUI window: "worlds"
+	// KeyBindings reports the key sequences scripts have bound whenever they change,
+	// so the input line knows which keystrokes to forward to Engine.Key.
+	KeyBindings(seqs []string)
 	Suspend()           // /suspend
 	Quit()              // /quit
 }
@@ -147,5 +150,6 @@ func (NopHost) SetLimit(string, func(string, string) bool) int {
 }
 func (NopHost) Var(string, string) {}
 func (NopHost) Dialog(string)      {}
+func (NopHost) KeyBindings([]string) {}
 func (NopHost) Suspend()           {}
 func (NopHost) Quit()              {}

@@ -241,6 +241,9 @@ func (h *coreHost) KeyCode(name string) string {
 }
 
 var keyCodes = map[string]string{
+	"F1": "\x1b[11~", "F2": "\x1b[12~", "F3": "\x1b[13~", "F4": "\x1b[14~", "F5": "\x1b[15~", "F6": "\x1b[17~",
+	"F7": "\x1b[18~", "F8": "\x1b[19~", "F9": "\x1b[20~", "F10": "\x1b[21~", "F11": "\x1b[23~", "F12": "\x1b[24~",
+	"INS": "\x1b[2~", "DEL": "\x1b[3~",
 	"UP": "\x1b[A", "DOWN": "\x1b[B", "RIGHT": "\x1b[C", "LEFT": "\x1b[D",
 	"HOME": "\x1b[H", "END": "\x1b[F", "PGUP": "\x1b[5~", "PGDN": "\x1b[6~",
 }
