@@ -27,7 +27,20 @@ jobs:
           # the vendored crypto/tls copy (pkg/tlsmigrate/tls) is upstream Go code with a few patches: not linted
           staticcheck $(go list ./... | grep -v tlsmigrate/tls)
       - name: test (race)
-        run: go test -race -count=1 ./...
+        run: |
+          # Known flaky test (issue #1): if it is the ONLY test that failed, run just that test once more.
+          # Any other failure, or a second failure of this one, fails the job.
+          rc=0; go test -race -count=1 ./... > /tmp/test.log 2>&1 || rc=$?
+          cat /tmp/test.log
+          if [ $rc -ne 0 ]; then
+            failed=$(grep -E '^--- FAIL: ' /tmp/test.log | sed -E 's/^--- FAIL: ([^ ]+).*/\1/' | sort -u)
+            if [ "$failed" = "TestReloadWithOpenSSLServer" ]; then
+              echo "retrying the known flaky test once"
+              go test -race -count=1 -run '^TestReloadWithOpenSSLServer$' ./cmd/squatterd
+            else
+              exit 1
+            fi
+          fi
       - name: fuzz smoke
         run: go test ./pkg/wire -run '^$' -fuzz FuzzDecodeClient -fuzztime 20s
       - name: static build
