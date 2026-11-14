@@ -49,6 +49,9 @@ type ClientOptions struct {
 	ExpectKind       string
 	EventBuffer      int // default 256; the reader blocks (TCP backpressure) when full
 	HandshakeTimeout time.Duration
+	// Offer is the set of protocol extensions announced in hello (see ext.go); the server's
+	// answer is Client.Negotiated().
+	Offer []string
 }
 
 // SSHLogin is an ssh-key login. Sign must sign msg with the user's ssh private key (from ssh-agent or a
@@ -144,6 +147,8 @@ type Client struct {
 	user     string
 	sessions []proto.SessionInfo
 	features []string
+	offered  []string     // extensions announced in hello
+	accepted []string     // extensions the server accepted in welcome
 	serverFP atomic.Value // string
 
 	reqSeq atomic.Uint64
@@ -246,7 +251,8 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	}
 	caps := opts.Caps
 	hello := Hello{V: proto.Version, T: THello, Client: name, DeviceName: opts.DeviceName,
-		Sig: sig, PairCode: opts.PairCode, Caps: &caps}
+		Sig: sig, PairCode: opts.PairCode, Caps: &caps, Offer: opts.Offer}
+	c.offered = append([]string(nil), opts.Offer...)
 	switch {
 	case sshHello != nil:
 		hello.User, hello.SSHKey, hello.SSHSig = sshHello.User, sshHello.SSHKey, sshHello.SSHSig
@@ -277,6 +283,7 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 		}
 		c.deviceID, c.server, c.sessions, c.features = w.DeviceID, w.Server, w.Sessions, w.Features
 		c.instance, c.role, c.user = w.Instance, w.Role, w.User
+		c.accepted = intersect(opts.Offer, w.Negotiated) // never more than was offered
 		if w.Kind != "" {
 			c.kind = w.Kind
 		}

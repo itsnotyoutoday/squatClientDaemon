@@ -84,6 +84,10 @@ func (r *remoteState) send(s *session, text string, secret bool) error {
 		// TinyFugue would refuse it asynchronously; say so now instead of dropping the text silently
 		return errors.New("TinyFugue has the keyboard for this connection: take control first")
 	}
+	if r.sq.roleValue() == "viewer" {
+		// the squatter would refuse it asynchronously ("forbidden"): tell the caller now
+		return fmt.Errorf("this device is paired as a viewer of squatter %s: it can read but not type (pair again as operator)", r.sq.name())
+	}
 	switch link {
 	case LinkDetached:
 		return errors.New("detached from the squatter (suspended): resume first")

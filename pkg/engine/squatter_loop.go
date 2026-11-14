@@ -94,6 +94,8 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 		case wire.Error:
 			q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: fmt.Sprintf("squatter %s: %s: %s", q.name(), v.Code, v.Message)})
 			q.attachDoneIfPending()
+		case wire.Ext:
+			q.e.dispatchExt(q.id, c, v)
 		case wire.Closed:
 			q.onLost(c, v.Err)
 		}

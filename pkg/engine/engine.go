@@ -132,6 +132,9 @@ type Engine struct {
 	lastKey atomic.Int64 // unix nanos of the last typed line (idle())
 
 	noAutoReconnect atomic.Bool
+
+	extMu      sync.Mutex
+	extensions []Extension // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
 	log        *slog.Logger
