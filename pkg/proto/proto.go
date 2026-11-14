@@ -19,6 +19,15 @@ const Version = 1
 // DefaultPort is squatterd's default listen port.
 const DefaultPort = 10327
 
+// DefaultTFPort is tf-squatterd's default listen port (docs/TF-SQUATTER.md).
+const DefaultTFPort = 10328
+
+// Server kinds announced in challenge/welcome.
+const (
+	KindSquatterd   = "squatterd"
+	KindTFSquatterd = "tf-squatterd"
+)
+
 // ---------------------------------------------------------------- Color
 
 // Color is either a palette index (0-255) or a 24-bit truecolor value.
@@ -129,6 +138,7 @@ func colorEq(a, b *Color) bool {
 const (
 	TLine = "line"
 	TGmcp = "gmcp"
+	TMsdp = "msdp" // tf-squatterd only
 )
 
 // Line kinds.
@@ -148,6 +158,24 @@ type Line struct {
 	Kind    string `json:"kind"`
 	Spans   []Span `json:"spans"`
 	Prompt  bool   `json:"prompt,omitempty"`
+	// Gag marks a line TinyFugue would hide (tf-squatterd only).
+	Gag bool `json:"gag,omitempty"`
+	// Origin says who produced an echo line: "tf" or a deviceId (tf-squatterd only).
+	Origin string `json:"origin,omitempty"`
+	// Disp is the text TinyFugue will display after its triggers ran (hilites,
+	// substitutions); set only when it differs from Spans (tf-squatterd only).
+	Disp []Span `json:"disp,omitempty"`
+}
+
+// MsdpMsg is one MSDP message from the game: a set of variables. Values are
+// strings, arrays ([]any) and tables (map[string]any), as in MSDP itself.
+type MsdpMsg struct {
+	V       int            `json:"v"`
+	T       string         `json:"t"` // always "msdp"
+	Session string         `json:"session"`
+	Seq     uint64         `json:"seq"`
+	Ts      int64          `json:"ts"`
+	Vars    map[string]any `json:"vars"`
 }
 
 // Plain returns the line's text without styling.
@@ -208,6 +236,17 @@ type SessionInfo struct {
 	EndReason  string `json:"endReason,omitempty"`
 	EndDetail  string `json:"endDetail,omitempty"`
 	LastText   string `json:"lastText,omitempty"`
+	// TF is set only by tf-squatterd.
+	TF *TFInfo `json:"tf,omitempty"`
+}
+
+// TFInfo is the extra per-session state tf-squatterd reports.
+type TFInfo struct {
+	World            string `json:"world"`
+	Fg               bool   `json:"fg"`
+	Input            string `json:"input"`      // "tf" | "remote" | "both"
+	Automation       string `json:"automation"` // "tf" | "client"
+	ControllerDevice string `json:"controllerDevice,omitempty"`
 }
 
 // ---------------------------------------------------------------- World / caps
@@ -220,6 +259,8 @@ type World struct {
 	TLS       bool   `json:"tls"`
 	TLSVerify string `json:"tlsVerify"` // "strict" | "insecure"
 	Encoding  string `json:"encoding"`  // "utf-8" (default) | "latin1"
+	// Ref names an existing world record on a tf-squatterd; Host/Port are then ignored.
+	Ref string `json:"ref,omitempty"`
 }
 
 // Caps are the capabilities a client advertises (announced to games via MTTS).
@@ -266,4 +307,27 @@ const (
 	ErrSessionEnded  = "session_ended"
 	ErrRateLimited   = "rate_limited"
 	ErrInternal      = "internal"
+	// tf-squatterd additions.
+	ErrNotController = "not_controller"
+	ErrDenied        = "denied"
+	ErrBusy          = "busy"
+	ErrForbidden     = "forbidden"
 )
+
+// ---------------------------------------------------------------- tf-squatterd
+
+// TFWorld is one TinyFugue world record as reported by tf-squatterd. The
+// password is never part of it: PassSet only says whether one is stored.
+type TFWorld struct {
+	Name    string `json:"name"`
+	Host    string `json:"host"`
+	Port    string `json:"port"` // may be a service name
+	Type    string `json:"type,omitempty"`
+	Char    string `json:"char,omitempty"`
+	PassSet bool   `json:"passSet"`
+	TLS     bool   `json:"tls,omitempty"`
+	Echo    bool   `json:"echo,omitempty"`
+	Charset string `json:"charset,omitempty"`
+	MFile   string `json:"mfile,omitempty"` // only shown to admins
+	Temp    bool   `json:"temp,omitempty"`
+}

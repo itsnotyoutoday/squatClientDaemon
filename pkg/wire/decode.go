@@ -48,10 +48,14 @@ func DecodeClient(frame []byte) (cf ClientFrame, known bool, err error) {
 		}
 		w := &m.World
 		w.Host = strings.TrimSpace(w.Host)
-		if w.Host == "" || len(w.Host) > 255 || strings.ContainsAny(w.Host, " \t\r\n/") {
+		if w.Ref != "" {
+			if len(w.Ref) > 128 || !utf8.ValidString(w.Ref) {
+				return cf, true, fmt.Errorf("world.ref invalid")
+			}
+		} else if w.Host == "" || len(w.Host) > 255 || strings.ContainsAny(w.Host, " \t\r\n/") {
 			return cf, true, fmt.Errorf("world.host invalid")
 		}
-		if w.Port < 1 || w.Port > 65535 {
+		if w.Ref == "" && (w.Port < 1 || w.Port > 65535) {
 			return cf, true, fmt.Errorf("world.port invalid")
 		}
 		switch w.Encoding {

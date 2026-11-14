@@ -26,6 +26,15 @@ type ServerConfig struct {
 	ServerName string // e.g. "squatterd/0.1.0"
 	Logger     *slog.Logger
 
+	// Kind is announced in challenge/welcome ("" means plain squatterd).
+	Kind string
+	// Path is the WebSocket endpoint (default "/swp"; tf-squatterd uses "/tfsp").
+	Path string
+	// ExtraFeatures are advertised in welcome in addition to the backend-derived ones.
+	ExtraFeatures []string
+	// Instance, if set, is announced in welcome.
+	Instance string
+
 	MaxClients   int           // authenticated clients (default 32)
 	QueueLimit   int           // queued outbound frames before a client is dropped (default 1000)
 	AuthTimeout  time.Duration // hello deadline (default 10s)
@@ -89,7 +98,11 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 // Handler returns the HTTP handler serving /swp.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/swp", s.serveWS)
+	path := s.cfg.Path
+	if path == "" {
+		path = "/swp"
+	}
+	mux.HandleFunc(path, s.serveWS)
 	return mux
 }
 
@@ -119,7 +132,7 @@ type client struct {
 	stop context.CancelFunc
 	out  chan []byte
 
-	devID, devName string
+	devID, devName, role string
 
 	mu       sync.Mutex
 	caps     proto.Caps
@@ -130,7 +143,11 @@ type client struct {
 func (c *client) ID() uint64         { return c.id }
 func (c *client) DeviceID() string   { return c.devID }
 func (c *client) DeviceName() string { return c.devName }
-func (c *client) Caps() proto.Caps   { c.mu.Lock(); defer c.mu.Unlock(); return c.caps }
+
+// Role is the paired device's role: "viewer", "operator" or "admin". Devices
+// paired before roles existed are "admin".
+func (c *client) Role() string     { return c.role }
+func (c *client) Caps() proto.Caps { c.mu.Lock(); defer c.mu.Unlock(); return c.caps }
 
 func (c *client) Send(msg any) bool {
 	b, err := json.Marshal(msg)
@@ -246,7 +263,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		fail(proto.ErrInternal, "entropy failure")
 		return
 	}
-	if err := s.writeDirect(ctx, ws, Challenge{V: proto.Version, T: TChallenge, Nonce: base64.StdEncoding.EncodeToString(nonce), Server: s.cfg.ServerName}); err != nil {
+	if err := s.writeDirect(ctx, ws, Challenge{V: proto.Version, T: TChallenge, Nonce: base64.StdEncoding.EncodeToString(nonce), Server: s.cfg.ServerName, Kind: s.cfg.Kind}); err != nil {
 		return
 	}
 	rctx, rcancel := context.WithTimeout(ctx, s.cfg.AuthTimeout)
@@ -283,7 +300,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	// --- authenticated
 	ws.SetReadLimit(MaxFrameBytes)
 	c := &client{s: s, id: s.nextID.Add(1), ws: ws, ctx: ctx, stop: stop,
-		out: make(chan []byte, s.cfg.QueueLimit), devID: dev.DeviceID, devName: dev.Name,
+		out: make(chan []byte, s.cfg.QueueLimit), devID: dev.DeviceID, devName: dev.Name, role: roleOf(dev.Role),
 		caps: proto.DefaultCaps(), lastRecv: time.Now()}
 	if hello.Caps != nil {
 		c.caps = *hello.Caps
@@ -308,7 +325,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	if infos == nil {
 		infos = []proto.SessionInfo{}
 	}
-	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: "owner", Sessions: infos, Features: s.features()}); err != nil {
+	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: c.role, Sessions: infos, Features: s.features(), Kind: s.cfg.Kind, Instance: s.cfg.Instance}); err != nil {
 		c.Close("welcome write failed")
 		return
 	}
@@ -385,6 +402,7 @@ func (c *client) readLoop() {
 			continue
 		}
 		if !known {
+			s.dispatchExt(c, cf, data)
 			continue
 		}
 		bad = 0
@@ -461,6 +479,44 @@ func (s *Server) dispatch(c *client, cf ClientFrame) {
 	}
 }
 
+// ExtBackend is optionally implemented by a Backend that handles message types
+// beyond SWP v1 (tf-squatterd's control.* and world.* families). It is called,
+// on the client's read goroutine, for every authenticated frame whose type is
+// not part of SWP v1. raw is the complete frame. handled=false means "not
+// mine": the frame is ignored (SWP forward compatibility).
+type ExtBackend interface {
+	HandleExt(p Peer, t, reqID string, raw []byte) (handled bool, err error)
+}
+
+// Roled is implemented by peers that know their device role.
+type Roled interface{ Role() string }
+
+// Roles for paired devices.
+const (
+	RoleViewer   = "viewer"
+	RoleOperator = "operator"
+	RoleAdmin    = "admin"
+)
+
+// roleOf maps a stored role to a wire role: legacy devices (no role) are admins.
+func roleOf(r string) string {
+	switch r {
+	case RoleViewer, RoleOperator, RoleAdmin:
+		return r
+	}
+	return "owner"
+}
+
+func (s *Server) dispatchExt(c *client, cf ClientFrame, raw []byte) {
+	eb, ok := s.cfg.Backend.(ExtBackend)
+	if !ok {
+		return
+	}
+	if _, err := eb.HandleExt(c, cf.T, cf.ID, raw); err != nil {
+		s.fail(c, cf.ID, err)
+	}
+}
+
 // SecretSender is optionally implemented by a Backend to support SendReq.NoEcho:
 // deliver text to the game without recording, echoing or logging it.
 type SecretSender interface {
@@ -473,5 +529,6 @@ func (s *Server) features() []string {
 	if _, ok := s.cfg.Backend.(SecretSender); ok {
 		f = append(f, FeatureNoEcho)
 	}
+	f = append(f, s.cfg.ExtraFeatures...)
 	return f
 }

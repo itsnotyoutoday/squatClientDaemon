@@ -38,17 +38,22 @@ type ClientOptions struct {
 	Caps              proto.Caps
 	PinnedFingerprint string // AA:BB:... ; empty = trust on first use (read ServerFingerprint after Dial)
 	InsecureLoopback  bool   // allow ws:// to loopback
-	EventBuffer       int    // default 256; the reader blocks (TCP backpressure) when full
-	HandshakeTimeout  time.Duration
+	// ExpectKind, if set ("squatterd" or "tf-squatterd"), makes Dial refuse a server
+	// of another kind BEFORE the public key is sent (see KindMismatchError). It also
+	// picks the default endpoint path (/swp or /tfsp).
+	ExpectKind       string
+	EventBuffer      int // default 256; the reader blocks (TCP backpressure) when full
+	HandshakeTimeout time.Duration
 }
 
 // Event is one of SessionState, Line, Gmcp, Backlog, Attached, Removed, Error, Closed.
 type Event interface{ isEvent() }
 
-// Entry is one replayed item: exactly one of Line or Gmcp is set.
+// Entry is one replayed item: exactly one of Line, Gmcp or Msdp is set.
 type Entry struct {
 	Line *proto.Line
 	Gmcp *proto.GmcpMsg
+	Msdp *proto.MsdpMsg
 }
 
 // Seq returns the entry's sequence number.
@@ -58,6 +63,9 @@ func (e Entry) Seq() uint64 {
 	}
 	if e.Gmcp != nil {
 		return e.Gmcp.Seq
+	}
+	if e.Msdp != nil {
+		return e.Msdp.Seq
 	}
 	return 0
 }
@@ -70,6 +78,8 @@ type (
 	Line struct{ proto.Line }
 	// Gmcp is a live GMCP entry.
 	Gmcp struct{ proto.GmcpMsg }
+	// Msdp is a live MSDP entry (tf-squatterd).
+	Msdp struct{ proto.MsdpMsg }
 	// Backlog is one replay frame; entries are ascending, de-duplicated and
 	// all newer than anything delivered before for the session.
 	Backlog struct {
@@ -97,6 +107,7 @@ type (
 func (SessionState) isEvent() {}
 func (Line) isEvent()         {}
 func (Gmcp) isEvent()         {}
+func (Msdp) isEvent()         {}
 func (Backlog) isEvent()      {}
 func (Attached) isEvent()     {}
 func (Removed) isEvent()      {}
@@ -114,6 +125,9 @@ type Client struct {
 
 	deviceID string
 	server   string
+	kind     string // "squatterd" or "tf-squatterd"
+	instance string // tf-squatterd: changes whenever TinyFugue restarts
+	role     string
 	sessions []proto.SessionInfo
 	features []string
 	serverFP atomic.Value // string
@@ -137,6 +151,9 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	}
 	if u.Path == "" || u.Path == "/" {
 		u.Path = "/swp"
+		if opts.ExpectKind == proto.KindTFSquatterd {
+			u.Path = "/tfsp"
+		}
 	}
 	hc := &http.Client{}
 	c := &Client{events: make(chan Event, max(opts.EventBuffer, 256)), done: make(chan struct{}),
@@ -178,6 +195,13 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	if ch.T != TChallenge {
 		return nil, fmt.Errorf("wire: expected challenge, got %q", ch.T)
 	}
+	c.kind = ch.Kind
+	if c.kind == "" {
+		c.kind = proto.KindSquatterd
+	}
+	if opts.ExpectKind != "" && opts.ExpectKind != c.kind {
+		return nil, &KindMismatchError{Want: opts.ExpectKind, Got: c.kind}
+	}
 	sig, err := auth.SignNonce(opts.Key, ch.Nonce)
 	if err != nil {
 		return nil, err
@@ -212,6 +236,10 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 			return nil, fmt.Errorf("wire: bad welcome: %w", err)
 		}
 		c.deviceID, c.server, c.sessions, c.features = w.DeviceID, w.Server, w.Sessions, w.Features
+		c.instance, c.role = w.Instance, w.Role
+		if w.Kind != "" {
+			c.kind = w.Kind
+		}
 	default:
 		return nil, fmt.Errorf("wire: unexpected %q instead of welcome", env.T)
 	}
@@ -415,6 +443,13 @@ func (c *Client) handle(data []byte) {
 		if json.Unmarshal(data, &g) == nil && c.accept(g.Session, g.Seq) {
 			c.emit(Gmcp{g})
 		}
+	case proto.TMsdp:
+		var m proto.MsdpMsg
+		if json.Unmarshal(data, &m) == nil && c.accept(m.Session, m.Seq) {
+			c.emit(Msdp{m})
+		}
+	default:
+		c.handleExt(env, data)
 	}
 }
 
@@ -450,6 +485,12 @@ func (c *Client) decodeEntry(session string, raw json.RawMessage) (Entry, bool) 
 			return Entry{}, false
 		}
 		return Entry{Gmcp: &g}, true
+	case proto.TMsdp:
+		var m proto.MsdpMsg
+		if json.Unmarshal(raw, &m) != nil || !c.accept(session, m.Seq) {
+			return Entry{}, false
+		}
+		return Entry{Msdp: &m}, true
 	}
 	return Entry{}, false
 }

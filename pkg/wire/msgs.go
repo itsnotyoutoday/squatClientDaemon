@@ -60,6 +60,10 @@ type Challenge struct {
 	T      string `json:"t"`
 	Nonce  string `json:"nonce"`
 	Server string `json:"server"`
+	// Kind is "" or "squatterd" for SWP daemons and "tf-squatterd" for TinyFugue bridges.
+	// It is sent before hello so a client can refuse a mismatched server without
+	// revealing its public key.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Welcome completes authentication.
@@ -72,6 +76,10 @@ type Welcome struct {
 	Sessions []proto.SessionInfo `json:"sessions"`
 	// Features lists optional protocol features the daemon supports, e.g. "noEcho".
 	Features []string `json:"features,omitempty"`
+	// Kind and Instance are set by tf-squatterd. Instance changes every time the
+	// TinyFugue process restarts, so a client knows every old session is gone.
+	Kind     string `json:"kind,omitempty"`
+	Instance string `json:"instance,omitempty"`
 }
 
 // FeatureNoEcho: the daemon honours SendReq.NoEcho (the line is delivered to the

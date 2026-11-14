@@ -58,6 +58,8 @@ type Device struct {
 	PublicKey string `json:"publicKey"` // base64 raw 32 bytes
 	CreatedAt int64  `json:"createdAt"` // unix ms
 	LastSeen  int64  `json:"lastSeen"`  // unix ms
+	// Role is "" (legacy: full access), "viewer", "operator" or "admin".
+	Role string `json:"role,omitempty"`
 }
 
 // Pairing is an outstanding pairing code.
@@ -65,6 +67,7 @@ type Pairing struct {
 	Code      string `json:"code"` // normalised, no dash
 	CreatedAt int64  `json:"createdAt"`
 	ExpiresAt int64  `json:"expiresAt"`
+	Role      string `json:"role,omitempty"` // role given to the device that redeems it
 }
 
 // Request is what the hello message carries.
@@ -234,6 +237,11 @@ func (s *Store) NewPairing() (code string, expires time.Time, err error) {
 // NewPairingTTL creates a single-use code valid for ttl (0 means PairCodeTTL;
 // capped at MaxPairCodeTTL) and stores it.
 func (s *Store) NewPairingTTL(ttl time.Duration) (code string, expires time.Time, err error) {
+	return s.NewPairingRole(ttl, "")
+}
+
+// NewPairingRole is NewPairingTTL for a code that grants the given role.
+func (s *Store) NewPairingRole(ttl time.Duration, role string) (code string, expires time.Time, err error) {
 	if ttl <= 0 {
 		ttl = PairCodeTTL
 	}
@@ -263,20 +271,21 @@ func (s *Store) NewPairingTTL(ttl time.Duration) (code string, expires time.Time
 		}
 	}
 	exp := now.Add(ttl)
-	live = append(live, Pairing{Code: sb.String(), CreatedAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli()})
+	live = append(live, Pairing{Code: sb.String(), CreatedAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli(), Role: role})
 	if err := atomicWrite(s.pairingPath(), live); err != nil {
 		return "", time.Time{}, fmt.Errorf("auth: %w", err)
 	}
 	return FormatCode(sb.String()), exp, nil
 }
 
-// consumePairing returns true and removes the code if it is valid. Compares
-// against every stored code in constant time per code (no early exit).
-func (s *Store) consumePairing(code string, now time.Time) (bool, error) {
+// consumePairingRole returns true (and the role the code grants) and removes
+// the code if it is valid. Compares against every stored code in constant time
+// per code (no early exit).
+func (s *Store) consumePairingRole(code string, now time.Time) (bool, string, error) {
 	code = NormalizeCode(code)
 	ps, err := s.loadPairings()
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	hit := -1
 	for i, p := range ps {
@@ -296,12 +305,16 @@ func (s *Store) consumePairing(code string, now time.Time) (bool, error) {
 			out = append(out, p)
 		}
 	}
+	role := ""
+	if hit >= 0 {
+		role = ps[hit].Role
+	}
 	if hit >= 0 || len(out) != len(ps) {
 		if err := atomicWrite(s.pairingPath(), out); err != nil {
-			return false, err
+			return false, "", err
 		}
 	}
-	return hit >= 0, nil
+	return hit >= 0, role, nil
 }
 
 // ---------------------------------------------------------------- authenticate
@@ -348,7 +361,7 @@ func (s *Store) Authenticate(ip string, req Request, nonce []byte) (Device, erro
 	if req.PairCode == "" {
 		return fail()
 	}
-	ok, err := s.consumePairing(req.PairCode, now)
+	ok, role, err := s.consumePairingRole(req.PairCode, now)
 	if err != nil {
 		return Device{}, err
 	}
@@ -365,7 +378,7 @@ func (s *Store) Authenticate(ip string, req Request, nonce []byte) (Device, erro
 	if name == "" {
 		name = "device-" + id[:4]
 	}
-	d := Device{DeviceID: id, Name: strings.ToValidUTF8(name, "?"), PublicKey: req.PublicKey, CreatedAt: now.UnixMilli(), LastSeen: now.UnixMilli()}
+	d := Device{DeviceID: id, Name: strings.ToValidUTF8(name, "?"), PublicKey: req.PublicKey, CreatedAt: now.UnixMilli(), LastSeen: now.UnixMilli(), Role: role}
 	devs = append(devs, d)
 	if err := atomicWrite(s.devicesPath(), devs); err != nil {
 		return Device{}, err

@@ -7,10 +7,11 @@ import (
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
-// Entry is one retained item: exactly one of Line or Gmcp is set.
+// Entry is one retained item: exactly one of Line, Gmcp or Msdp is set.
 type Entry struct {
 	Line *proto.Line
 	Gmcp *proto.GmcpMsg
+	Msdp *proto.MsdpMsg
 }
 
 // LineEntry wraps a line.
@@ -19,6 +20,9 @@ func LineEntry(l proto.Line) Entry { return Entry{Line: &l} }
 // GmcpEntry wraps a GMCP message.
 func GmcpEntry(g proto.GmcpMsg) Entry { return Entry{Gmcp: &g} }
 
+// MsdpEntry wraps an MSDP message.
+func MsdpEntry(m proto.MsdpMsg) Entry { return Entry{Msdp: &m} }
+
 // Seq returns the entry's sequence number (0 if unset).
 func (e Entry) Seq() uint64 {
 	switch {
@@ -26,6 +30,8 @@ func (e Entry) Seq() uint64 {
 		return e.Line.Seq
 	case e.Gmcp != nil:
 		return e.Gmcp.Seq
+	case e.Msdp != nil:
+		return e.Msdp.Seq
 	}
 	return 0
 }
@@ -37,6 +43,8 @@ func (e Entry) Ts() int64 {
 		return e.Line.Ts
 	case e.Gmcp != nil:
 		return e.Gmcp.Ts
+	case e.Msdp != nil:
+		return e.Msdp.Ts
 	}
 	return 0
 }
@@ -48,6 +56,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		return json.Marshal(e.Line)
 	case e.Gmcp != nil:
 		return json.Marshal(e.Gmcp)
+	case e.Msdp != nil:
+		return json.Marshal(e.Msdp)
 	}
 	return nil, fmt.Errorf("scrollback: empty entry")
 }
@@ -73,6 +83,12 @@ func (e *Entry) UnmarshalJSON(b []byte) error {
 			return err
 		}
 		*e = Entry{Gmcp: &g}
+	case proto.TMsdp:
+		var m proto.MsdpMsg
+		if err := json.Unmarshal(b, &m); err != nil {
+			return err
+		}
+		*e = Entry{Msdp: &m}
 	default:
 		return fmt.Errorf("scrollback: unknown entry type %q", h.T)
 	}
@@ -97,6 +113,13 @@ func (e Entry) withSeq(seq uint64) (Entry, error) {
 			g.Data = json.RawMessage("null")
 		}
 		return Entry{Gmcp: &g}, nil
+	case e.Msdp != nil:
+		m := *e.Msdp
+		m.Seq, m.V, m.T = seq, proto.Version, proto.TMsdp
+		if m.Vars == nil {
+			m.Vars = map[string]any{}
+		}
+		return Entry{Msdp: &m}, nil
 	}
 	return Entry{}, fmt.Errorf("scrollback: empty entry")
 }
