@@ -242,6 +242,24 @@ func (r *Runtime) LoadString(name, src string) error {
 	return r.runChunk(name, "", []byte(src))
 }
 
+// Unload removes a script loaded with LoadString: its handlers, timers and rules go, and Reload no longer
+// re-runs it. Unknown names are ignored.
+func (r *Runtime) Unload(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	kept := r.units[:0]
+	for _, u := range r.units {
+		if !(u.kind == "string" && u.name == name) {
+			kept = append(kept, u)
+		}
+	}
+	r.units = kept
+	r.removeOwner(name)
+}
+
 // LoadFile reads name through Host.ReadScript and runs it like LoadString.
 // Reload re-reads the file.
 func (r *Runtime) LoadFile(name string) error {

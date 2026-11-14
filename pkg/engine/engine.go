@@ -92,6 +92,9 @@ type Options struct {
 	Restrict tf.Restrict
 	TF       tf.Options
 	Lua      lua.Options
+	// OnLuaVar, if set, is told when a Lua variable (squat.var) is set or deleted (value nil). It is called
+	// while the Lua runtime holds its lock: hand the change on and return.
+	OnLuaVar func(name string, value any)
 
 	Clock       func() time.Time // default time.Now
 	MaxQueue    int              // per-subscriber event cap (default 100000), see package doc
@@ -118,6 +121,8 @@ type Options struct {
 // Engine is the brain. Create with New, release with Close.
 type Engine struct {
 	opts Options
+
+	layoutLua string // name of the Lua script of the layout in use (layoutlua.go)
 
 	// noAutoReconnect turns off automatic reconnection of lost squatter connections (default: on).
 	noAutoReconnect atomic.Bool
@@ -187,6 +192,9 @@ func New(o Options) *Engine {
 		topts.Version = o.Version
 	}
 	e.tf = tf.New(&tfHost{e}, topts)
+	if o.OnLuaVar != nil {
+		o.Lua.OnVar = o.OnLuaVar
+	}
 	e.lua = lua.New(&luaHost{e}, o.Lua)
 	return e
 }

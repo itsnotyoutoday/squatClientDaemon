@@ -25,6 +25,9 @@ func (r *Runtime) setVar(k string, v any) error {
 	}
 	if v == nil {
 		delete(r.vars, k)
+		if r.opts.OnVar != nil {
+			r.opts.OnVar(k, nil)
+		}
 		return nil
 	}
 	b, err := json.Marshal(v)
@@ -42,6 +45,9 @@ func (r *Runtime) setVar(k string, v any) error {
 		return err
 	}
 	r.vars[k] = norm
+	if r.opts.OnVar != nil {
+		r.opts.OnVar(k, deepCopy(norm))
+	}
 	return nil
 }
 

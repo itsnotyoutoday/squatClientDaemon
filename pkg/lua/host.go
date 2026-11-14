@@ -85,6 +85,10 @@ type Options struct {
 	// MaxVars bounds the number of variables (default 10000).
 	MaxVarBytes int
 	MaxVars     int
+	// OnVar, if set, is called after a variable is set or deleted (value nil), by a script or from Go.
+	// It runs with the Runtime's lock held: it must not call back into the Runtime, and should hand
+	// the change on (a channel, a queue) and return.
+	OnVar func(name string, value any)
 }
 
 func (o Options) withDefaults() Options {
