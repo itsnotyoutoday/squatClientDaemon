@@ -221,8 +221,11 @@ func (h *tfHost) SetPrompt(world, text string) {
 	}
 }
 
-// Input (/input) has no UI path yet: ignored. DoKey is likewise unsupported.
-func (h *tfHost) Input(string, string) {}
+// Input (/input) asks the UI to insert text into the input line (EvWindow "input:<text>"). /dokey is not
+// available (the adapter says so itself).
+func (h *tfHost) Input(world, text string) {
+	h.e.bus.publish(Event{Kind: EvWindow, Text: "input:" + text})
+}
 func (h *tfHost) DoKey(string, string) {}
 
 func (h *tfHost) LocalEcho(world string, on bool) {
@@ -276,3 +279,41 @@ func (h *tfHost) Screen() (int, int) {
 }
 
 func (h *tfHost) Quit() { h.e.bus.publish(Event{Kind: EvQuit}) }
+
+// RenameWorld implements /renameworld: it renames a world of the book (open
+// sessions keep their script names).
+func (h *tfHost) RenameWorld(old, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("empty name")
+	}
+	h.e.mu.Lock()
+	idx := -1
+	for i, w := range h.e.worlds {
+		if strings.EqualFold(w.Name, name) {
+			h.e.mu.Unlock()
+			return fmt.Errorf("a world named %q already exists", name)
+		}
+		if strings.EqualFold(w.Name, old) {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		h.e.mu.Unlock()
+		return fmt.Errorf("%w: %s", ErrNoWorld, old)
+	}
+	w := h.e.worlds[idx]
+	w.Name = name
+	h.e.worlds[idx] = w
+	h.e.mu.Unlock()
+	if h.e.opts.OnWorldAdd != nil {
+		return h.e.opts.OnWorldAdd(w)
+	}
+	return nil
+}
+
+// Help implements /help for scripts: the UI owns the help browser, so the
+// engine asks it to open (EvWindow "help:<topic>"). Typed /help is handled by
+// the UI itself before it reaches the engine.
+func (h *tfHost) Help(world, topic string) {
+	h.e.bus.publish(Event{Kind: EvWindow, Text: "help:" + topic})
+}

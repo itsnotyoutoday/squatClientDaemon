@@ -2,6 +2,7 @@ package tfengine
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -287,8 +288,8 @@ func (a *Engine) registerCommands() {
 	}
 	a.cmd("input", func(in *gtfparser.Interp, args string) bool { a.host.Input(a.cur, args); return true })
 	a.cmd("dokey", func(in *gtfparser.Interp, args string) bool {
-		a.host.DoKey(a.cur, strings.TrimSpace(args))
-		return true
+		a.warn("/dokey: not available in this client (the input line's editing keys belong to the UI)")
+		return false
 	})
 	a.cmd("suspend", func(in *gtfparser.Interp, args string) bool {
 		a.echoText("% /suspend: type /suspend (or /detach) as a command of its own; scripts cannot suspend the client")
@@ -303,7 +304,7 @@ func (a *Engine) registerCommands() {
 		return true
 	})
 	a.cmd("features", func(in *gtfparser.Interp, args string) bool {
-		a.echoText("% features: 256colors truecolor utf8 regexp attr-markup process=repeat")
+		a.echoText("% features: 256colors float history process regexp ssl")
 		return true
 	})
 	a.cmd("help", func(in *gtfparser.Interp, args string) bool { a.help(args); return true })
@@ -311,6 +312,24 @@ func (a *Engine) registerCommands() {
 	a.cmd("quit", quit)
 
 	// ---- macro-library commands real tf defines in its library, not in C ----
+	a.cmd("save", func(in *gtfparser.Interp, args string) bool {
+		f, glob := cut(args)
+		if f == "" {
+			return a.fail("/save", fmt.Errorf("usage: /save file [glob]"))
+		}
+		if !a.allow(in, gtfparser.OpFileWrite, "/save", f) {
+			return false
+		}
+		cap := &captureHost{Host: in.Host}
+		old := in.Host
+		in.Host = cap
+		in.Exec("/list " + glob)
+		in.Host = old
+		if err := os.WriteFile(f, []byte("; saved by /save\n"+strings.Join(cap.lines, "\n")+"\n"), 0o600); err != nil {
+			return a.fail("/save", err)
+		}
+		return true
+	})
 	a.cmd("undefn", func(in *gtfparser.Interp, args string) bool {
 		ok := true
 		for _, w := range strings.Fields(args) {
@@ -464,4 +483,14 @@ func (a *Engine) help(topic string) {
 	sort.Strings(names)
 	a.echoText("% commands: " + strings.Join(names, " "))
 	a.echoText("% see docs/TF-ENGINE.md and docs/COMMAND-STATUS.md")
+}
+
+// captureHost collects what a command echoes (the lines of /list for /save).
+type captureHost struct {
+	gtfparser.Host
+	lines []string
+}
+
+func (c *captureHost) Echo(t string) {
+	c.lines = append(c.lines, strings.TrimSpace(strings.TrimPrefix(t, "% ")))
 }

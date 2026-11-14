@@ -2,6 +2,7 @@ package tfengine
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -350,3 +351,14 @@ func TestFunctionsAnswerFromTheClient(t *testing.T) {
 }
 
 var _ = ansi.PlainText
+
+func TestSaveWritesMacroDefinitions(t *testing.T) {
+	e, _ := newTest(t)
+	_ = e.Exec("w", "/def -t'hello*' -ahCred greet = /echo hi")
+	path := t.TempDir() + "/macros.tf"
+	_ = e.Exec("w", "/save "+path+" greet")
+	b, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(b), "/def") || !strings.Contains(string(b), "greet") || !strings.Contains(string(b), "hello*") {
+		t.Fatalf("%v %q", err, b)
+	}
+}

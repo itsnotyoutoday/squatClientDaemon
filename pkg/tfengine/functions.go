@@ -23,6 +23,9 @@ func b2v(b bool) gtfparser.Value { return gtfparser.Bool(b) }
 // registerFunctions installs the functions that answer from the client's own
 // state (worlds, sessions, window).
 func (a *Engine) registerFunctions() {
+	a.fn("features", func(in *gtfparser.Interp, args []gtfparser.Value) (gtfparser.Value, error) {
+		return b2v(supportedFeatures[strings.ToLower(argStr(args, 0))]), nil
+	})
 	a.fn("world_info", func(in *gtfparser.Interp, args []gtfparser.Value) (gtfparser.Value, error) {
 		w, field := a.cur, "name"
 		switch len(args) {
@@ -119,4 +122,7 @@ func (a *Engine) registerFunctions() {
 	})
 }
 
-var _ = strings.TrimSpace
+// supportedFeatures are the names features() answers 1 for (and /features lists).
+var supportedFeatures = map[string]bool{
+	"256colors": true, "float": true, "process": true, "ssl": true, "regexp": true, "history": true,
+}

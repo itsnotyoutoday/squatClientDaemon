@@ -78,9 +78,14 @@ func (h *coreHost) Send(world, text string) bool {
 		a.inSend = true
 		prev := a.in.World()
 		a.in.SetWorld(world)
-		a.in.Hook("SEND", text)
+		fired := a.in.FireHook("SEND", text)
 		a.in.SetWorld(prev)
 		a.inSend = false
+		for _, m := range fired {
+			if m.Gag || attrsGag(m.Attrs) {
+				return true // a gagging SEND hook swallows the text, as in real tf (lib/tf/alias.tf)
+			}
+		}
 	}
 	if err := a.host.SendToWorld(world, text); err != nil {
 		a.warn(err.Error())
