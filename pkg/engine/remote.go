@@ -235,6 +235,7 @@ func (s *session) applyRemoteInfo(in proto.SessionInfo) {
 		if prev != proto.StateEnded {
 			after = append(after, func() {
 				s.e.tf.FireHookWorld(s.tfName, "DISCONNECT", s.world.Name)
+				s.e.tf.WorldClosed(s.tfName)
 				s.e.lua.FireEventFor(s.id, "disconnect", map[string]any{"world": s.id, "name": s.tfName, "reason": in.EndReason}, true)
 			})
 		}

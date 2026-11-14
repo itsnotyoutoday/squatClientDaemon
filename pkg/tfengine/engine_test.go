@@ -20,7 +20,11 @@ type fakeHost struct {
 	sent    []string
 	sendErr error
 	worlds  []WorldInfo
+	socks   []SocketInfo
 	fg      string
+	hidden  func(line, attrs string) bool
+	status  []StatusField
+	vars    map[string]string
 }
 
 func (h *fakeHost) rec(f string, a ...any) {
@@ -53,27 +57,83 @@ func (h *fakeHost) SendToWorld(world, text string) error {
 	h.mu.Unlock()
 	return h.sendErr
 }
-func (h *fakeHost) Connect(w string) error      { h.rec("connect %s", w); return nil }
-func (h *fakeHost) Disconnect(w string) error   { h.rec("dc %s", w); return nil }
-func (h *fakeHost) Foreground(w string) error   { h.rec("fg %s", w); h.fg = w; return nil }
-func (h *fakeHost) ForegroundWorld() string     { return h.fg }
-func (h *fakeHost) ListWorlds() []WorldInfo     { return h.worlds }
-func (h *fakeHost) IsConnected(w string) bool   { return w == "up" }
-func (h *fakeHost) AddWorld(w WorldInfo) error  { h.rec("addworld %+v", w); return nil }
-func (h *fakeHost) RemoveWorld(n string) error  { h.rec("unworld %s", n); return nil }
-func (h *fakeHost) SaveWorlds() error           { h.rec("saveworld"); return nil }
-func (h *fakeHost) Bell()                       { h.rec("bell") }
-func (h *fakeHost) LocalEcho(w string, on bool) { h.rec("localecho %s %v", w, on) }
-func (h *fakeHost) Limit(w, op, p string)       { h.rec("%s %s %q", op, w, p) }
-func (h *fakeHost) Recall(w, a string)          { h.rec("recall %s %q", w, a) }
-func (h *fakeHost) Log(w string, on bool, p string) error {
-	h.rec("log %s %v %s", w, on, p)
+func (h *fakeHost) DisplayLine(w, t string) { h.rec("display %s: %s", w, t) }
+func (h *fakeHost) Connect(w WorldInfo, o ConnectOptions) error {
+	h.rec("connect %s %s:%s %+v", w.Name, w.Host, w.Port, o)
 	return nil
 }
-func (h *fakeHost) Status(op, f string, a ...string) { h.rec("%s %s %v", op, f, a) }
-func (h *fakeHost) Input(w, t string)                { h.rec("input %s %q", w, t) }
-func (h *fakeHost) Quit()                            { h.rec("quit") }
-func (h *fakeHost) Screen() (int, int)               { return 100, 30 }
+func (h *fakeHost) Disconnect(w string) error { h.rec("dc %s", w); return nil }
+func (h *fakeHost) Foreground(w string, q bool) error {
+	h.rec("fg %s %v", w, q)
+	h.fg = w
+	return nil
+}
+func (h *fakeHost) ForegroundWorld() string { return h.fg }
+func (h *fakeHost) Sockets() []SocketInfo   { return h.socks }
+func (h *fakeHost) Worlds() []WorldInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]WorldInfo(nil), h.worlds...)
+}
+func (h *fakeHost) PutWorld(w WorldInfo) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.worlds {
+		if strings.EqualFold(h.worlds[i].Name, w.Name) {
+			h.worlds[i] = w
+			h.log = append(h.log, "putworld "+w.Name)
+			return nil
+		}
+	}
+	h.worlds = append(h.worlds, w)
+	h.log = append(h.log, "putworld "+w.Name)
+	return nil
+}
+func (h *fakeHost) DeleteWorld(n string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.worlds {
+		if strings.EqualFold(h.worlds[i].Name, n) {
+			h.worlds = append(h.worlds[:i], h.worlds[i+1:]...)
+			break
+		}
+	}
+	h.log = append(h.log, "deleteworld "+n)
+	return nil
+}
+func (h *fakeHost) RenameWorld(o, n string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.worlds {
+		if strings.EqualFold(h.worlds[i].Name, o) {
+			h.worlds[i].Name = n
+		}
+	}
+	h.log = append(h.log, "renameworld "+o+" "+n)
+	return nil
+}
+func (h *fakeHost) Bell()                       { h.rec("bell") }
+func (h *fakeHost) LocalEcho(w string, on bool) { h.rec("localecho %s %v", w, on) }
+func (h *fakeHost) Input(t string)              { h.rec("input %q", t) }
+func (h *fakeHost) Quit()                       { h.rec("quit") }
+func (h *fakeHost) Screen() (int, int)          { return 100, 30 }
+func (h *fakeHost) SetPrompt(w, t string)       { h.rec("prompt %s %q", w, t) }
+func (h *fakeHost) SetStatus(f []StatusField)   { h.mu.Lock(); h.status = f; h.mu.Unlock() }
+func (h *fakeHost) SetLimit(w string, f func(string, string) bool) int {
+	h.mu.Lock()
+	h.hidden = f
+	h.mu.Unlock()
+	return 1
+}
+func (h *fakeHost) Var(n, v string) {
+	h.mu.Lock()
+	if h.vars == nil {
+		h.vars = map[string]string{}
+	}
+	h.vars[n] = v
+	h.mu.Unlock()
+}
+func (h *fakeHost) Dialog(n string) { h.rec("dialog %s", n) }
 
 func (h *fakeHost) dump() string {
 	h.mu.Lock()
@@ -96,6 +156,9 @@ func newTest(t *testing.T, mod ...func(*Options)) (*Engine, *fakeHost) {
 	}
 	e := New(h, o)
 	t.Cleanup(e.Close)
+	for _, w := range []string{"w", "a", "b"} {
+		e.SessionOpened(w, "game.example", 4000, false)
+	}
 	return e, h
 }
 
@@ -213,39 +276,171 @@ func TestWorldScopedMacroAndHooks(t *testing.T) {
 	}
 }
 
-func TestClientCommands(t *testing.T) {
+func TestConnectionCommandsGoThroughTheEnginesWorldDatabase(t *testing.T) {
 	e, h := newTest(t)
-	h.worlds = []WorldInfo{{Name: "alpha", Host: "a.example", Port: "4000", Connected: true}, {Name: "beta", Host: "b.example", Port: "5"}}
-	for _, c := range []string{
-		"/connect alpha", "/dc alpha", "/fg beta", "/addworld gamma g.example 99", "/unworld gamma", "/saveworld",
-		"/listworlds", "/listsockets", "/beep", "/localecho off", "/log -wxyz out.txt", "/log off",
-		"/limit foo*", "/unlimit", "/relimit", "/recall -w2 5", "/status_add -A x", "/status_rm x", "/input hello",
-	} {
+	h.worlds = []WorldInfo{{Name: "alpha", Host: "a.example", Port: "4000"}, {Name: "beta", Host: "b.example", Port: "5"}}
+	h.socks = []SocketInfo{{World: "alpha", Host: "a.example", Port: "4000", State: SockConnected, Unseen: 2}, {World: "beta", Host: "b.example", Port: "5", State: SockConnected}}
+	for _, c := range []string{"/connect alpha", "/connect -x gamma.example 99", "/dc alpha", "/fg beta", "/listworlds", "/listsockets"} {
 		_ = e.Exec("w", c)
 	}
 	got := h.dump()
-	for _, want := range []string{
-		"connect alpha", "dc alpha", "fg beta", "addworld {Name:gamma Host:g.example Port:99", "unworld gamma", "saveworld",
-		"echo w: /addworld alpha a.example 4000", "echo w: /addworld beta b.example 5", "echo w:   alpha  a.example 4000", "bell", "localecho w false",
-		"log xyz true out.txt", "log w false ", `limit w "foo*"`, `unlimit w ""`, `relimit w ""`, `recall 2 "5"`,
-		"status_add x [-A]", "status_rm x []", `input w "hello"`,
-	} {
+	for _, want := range []string{"connect alpha a.example:4000", "connect (unnamed1) gamma.example:99", "TLS:true",
+		"dc alpha", "fg beta", "alpha", "beta"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "not supported by this client") {
-		t.Errorf("a client command fell through to the engine's stub:\n%s", got)
+		t.Errorf("a connection command fell through to the engine's stub:\n%s", got)
+	}
+}
+
+func TestWorldBookIsSyncedBothWays(t *testing.T) {
+	e, h := newTest(t)
+	h.worlds = []WorldInfo{{Name: "alpha", Host: "a.example", Port: "4000"}}
+	_ = e.Exec("w", "/listworlds -s")
+	if !strings.Contains(h.dump(), "alpha") {
+		t.Fatalf("the client's world is not in the engine's database: %q", h.dump())
+	}
+	// a script defines a world: the host (the client's store) gets it
+	_ = e.Exec("w", "/addworld -x gamma g.example 99")
+	if ws := h.Worlds(); len(ws) != 2 || ws[1].Name != "gamma" || !ws[1].TLS || ws[1].Port != "99" {
+		t.Fatalf("script's /addworld did not reach the host: %+v", ws)
+	}
+	_ = e.Exec("w", "/addworld hero hunter secret h.example 7")
+	if ws := h.Worlds(); ws[2].Character != "hunter" || ws[2].Password != "secret" {
+		t.Fatalf("%+v", ws)
+	}
+	_ = e.Exec("w", "/renameworld gamma gamma2")
+	_ = e.Exec("w", "/unworld alpha")
+	names := ""
+	for _, w := range h.Worlds() {
+		names += w.Name + ","
+	}
+	if names != "gamma2,hero," {
+		t.Fatalf("after rename and unworld the host has %q\n%s", names, h.dump())
+	}
+	// the store changes behind the engine's back (the Worlds dialog): the next call sees it
+	h.mu.Lock()
+	h.worlds = append(h.worlds, WorldInfo{Name: "delta", Host: "d.example", Port: "1"})
+	h.mu.Unlock()
+	_ = e.Exec("w", "/listworlds -s")
+	if !strings.Contains(h.dump(), "delta") {
+		t.Fatalf("a world added in the UI is not visible to scripts:\n%s", h.dump())
+	}
+	// no churn: reading again does not write
+	n := strings.Count(h.dump(), "putworld")
+	_ = e.Exec("w", "/listworlds -s")
+	if strings.Count(h.dump(), "putworld") != n {
+		t.Fatal("sync wrote back what it had just read")
+	}
+}
+
+func TestHistoryRecallLimitLogStatusAndFriends(t *testing.T) {
+	logs := t.TempDir()
+	e, h := newTest(t, func(o *Options) { o.LogsDir = logs })
+	_ = e.Type("w", "first typed", false)
+	e.OnLine("w", line("from the game"), true)
+	e.OnLine("w", line("gagged text"), true)
+	_ = e.Exec("w", "/recall -w /3")
+	_ = e.Exec("w", "/recall -i /3")
+	got := h.dump()
+	if !strings.Contains(got, "from the game") {
+		t.Errorf("/recall does not see received lines:\n%s", got)
+	}
+	if !strings.Contains(got, "first typed") {
+		t.Errorf("/recall -i does not see typed lines:\n%s", got)
+	}
+	// /limit: the host gets the engine's filter and the view's line count
+	_ = e.Exec("w", "/limit -mglob *game*")
+	h.mu.Lock()
+	f := h.hidden
+	h.mu.Unlock()
+	if f == nil || f("from the game", "") || !f("other", "") {
+		t.Fatalf("limit filter not handed to the host")
+	}
+	_ = e.Exec("w", "/unlimit")
+	// /log writes recorded lines under the logs directory
+	_ = e.Exec("w", "/log mylog.txt")
+	e.OnLine("w", line("logged line"), true)
+	_ = e.Exec("w", "/log off")
+	b, err := os.ReadFile(logs + "/mylog.txt")
+	if err != nil || !strings.Contains(string(b), "logged line") {
+		t.Fatalf("log: %v %q", err, b)
+	}
+	// status line fields reach the host
+	_ = e.Exec("w", "/status_add -A @world:10")
+	h.mu.Lock()
+	st := h.status
+	h.mu.Unlock()
+	if len(st) == 0 || st[len(st)-1].Name != "world" {
+		t.Fatalf("status: %+v", st)
+	}
+	// localecho, beep, input
+	for _, c := range []string{"/localecho on", "/beep", "/input hello"} {
+		_ = e.Exec("w", c)
+	}
+	for _, want := range []string{"localecho w true", "bell", `input "hello"`} {
+		if !strings.Contains(h.dump(), want) {
+			t.Errorf("missing %q in\n%s", want, h.dump())
+		}
+	}
+}
+
+func TestWrapVariablesReachTheGUI(t *testing.T) {
+	e, h := newTest(t)
+	_ = e.Exec("w", "/nowrap")
+	_ = e.Exec("w", "/wrap 72")
+	_ = e.Exec("w", "/wrapspace 2")
+	_ = e.Exec("w", "/set wrappunct=5")
+	_ = e.Exec("w", "/visual on")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.vars["wrap"] != "on" || h.vars["wrapsize"] != "72" || h.vars["wrapspace"] != "2" || h.vars["wrappunct"] != "5" || h.vars["visual"] != "on" {
+		t.Fatalf("%v", h.vars)
+	}
+}
+
+func TestKeyBindingsRunWithTheInputLine(t *testing.T) {
+	e, h := newTest(t)
+	_ = e.Exec("w", `/def -ib'^A' = /test kbgoto(0)`)
+	_ = e.Exec("w", `/def -ib'^K' = /dokey deol`)
+	_ = e.Exec("w", `/def -ib'^T' = /send -w w typed=%{kbhead}`)
+	if b := e.KeyBindings(); len(b) < 2 {
+		t.Fatalf("bindings %v", b)
+	}
+	ok, text, cur := e.Key("w", "^K", "hello world", 5)
+	if !ok || text != "hello" || cur != 5 {
+		t.Fatalf("^K: %v %q %d", ok, text, cur)
+	}
+	ok, text, cur = e.Key("w", "^A", "hello", 5)
+	if !ok || text != "hello" || cur != 0 {
+		t.Fatalf("^A: %v %q %d", ok, text, cur)
+	}
+	if ok, _, _ := e.Key("w", "^Q", "x", 1); ok {
+		t.Fatal("an unbound key must not be handled")
+	}
+	_ = h
+}
+
+func TestSaveWritesMacroDefinitions(t *testing.T) {
+	e, _ := newTest(t)
+	_ = e.Exec("w", "/def -t'hello*' -ahCred greet = /echo hi")
+	path := t.TempDir() + "/macros.tf"
+	_ = e.Exec("w", "/save "+path+" greet")
+	b, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(b), "/def") || !strings.Contains(string(b), "greet") || !strings.Contains(string(b), "hello*") {
+		t.Fatalf("%v %q", err, b)
 	}
 }
 
 func TestRestrictBlocksWorldAndFileCommands(t *testing.T) {
 	e, h := newTest(t, func(o *Options) { o.Restrict = RestrictWorld })
-	_ = e.Exec("w", "/connect alpha")
+	_ = e.Exec("w", "/connect new.example 99")
 	_ = e.Exec("w", "/log foo.txt")
 	_ = e.Exec("w", "/sh true")
 	got := h.dump()
-	if strings.Contains(got, "connect alpha") || strings.Contains(got, "log w") {
+	if strings.Contains(got, "connect (unnamed") || strings.Contains(got, "log w") {
 		t.Fatalf("restricted command ran:\n%s", got)
 	}
 	if strings.Count(got, "restricted") < 3 {
@@ -339,26 +534,13 @@ func TestLibraryMacroCommands(t *testing.T) {
 func TestFunctionsAnswerFromTheClient(t *testing.T) {
 	e, h := newTest(t)
 	h.fg = "front"
-	h.worlds = []WorldInfo{{Name: "alpha", Host: "a.example", Port: "4000", Connected: true}}
-	h.NopHost = NopHost{}
-	e.ExecFull("w", "/echo %{fg}")
-	e.ExecFull("w", "/echo $[fg_world()] $[is_connected(\"up\")] $[columns()] $[lines()]")
-	_ = e.Exec("w", "/echo -w w-info $[world_info(\"alpha\",\"host\")]")
+	h.worlds = []WorldInfo{{Name: "alpha", Host: "a.example", Port: "4000"}}
+	h.socks = []SocketInfo{{World: "alpha", State: SockConnected}}
+	e.ExecFull("w", "/echo $[fg_world()] $[is_connected(\"alpha\")] $[columns()] $[lines()] $[world_info(\"alpha\",\"host\")] $[nactive()]")
 	got := h.dump()
-	if !strings.Contains(got, "front 1 100 30") {
+	if !strings.Contains(got, "front 1 100 30 a.example 0") {
 		t.Fatalf("%q", got)
 	}
 }
 
 var _ = ansi.PlainText
-
-func TestSaveWritesMacroDefinitions(t *testing.T) {
-	e, _ := newTest(t)
-	_ = e.Exec("w", "/def -t'hello*' -ahCred greet = /echo hi")
-	path := t.TempDir() + "/macros.tf"
-	_ = e.Exec("w", "/save "+path+" greet")
-	b, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(b), "/def") || !strings.Contains(string(b), "greet") || !strings.Contains(string(b), "hello*") {
-		t.Fatalf("%v %q", err, b)
-	}
-}

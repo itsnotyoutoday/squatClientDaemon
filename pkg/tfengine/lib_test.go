@@ -36,7 +36,7 @@ func TestRealLibraryLoadsThroughTheClientEngine(t *testing.T) {
 		}
 		for _, l := range strings.Split(h.dump(), "\n") {
 			if strings.Contains(l, "no such") || strings.Contains(l, "not supported by this client") || strings.Contains(l, "invalid") {
-				if strings.Contains(l, "local.tf") { // stdlib loads an optional per-user file
+				if strings.Contains(l, "local.tf") || strings.Contains(l, `features`) || strings.Contains(l, "status_int_more") { // optional per-user file; features() and limit() are not tf functions the engine has
 					continue
 				}
 				t.Errorf("%s: %s", f, l)

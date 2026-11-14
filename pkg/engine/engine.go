@@ -129,6 +129,8 @@ type Engine struct {
 	layoutLua string // name of the Lua script of the layout in use (layoutlua.go)
 
 	// noAutoReconnect turns off automatic reconnection of lost squatter connections (default: on).
+	lastKey atomic.Int64 // unix nanos of the last typed line (idle())
+
 	noAutoReconnect atomic.Bool
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
@@ -412,6 +414,7 @@ func (e *Engine) Dial(w World, password string) (SessionInfo, error) {
 	id := fmt.Sprintf("s%d", e.nextID)
 	tfName := e.uniqueName(w.Name)
 	e.mu.Unlock()
+	e.tf.SessionOpened(tfName, w.Host, w.Port, w.TLS)
 
 	s, err := newSession(e, id, tfName, w, cfg, loginLine(w, password))
 	if err != nil {

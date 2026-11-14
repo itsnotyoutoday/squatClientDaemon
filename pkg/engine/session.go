@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/scrollback"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tfengine"
 )
 
 // Transport is what a session needs from a connection. *conn.Conn implements
@@ -59,10 +59,11 @@ type session struct {
 	login       string
 	loginCancel func()
 	status      []StatusField
+	tfStatus    map[string]bool // names of the status fields the TF engine owns
 	logw        *os.File
 	cols, rows  int
 	localEcho   bool
-	limit       *regexp.Regexp
+	hidden      func(line, attrs string) bool // /limit's filter (the engine's snapshot); nil = none
 	storeClosed bool
 	started     bool
 
@@ -308,6 +309,7 @@ func (s *session) onEnded(ev conn.Event) {
 	}
 	s.mu.Unlock()
 	s.e.tf.FireHookWorld(s.tfName, "DISCONNECT", s.world.Name)
+	s.e.tf.WorldClosed(s.tfName)
 	s.e.lua.FireEventFor(s.id, "disconnect", map[string]any{"world": s.id, "name": s.tfName, "reason": ev.Reason}, true)
 }
 
@@ -340,7 +342,7 @@ func (s *session) appendLocked(kind string, spans []proto.Span, prompt bool, ts 
 	if s.logw != nil && !prompt {
 		_, _ = fmt.Fprintln(s.logw, ansi.PlainText(spans))
 	}
-	if s.limit == nil || s.limit.MatchString(l.Plain()) {
+	if s.hidden == nil || !s.hidden(l.Plain(), lineAttrs(spans)) {
 		s.e.bus.publish(Event{Kind: EvLine, Session: s.id, Line: &l})
 	}
 	s.publishInfoLocked()
@@ -427,35 +429,6 @@ func (s *session) size() (int, int) {
 
 // ---- status bar, view filter, logging ------------------------------------
 
-func (s *session) statusOp(op, field string, args []string) {
-	s.mu.Lock()
-	idx := -1
-	for i, f := range s.status {
-		if f.Name == field {
-			idx = i
-		}
-	}
-	switch op {
-	case "status_rm":
-		if idx >= 0 {
-			s.status = append(s.status[:idx], s.status[idx+1:]...)
-		}
-	default:
-		f := StatusField{Name: field}
-		if len(args) > 0 {
-			f.Attrs = args[0]
-		}
-		if idx >= 0 {
-			f.Text = s.status[idx].Text
-			s.status[idx] = f
-		} else {
-			s.status = append(s.status, f)
-		}
-	}
-	s.publishStatusLocked()
-	s.mu.Unlock()
-}
-
 func (s *session) setStatusText(name, text string) {
 	s.mu.Lock()
 	for i := range s.status {
@@ -471,16 +444,71 @@ func (s *session) setStatusText(name, text string) {
 	s.mu.Unlock()
 }
 
+// setTFStatus replaces the fields the TF engine owns (named in tfStatus) with the ones it renders now; the
+// other fields (prompt, ...) are left alone.
+func (s *session) setTFStatus(fields []tfengine.StatusField) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keep := s.status[:0:0]
+	for _, f := range s.status {
+		if !s.tfStatus[f.Name] {
+			keep = append(keep, f)
+		}
+	}
+	s.tfStatus = map[string]bool{}
+	for _, f := range fields {
+		keep = append(keep, StatusField{Name: f.Name, Text: f.Text, Attrs: f.Attrs})
+		s.tfStatus[f.Name] = true
+	}
+	s.status = keep
+	s.publishStatusLocked()
+}
+
 func (s *session) publishStatusLocked() {
 	f := append([]StatusField(nil), s.status...)
 	s.e.bus.publish(Event{Kind: EvStatus, Session: s.id, Fields: f})
 }
 
-func (s *session) setLimit(re *regexp.Regexp) {
+// setHidden installs /limit's filter (nil = none), tells the UI to refetch its view and returns how many of
+// the retained lines are visible under it.
+func (s *session) setHidden(f func(line, attrs string) bool) int {
 	s.mu.Lock()
-	s.limit = re
+	s.hidden = f
 	s.mu.Unlock()
 	s.e.bus.publish(Event{Kind: EvReset, Session: s.id})
+	return s.visibleCount(f)
+}
+
+// visibleCount counts the retained lines f does not hide (at most the last 20000).
+func (s *session) visibleCount(f func(line, attrs string) bool) int {
+	first, last := s.store.Bounds()
+	if last == 0 {
+		return 0
+	}
+	if last-first >= 20000 {
+		first = last - 19999
+	}
+	ents, err := s.store.Range(first, last)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if e.Line != nil && (f == nil || !f(e.Line.Plain(), lineAttrs(e.Line.Spans))) {
+			n++
+		}
+	}
+	return n
+}
+
+// lineAttrs is the attribute letters /limit -a looks at: "B" for a line that carries any styling.
+func lineAttrs(spans []proto.Span) string {
+	for _, sp := range spans {
+		if sp.Fg != nil || sp.Bg != nil || sp.B || sp.U || sp.I || sp.Dim || sp.Rev || sp.Blink || sp.St {
+			return "B"
+		}
+	}
+	return ""
 }
 
 func (s *session) setLog(on bool, path string) error {

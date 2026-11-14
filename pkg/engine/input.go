@@ -29,6 +29,7 @@ func (e *Engine) Input(id, text string) error {
 	if s == nil {
 		return ErrNoSession
 	}
+	e.lastKey.Store(e.now().UnixNano())
 	if strings.HasPrefix(text, "/") {
 		name, arg := splitCmd(text[1:])
 		switch name {
@@ -80,6 +81,13 @@ func (e *Engine) Input(id, text string) error {
 				s.systemLine("% " + friendlySendErr(err).Error())
 			}
 			return nil
+		case "listworlds", "world", "addworld":
+			// typed alone these are GUI features: the Worlds dialog. With any argument, and from scripts, pipes
+			// and $(...), they are the text commands of tf (docs/COMMAND-STATUS.md).
+			if arg == "" {
+				e.bus.publish(Event{Kind: EvWindow, Text: "dialog:worlds"})
+				return nil
+			}
 		case "tf":
 			// /tf <command>: FORCE the command to the REMOTE real TinyFugue that carries this session
 			// (tf.exec: admin device, squat_exec on). Output comes back as system lines.
@@ -95,7 +103,7 @@ func (e *Engine) Input(id, text string) error {
 			if !strings.HasPrefix(arg, "/") {
 				arg = "/" + arg
 			}
-			_ = e.tf.Exec(s.tfName, arg)
+			_ = e.tf.Type(s.tfName, arg, false)
 			return nil
 		case "stop":
 			// /stop: interrupt a runaway script (the TF engine's Ctrl-C)
@@ -117,7 +125,7 @@ func (e *Engine) Input(id, text string) error {
 		if e.lua.OnInput(s.id, text) {
 			return nil
 		}
-		_ = e.tf.Exec(s.tfName, text)
+		_ = e.tf.Type(s.tfName, text, false)
 		return nil
 	}
 	s.noteUserLine(text)
@@ -125,7 +133,8 @@ func (e *Engine) Input(id, text string) error {
 		return nil
 	}
 	s.userSend.Add(1)
-	_ = e.tf.Exec(s.tfName, text) // TF shows send errors itself (see tfHost.SendToWorld)
+	_, secret := secretLine(text)
+	_ = e.tf.Type(s.tfName, text, secret) // TF shows send errors itself (see tfHost.SendToWorld)
 	s.userSend.Add(-1)
 	return nil
 }
@@ -154,6 +163,23 @@ func (e *Engine) forwardTF(s *session, line string) {
 	if !res.OK && len(res.Out) == 0 {
 		s.systemLine("% /tf: TinyFugue reported an error")
 	}
+}
+
+// TFKeyBindings lists the key sequences scripts have bound (/bind, /def -b), in /bind notation ("^A", "^[x").
+// The input line forwards exactly these keys to TFKey.
+func (e *Engine) TFKeyBindings() []string { return e.tf.KeyBindings() }
+
+// TFKey runs the script binding of one keystroke of the input line. text and cursor (a byte offset) are the
+// input line as it is; handled is false when nothing is bound to the key, otherwise the macro ran and the
+// (possibly edited) line comes back.
+func (e *Engine) TFKey(id, seq, text string, cursor int) (handled bool, newText string, newCursor int, err error) {
+	s := e.get(id)
+	if s == nil {
+		return false, text, cursor, ErrNoSession
+	}
+	e.lastKey.Store(e.now().UnixNano())
+	handled, newText, newCursor = e.tf.Key(s.tfName, seq, text, cursor)
+	return handled, newText, newCursor, nil
 }
 
 // StopScripts interrupts the script the TF engine is running, if any (a

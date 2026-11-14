@@ -19,60 +19,70 @@ type CommandStatus struct {
 	Name   string
 	Status Status
 	// Where says who implements it: "engine" (gtfparser), "client" (this
-	// package, against the client's data) or "-".
+	// package: a command real tf defines in its library, or a SquatClient
+	// extension) or "-".
 	Where string
-	Note  string
+	// GUI says what the command does in the SquatClient window, when that is
+	// more than text ("" = it prints text like tf does).
+	GUI  string
+	Note string
 }
 
 // CommandStatuses lists every real tf builtin command this client knows about.
 func CommandStatuses() []CommandStatus { return commandStatuses }
 
 func s(name string, st Status, where, note string) CommandStatus {
-	return CommandStatus{name, st, where, note}
+	return CommandStatus{Name: name, Status: st, Where: where, Note: note}
 }
 
-// The engine-implemented commands are marked "engine"; if the engine later
-// implements one this package registers (the world book, history, ...), the
-// client's registration still wins until it is removed from commands.go.
+func g(name string, st Status, where, gui, note string) CommandStatus {
+	return CommandStatus{Name: name, Status: st, Where: where, GUI: gui, Note: note}
+}
+
+// The engine-implemented commands are marked "engine": the engine keeps their
+// state (history, worlds, status rows, key bindings, filters) and this client
+// feeds it and displays it (corehost.go). A "mapped" command also does
+// something in the window; "GUI" says what, and docs/COMMAND-STATUS.md lists
+// the text form that scripts, pipes and $(...) always get.
 var commandStatuses = []CommandStatus{
-	s("beep", Mapped, "client", "bell / audio cue of the window"),
-	s("bind", Works, "engine", "defines and lists bindings; the input line does not run TF key bindings yet"),
+	g("beep", Mapped, "engine", "the window's bell", "text form: none (it has no output)"),
+	s("bind", Works, "engine", "bindings run from the input line (Engine.Key), see /dokey"),
 	s("break", Works, "engine", ""),
 	s("calllua", Unsupported, "-", "real tf's embedded Lua; SquatClient has its own Lua (/lua, squat.*)"),
-	s("connect", Works, "client", "opens a session from the world book, or by host and port"),
+	g("connect", Mapped, "engine", "opens a session (a tab) from the world book, or by host and port; -x TLS, -f/-b foreground or background", ""),
 	s("control", Unsupported, "-", "TinyFugue-squatter keyboard control: use the Keyboard control of the tab"),
-	s("core", Unsupported, "-", "no core dump in a GUI client"),
-	s("dc", Works, "client", "closes the session of a world"),
-	s("def", Works, "engine", "plus the client extension -g (gag)"),
-	s("dokey", Unsupported, "client", "the input line's editing keys belong to the UI; the command says so"),
-	s("edit", Unsupported, "-", "macro editing is done in the editor / script dialogs"),
+	g("core", Unsupported, "engine", "", "there is no core dump to make in a GUI client; the command says so"),
+	g("dc", Mapped, "engine", "closes a session", "-all closes every one"),
+	s("def", Works, "engine", "plus the SquatClient extension -g (gag)"),
+	g("dokey", Mapped, "engine", "editing keys act on the input line when a key binding runs (Engine.Key); display keys (REDRAW, REFRESH, CLEAR) have nothing to do in a window", ""),
+	s("edit", Works, "engine", ""),
 	s("eval", Works, "engine", ""),
 	s("exit", Works, "engine", "ends a /load, as in real tf (it used to quit the client; use /quit)"),
 	s("export", Works, "engine", ""),
-	s("features", Works, "client", ""),
-	s("fg", Works, "client", "brings a session to the front"),
+	s("features", Works, "engine", ""),
+	g("fg", Mapped, "engine", "brings a session (tab) to the front; -q quiet", ""),
 	s("for", Works, "engine", ""),
 	s("gag", Works, "engine", ""),
-	s("help", Mapped, "client", "opens the help browser"),
+	g("help", Mapped, "engine", "opens the help browser (typed /help is handled by the window; from a script it asks the window to open it)", ""),
 	s("hilite", Works, "engine", ""),
-	s("histsize", Works, "client", "sets the variable; the scrollback size is a client setting"),
+	s("histsize", Works, "engine", ""),
 	s("hook", Works, "engine", ""),
-	s("input", Mapped, "client", "inserts text into the input line (it is never sent)"),
+	g("input", Mapped, "engine", "inserts the text into the input line (it is never sent)", ""),
 	s("kill", Works, "engine", ""),
 	s("lcd", Works, "engine", "subject to /restrict file"),
 	s("let", Works, "engine", ""),
-	s("limit", Mapped, "client", "the scrollback filter of the window"),
+	g("limit", Mapped, "engine", "filters the session's output and scrollback", "the filter is the engine's; the window re-renders under it"),
 	s("list", Works, "engine", ""),
-	s("listsockets", Works, "client", "lists the open sessions"),
-	s("liststreams", Unsupported, "-", "the engine does not list tfopen streams yet"),
+	g("listsockets", Mapped, "engine", "the open sessions, in the engine's socket table", ""),
+	s("liststreams", Works, "engine", ""),
 	s("listvar", Works, "engine", ""),
-	s("listworlds", Works, "client", "lists the world book"),
+	g("listworlds", Mapped, "engine", "typed alone it opens the Worlds dialog; with any argument (e.g. /listworlds *, -s, -c) and in scripts, pipes and $(...) it prints the table", "the client's world book is the source of the list"),
 	s("load", Works, "engine", "relative names are searched in the current directory, then the config directory"),
 	s("loaded", Works, "engine", ""),
 	s("loadlua", Unsupported, "-", "real tf's embedded Lua"),
-	s("loadworld", Mapped, "client", "the world book is edited in the Worlds dialog; there is no file to load"),
-	s("localecho", Mapped, "client", "local echo of typed text for the session"),
-	s("log", Works, "client", "writes the session log under the logs directory"),
+	s("loadworld", Works, "client", "tf's library defines it as /load of WORLDFILE"),
+	g("localecho", Mapped, "engine", "local echo of typed text for the session", ""),
+	s("log", Works, "engine", "relative file names go under the logs directory"),
 	s("ps", Works, "engine", ""),
 	s("purge", Works, "engine", ""),
 	s("purgelua", Unsupported, "-", "real tf's embedded Lua"),
@@ -80,51 +90,55 @@ var commandStatuses = []CommandStatus{
 	s("python_call", Unsupported, "-", "real tf's embedded Python"),
 	s("python_kill", Unsupported, "-", "real tf's embedded Python"),
 	s("python_load", Unsupported, "-", "real tf's embedded Python"),
-	s("quit", Works, "client", "quits the client"),
+	g("quit", Mapped, "engine", "quits the client", ""),
 	s("quote", Works, "engine", "shell forms subject to /restrict shell"),
-	s("reboot", Unsupported, "-", "no process to re-exec in a GUI client"),
-	s("recall", Mapped, "client", "searches the session's scrollback"),
-	s("recordline", Unsupported, "-", "history is recorded by the client's scrollback"),
-	s("relimit", Mapped, "client", "the scrollback filter of the window"),
-	s("renameworld", Works, "client", "renames a world in the world book"),
+	s("reboot", Unsupported, "-", "a GUI client does not re-exec itself; the engine says so"),
+	g("recall", Works, "engine", "", "history of received, typed and local lines; prints text (the window's own history browser, Ctrl-R, searches what you sent)"),
+	s("recordline", Works, "engine", ""),
+	g("relimit", Mapped, "engine", "the scrollback filter of the window", ""),
+	s("renameworld", Works, "engine", "renames the world in the client's world book too"),
 	s("repeat", Works, "engine", ""),
 	s("require", Works, "engine", ""),
-	s("restrict", Works, "engine", "raises the restriction level; squatterd starts at shell"),
-	s("save", Works, "client", "writes /def lines (relative to the current directory); moves to the engine when it has its own"),
-	s("saveworld", Works, "client", "saves the world book"),
+	s("restrict", Works, "engine", "raises the restriction level (the desktop starts unrestricted)"),
+	s("save", Works, "engine", "writes /def lines to a file"),
+	s("saveworld", Works, "engine", "writes a world file; the client's own book is saved by the app"),
 	s("send", Works, "engine", ""),
-	s("set", Works, "engine", ""),
+	s("set", Works, "engine", "wrap, wrapsize, wrapspace, wrappunct and visual drive the output window"),
 	s("setenv", Works, "engine", ""),
 	s("sh", Works, "engine", "subject to /restrict shell"),
 	s("shift", Works, "engine", ""),
 	s("squat", Unsupported, "-", "that is the TinyFugue-side bridge command; here it would be circular"),
-	s("status_add", Mapped, "client", "status bar fields"),
-	s("status_clear", Mapped, "client", "status bar fields"),
-	s("status_edit", Mapped, "client", "status bar fields"),
-	s("status_rm", Mapped, "client", "status bar fields"),
-	s("suspend", Mapped, "client", "type /suspend alone: detaches squatter sessions and minimises the window"),
+	g("status_add", Mapped, "engine", "adds a field to the status bar", ""),
+	g("status_clear", Mapped, "engine", "the status bar", ""),
+	g("status_edit", Mapped, "engine", "the status bar", ""),
+	g("status_rm", Mapped, "engine", "the status bar", ""),
+	g("suspend", Mapped, "engine", "detaches squatter sessions and minimises the window", ""),
 	s("test", Works, "engine", ""),
 	s("trig", Works, "engine", ""),
 	s("trigger", Works, "engine", ""),
 	s("trigpc", Unsupported, "-", "not in the engine yet"),
 	s("unbind", Works, "engine", ""),
 	s("undef", Works, "engine", ""),
-	s("undefn", Works, "client", ""),
-	s("unlimit", Mapped, "client", "the scrollback filter of the window"),
+	s("undefn", Works, "engine", ""),
+	g("unlimit", Mapped, "engine", "the scrollback filter of the window", ""),
 	s("unset", Works, "engine", ""),
-	s("unworld", Works, "client", "removes a world from the book"),
+	s("unworld", Works, "engine", "removes the world from the client's world book too"),
 	s("version", Works, "engine", ""),
-	s("watchdog", Unsupported, "-", "idle watching needs the terminal's input clock"),
-	s("watchname", Unsupported, "-", "idle watching needs the terminal's input clock"),
-	// commands that real tf has as library macros (lib/tf/stdlib.tf) and that
-	// SquatClient always had built in
+	s("watchdog", Works, "engine", ""),
+	s("watchname", Works, "engine", ""),
+	// library commands real tf defines in lib/tf (stdlib.tf) that the client supplies itself, so they
+	// work without the library; the library's own definitions take over when it is loaded
+	g("addworld", Mapped, "client", "typed alone it opens the Worlds dialog; with arguments it defines the world in the client's book", "tf's library defines it as a macro over addworld()"),
+	g("world", Mapped, "client", "connects if needed and brings the session to the front; typed alone it opens the Worlds dialog", "SquatClient extension"),
 	s("untrig", Works, "client", "library macro in real tf"),
 	s("undeft", Works, "client", "library macro in real tf"),
 	s("unhook", Works, "client", "library macro in real tf"),
 	s("nogag", Works, "client", "library macro in real tf"),
 	s("nohilite", Works, "client", "library macro in real tf"),
 	s("partial", Works, "client", "library macro in real tf"),
-	s("world", Works, "client", "connect if needed and bring to the front (SquatClient extension)"),
-	s("addworld", Works, "client", ""),
+	g("wrap", Mapped, "client", "wraps the output window at the width, or on/off", "library macro in real tf: sets wrap and wrapsize"),
+	g("nowrap", Mapped, "client", "turns wrapping off in the output window", "library macro in real tf"),
+	g("wrapspace", Mapped, "client", "indent of wrapped lines in the output window", "library macro in real tf"),
+	g("visual", Mapped, "client", "the window is always split into output, status bar and input line; this records the setting", "library macro in real tf"),
 	s("notify", Works, "client", "SquatClient extension: desktop notification"),
 }

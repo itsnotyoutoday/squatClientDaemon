@@ -15,7 +15,25 @@ import (
 // no macro body runs, no shot is consumed, nothing is sent.
 func (a *Engine) OnLine(world string, line proto.Line, live bool) LineResult {
 	var res LineResult
-	a.do(world, func(in *gtfparser.Interp) { res = a.process(in, line.Plain(), line.Spans, live) })
+	a.do(world, func(in *gtfparser.Interp) {
+		text := line.Plain()
+		watchGag := false
+		if live {
+			watchGag = in.CheckWatch(world, text)
+		}
+		res = a.process(in, text, line.Spans, live)
+		if watchGag {
+			res.Gag = true
+		}
+		if live {
+			attrs := ""
+			if res.Gag {
+				attrs = "g"
+			}
+			in.RecordWorldLineAttr(world, text, attrs)
+		}
+		res.Hidden = in.LimitedFor(world, text, "")
+	})
 	return res
 }
 

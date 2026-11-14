@@ -2,6 +2,7 @@ package tfengine
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +75,14 @@ type Options struct {
 	// interrupted. Loading a file is exempt. (The engine's own ceilings,
 	// Limits, count statements, not time.)
 	MaxTime time.Duration
+	// StdLib is real tf's standard library: a directory containing stdlib.tf
+	// (or the file itself). When set it is loaded at start, as tf does, which
+	// defines tf's library commands (/wrap /nowrap /visual /alias ...). The
+	// library is not bundled; without it the commands the client supplies
+	// itself still work.
+	StdLib string
+	// LogsDir is where /log puts relative file names (default: the current directory).
+	LogsDir string
 	// Version is reported by /version.
 	Version string
 	// WithoutEnvironment keeps the process environment out of script
@@ -90,6 +99,8 @@ type LineResult struct {
 	Spans []proto.Span
 	// Fired lists the names of macros that matched (trigger order).
 	Fired []string
+	// Hidden means the world's /limit filter hides the line (it is still recorded).
+	Hidden bool
 	// Live echoes the live flag the result was computed with. When false only
 	// display effects (Gag, Spans) were computed; nothing was executed.
 	Live bool
@@ -109,10 +120,14 @@ type Engine struct {
 	closed bool
 
 	// Everything below is only touched on the interpreter's goroutine.
-	cur       string // the world the running call acts for
-	inSend    bool   // a SEND hook is running
-	nlogs     int
-	lastPrmpt map[string]string
+	cur         string          // the world the running call acts for
+	inSend      bool            // a SEND hook is running
+	worldSig    string          // signature of the host's world list as last synced into the engine's database
+	synced      map[string]bool // lower-cased names of the worlds that came from the host
+	renames     [][2]string     // /renameworld events of the running call
+	statusDirty bool
+	muted       bool // world sync is running: its chatter is not shown
+	inKey       bool
 }
 
 // New creates the engine and starts its interpreter goroutine. Call Close to
@@ -124,7 +139,7 @@ func New(host Host, opts Options) *Engine {
 	if opts.MaxTime == 0 {
 		opts.MaxTime = 2 * time.Second
 	}
-	a := &Engine{host: host, opts: opts, lastPrmpt: map[string]string{}}
+	a := &Engine{host: host, opts: opts, synced: map[string]bool{}}
 	gl := gtfparser.Limits{MaxRecur: opts.Limits.MaxRecur, MaxInstr: opts.Limits.MaxInstr,
 		MaxLoadDeep: opts.Limits.MaxLoadDeep, MaxOutput: opts.Limits.MaxOutput}
 	d := gtfparser.DefaultLimits()
@@ -153,9 +168,14 @@ func New(host Host, opts Options) *Engine {
 	if opts.Version != "" {
 		a.in.SetVar("version", opts.Version)
 	}
-	a.registerCommands()
-	a.registerFunctions()
+	if err := a.in.Load(clientExtension(a)); err != nil {
+		panic("tfengine: " + err.Error()) // a malformed table is a programming error
+	}
+	for _, f := range []string{"256colors", "ssl", "IPv6", "core"} {
+		a.in.SetFeature(f, true)
+	}
 	a.r = gtfparser.NewRunner(a.in)
+	a.r.Do(func(in *gtfparser.Interp) { a.start(in) })
 	return a
 }
 
@@ -205,7 +225,9 @@ func (a *Engine) run(world string, budget bool, fn func(in *gtfparser.Interp)) {
 				}
 			}()
 		}
+		a.syncWorlds(in)
 		fn(in)
+		a.afterCall(in)
 	})
 }
 
@@ -215,6 +237,20 @@ func (a *Engine) run(world string, budget bool, fn func(in *gtfparser.Interp)) {
 // interpreter itself.
 func (a *Engine) Exec(world, text string) error {
 	a.do(world, func(in *gtfparser.Interp) { in.Exec(text) })
+	return nil
+}
+
+// Type processes a line the user typed: it goes into the input history
+// (secret lines marked so they are not kept) and then runs like Exec.
+func (a *Engine) Type(world, text string, secret bool) error {
+	a.do(world, func(in *gtfparser.Interp) {
+		if secret {
+			in.RecordInputAttr(text, "g")
+		} else {
+			in.RecordInput(text)
+		}
+		in.Exec(text)
+	})
 	return nil
 }
 
@@ -293,20 +329,62 @@ func (a *Engine) Macros() []MacroInfo {
 	return out
 }
 
-// Key runs the macro bound to key (a /bind or /def -b key) for a world and
-// reports whether there was one.
-func (a *Engine) Key(world, key string) bool {
-	found := false
-	a.do(world, func(in *gtfparser.Interp) {
-		for _, m := range in.Macros() {
-			if m.Bind == key {
-				found = true
-				in.ExecFull(m.Body)
-				break
-			}
+// KeyBindings lists the key sequences bound by scripts (/bind, /def -b), in
+// the notation /bind uses ("^A", "^[x"). The input line asks for them to know
+// which keystrokes to forward to Key.
+func (a *Engine) KeyBindings() []string {
+	var out []string
+	a.do("", func(in *gtfparser.Interp) {
+		for _, b := range in.Bindings() {
+			out = append(out, gtfparser.AsciiToPrint(b.Seq))
 		}
 	})
-	return found
+	return out
+}
+
+// Key feeds one keystroke (a sequence in /bind notation, "^A") of the input
+// line to the engine. text and cursor (a byte offset) are the input line as it
+// is now. handled is false when nothing is bound to the key (the input line
+// then does its own thing); otherwise the bound macro ran and the (possibly
+// edited, by /input, /dokey, kb*()) line is returned.
+func (a *Engine) Key(world, seq, text string, cursor int) (handled bool, newText string, newCursor int) {
+	a.do(world, func(in *gtfparser.Interp) {
+		code := gtfparser.PrintToAscii(seq)
+		if _, ok := in.FindKey(code); !ok {
+			return
+		}
+		handled = true
+		b := in.Input()
+		b.Set(text, cursor)
+		a.inKey = true
+		in.KeyPressed(code)
+		in.FlushKeys()
+		a.inKey = false
+		newText, newCursor = b.Text(), b.Cursor()
+		b.Clear()
+	})
+	return
+}
+
+// SessionOpened defines a session's script name as a world of the engine's
+// database (when it is not one already), so per-world state such as /recall's
+// history works for connections that are not in the world book (quick
+// connect, "#2" duplicates). Safe from any goroutine; it does not wait.
+func (a *Engine) SessionOpened(world, host string, port int, tls bool) {
+	a.Post(func() {
+		if _, ok := a.in.World(world); ok {
+			return
+		}
+		a.muted = true
+		a.in.DefineWorld(gtfparser.WorldInfo{Name: world, Host: host, Port: strconv.Itoa(port), SSL: tls, Temp: true})
+		a.muted = false
+	})
+}
+
+// WorldClosed tells the engine a session's connection ended (a temporary
+// world made by /connect host port is forgotten). Safe from any goroutine.
+func (a *Engine) WorldClosed(world string) {
+	a.Post(func() { a.in.WorldClosed(world) })
 }
 
 // timeNow is the clock the interpreter uses (the host's).
