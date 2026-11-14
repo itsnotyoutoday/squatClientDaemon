@@ -493,7 +493,7 @@ func TestRunawayScriptIsStoppedByTheTimeBudgetAndByInterrupt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("runaway loop was not stopped")
 	}
-	if !strings.Contains(h.dump(), "budget") {
+	if !strings.Contains(h.dump(), "exceeded") {
 		t.Fatalf("%q", h.dump())
 	}
 	e2, _ := newTest(t, func(o *Options) { o.MaxTime = -1 })
