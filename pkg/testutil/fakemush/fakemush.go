@@ -610,3 +610,21 @@ func selfSigned(t testing.TB) (tls.Certificate, *x509.Certificate) {
 	leaf, _ := x509.ParseCertificate(der)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, leaf
 }
+
+// Connections is the number of connections the server has accepted so far.
+func (s *Server) Connections() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.peers)
+}
+
+// RemoteAddr is the address (ip:port) the peer connected from: the same value later means the same TCP
+// connection.
+func (p *Peer) RemoteAddr() string { return p.c.RemoteAddr().String() }
+
+// Gone reports whether the peer closed its end or the connection was closed.
+func (p *Peer) Gone() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closed || p.eof
+}

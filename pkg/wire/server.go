@@ -34,6 +34,9 @@ type ServerConfig struct {
 	ExtraFeatures []string
 	// Instance, if set, is announced in welcome.
 	Instance string
+	// TLSBinding is the server's TLS certificate fingerprint (tlsutil format; nil without TLS). An
+	// ssh-key login signs it together with the challenge, so a signature cannot be used on another server.
+	TLSBinding []byte
 
 	MaxClients   int           // authenticated clients (default 32)
 	QueueLimit   int           // queued outbound frames before a client is dropped (default 1000)
@@ -132,7 +135,7 @@ type client struct {
 	stop context.CancelFunc
 	out  chan []byte
 
-	devID, devName, role string
+	devID, devName, role, user string
 
 	mu       sync.Mutex
 	caps     proto.Caps
@@ -282,7 +285,23 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		fail(proto.ErrAuthFailed, "malformed hello")
 		return
 	}
-	dev, err := s.cfg.Auth.Authenticate(remoteIP(r), auth.Request{PublicKey: hello.PublicKey, Sig: hello.Sig, PairCode: hello.PairCode, DeviceName: hello.DeviceName}, nonce)
+	var dev auth.Device
+	var userName string
+	if hello.User != "" {
+		// named-user login with an ssh key or a device key: a malformed key or signature is just a failed
+		// attempt (it counts against the limiter)
+		kb, _ := base64.StdEncoding.DecodeString(hello.SSHKey)
+		sb, _ := base64.StdEncoding.DecodeString(hello.SSHSig)
+		var p auth.Principal
+		p, err = s.cfg.Auth.AuthenticateUser(remoteIP(r), auth.UserRequest{User: hello.User, SSHKey: kb, SSHSig: sb,
+			PublicKey: hello.PublicKey, Sig: hello.Sig, PairCode: hello.PairCode, DeviceName: hello.DeviceName}, nonce, s.cfg.TLSBinding)
+		if err == nil {
+			userName = p.User
+			dev = auth.Device{DeviceID: auth.DeviceID([]byte(p.Fingerprint)), Name: p.User + " (" + hello.DeviceName + ")", Role: p.Role}
+		}
+	} else {
+		dev, err = s.cfg.Auth.Authenticate(remoteIP(r), auth.Request{PublicKey: hello.PublicKey, Sig: hello.Sig, PairCode: hello.PairCode, DeviceName: hello.DeviceName}, nonce)
+	}
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
 		fail(proto.ErrRateLimited, "too many failed attempts, try again later")
@@ -300,7 +319,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	// --- authenticated
 	ws.SetReadLimit(MaxFrameBytes)
 	c := &client{s: s, id: s.nextID.Add(1), ws: ws, ctx: ctx, stop: stop,
-		out: make(chan []byte, s.cfg.QueueLimit), devID: dev.DeviceID, devName: dev.Name, role: roleOf(dev.Role),
+		out: make(chan []byte, s.cfg.QueueLimit), devID: dev.DeviceID, devName: dev.Name, role: roleOf(dev.Role), user: userName,
 		caps: proto.DefaultCaps(), lastRecv: time.Now()}
 	if hello.Caps != nil {
 		c.caps = *hello.Caps
@@ -325,7 +344,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	if infos == nil {
 		infos = []proto.SessionInfo{}
 	}
-	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: c.role, Sessions: infos, Features: s.features(), Kind: s.cfg.Kind, Instance: s.cfg.Instance}); err != nil {
+	if err := s.writeDirect(ctx, ws, Welcome{V: proto.Version, T: TWelcome, Server: s.cfg.ServerName, DeviceID: dev.DeviceID, Role: c.role, User: userName, Sessions: infos, Features: s.features(), Kind: s.cfg.Kind, Instance: s.cfg.Instance}); err != nil {
 		c.Close("welcome write failed")
 		return
 	}
@@ -402,7 +421,9 @@ func (c *client) readLoop() {
 			continue
 		}
 		if !known {
-			s.dispatchExt(c, cf, data)
+			if !s.handleAccount(c, cf, data) {
+				s.dispatchExt(c, cf, data)
+			}
 			continue
 		}
 		bad = 0

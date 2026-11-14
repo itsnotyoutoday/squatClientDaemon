@@ -30,6 +30,10 @@ type Config struct {
 
 	// ConnTweak, if set, may adjust each game connection's config (tests).
 	ConnTweak func(*conn.Config)
+
+	// Handoff, if set, makes this Daemon the continuation of one that called PrepareHandoff (squatterd
+	// reload, see handoff.go): the sessions in it are adopted instead of being marked stopped.
+	Handoff *Handoff
 }
 
 // Daemon is the session registry. It implements wire.Backend.
@@ -100,14 +104,34 @@ func (d *Daemon) load() error {
 			d.log.Warn("daemon: cannot open session", "id", m.ID, "err", err)
 			continue
 		}
-		if m.State != proto.StateEnded {
-			s.markStoppedAtLoad()
-		} else {
+		hs, carried := d.handoffFor(m.ID)
+		switch {
+		case m.State == proto.StateEnded:
 			close(s.done)
+		case carried:
+			if err := d.adopt(s, hs, d.cfg.Handoff.Files[hs.File]); err != nil {
+				d.log.Warn("daemon: cannot adopt connection", "id", m.ID, "err", err)
+				s.markEndedAtLoad(proto.EndSquatterRestarted, "could not take over the connection: "+err.Error())
+			}
+		default:
+			s.markStoppedAtLoad()
 		}
 		d.sessions[m.ID] = s
 	}
 	return nil
+}
+
+// handoffFor finds the session id in the handoff this Daemon was started with.
+func (d *Daemon) handoffFor(id string) (HandoffSession, bool) {
+	if d.cfg.Handoff == nil {
+		return HandoffSession{}, false
+	}
+	for _, hs := range d.cfg.Handoff.Bundle.Sessions {
+		if hs.ID == id && hs.File >= 0 && hs.File < len(d.cfg.Handoff.Files) {
+			return hs, true
+		}
+	}
+	return HandoffSession{}, false
 }
 
 func (d *Daemon) openSession(dir string, m *meta) (*session, error) {
@@ -250,7 +274,7 @@ func (d *Daemon) Connect(_ context.Context, p wire.Peer, req wire.ConnectReq) (p
 	d.smu.Lock()
 	if d.closing {
 		d.smu.Unlock()
-		return proto.SessionInfo{}, wire.Errf(proto.ErrInternal, "daemon is shutting down")
+		return proto.SessionInfo{}, ErrHandingOff
 	}
 	if len(d.sessions) >= d.cfg.MaxSessions {
 		d.smu.Unlock()

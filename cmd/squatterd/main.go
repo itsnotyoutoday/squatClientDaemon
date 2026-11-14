@@ -1,7 +1,7 @@
 // Command squatterd is the SquatClient persistent-session relay daemon.
 //
 //	squatterd [serve] [--port 10327] [--bind 0.0.0.0] [--data-dir ~/.squatterd] ...
-//	squatterd pair | devices | revoke <deviceId> | status | version
+//	squatterd pair | devices | revoke <deviceId> | reload | user ... | status | version
 //
 // It is deliberately thin: flags, signals and wiring only. The logic lives in
 // internal/daemon and pkg/{wire,auth,tlsutil}.
@@ -31,6 +31,9 @@ Usage:
   squatterd pair [flags]        create a one-time pairing code
   squatterd devices [flags]     list paired devices
   squatterd revoke <deviceId>   remove a paired device
+  squatterd reload [flags]      restart the running squatterd (new binary, same data dir) without losing
+                                the game connections; clients reconnect and replay on their own
+  squatterd user ...            manage named users and their ssh keys ("squatterd user" lists the commands)
   squatterd status [flags]      show data dir, TLS fingerprint, sessions on disk
   squatterd version
 

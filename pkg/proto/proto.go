@@ -216,6 +216,9 @@ const (
 	EndConnectFailed   = "connect_failed"
 	EndClientQuit      = "client_quit"
 	EndSquatterStopped = "squatter_stopped"
+	// EndSquatterRestarted: the squatterd was restarted (squatterd reload) and could not carry this
+	// connection over (a TLS connection to the game).
+	EndSquatterRestarted = "squatter_restarted"
 )
 
 // SessionInfo describes one session (a live or ended game connection).

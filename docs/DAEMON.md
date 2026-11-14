@@ -9,7 +9,7 @@ squatterd is a persistent session holder (think `screen` / `tinyfugue` for MUDs)
 | `cmd/squatterd` | flags, subcommands (`serve pair devices revoke status version`), signals, wiring. No logic. |
 | `internal/daemon` | session registry (`Daemon` implements `wire.Backend`), per-session pump, fan-out, persistence. |
 | `pkg/wire` | SWP server (WebSocket, auth handshake, per-client reader/writer, bounded queues) and the SWP client library. Talks to a `Backend` interface. |
-| `pkg/auth` | ed25519 device keys, `devices.json`, pairing codes, failure rate limit; client-side key helpers. |
+| `pkg/auth` | ed25519 device keys, `devices.json`, pairing codes, failure rate limit; ssh public keys, named users (`users.json`), the no-takeover rule and the audit log; client-side key helpers. |
 | `pkg/tlsutil` | self-signed cert, fingerprints, pinning `tls.Config`. |
 | `pkg/conn`, `pkg/scrollback`, `pkg/proto`, ... | game connection, history store, shared types (existing packages). |
 
@@ -36,6 +36,10 @@ squatterd is a persistent session holder (think `screen` / `tinyfugue` for MUDs)
 
 ```
 devices.json          paired devices (0600): deviceId, name, publicKey, createdAt, lastSeen
+users.json            named users (0600): name, role, disabled, keys[] (ssh keys and device keys: type, fingerprint, addedBy, lastSeen)
+user-pairing.json     one-time codes bound to a user (0600)
+audit.log             append-only JSON lines: every user/key/pairing change (who, what, which user)
+control.sock          unix control socket of the running squatterd (squatterd reload); handoff.json exists only during a reload
 pairing.json          outstanding pairing codes (0600), read fresh at every hello
 tls/cert.pem key.pem  auto-generated ECDSA P-256 cert (key 0600) unless --cert/--key are given
 sessions/<id>/
