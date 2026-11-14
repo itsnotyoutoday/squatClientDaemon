@@ -136,6 +136,10 @@ type Conn struct {
 
 	lines *liner
 	echo  atomic.Bool
+
+	handoff atomic.Bool   // set by Handoff: the reader stops without ending the connection
+	adopted bool          // built by Adopt: no initial "connected" event, the session already exists
+	exited  chan struct{} // closed when the reader goroutine has returned
 }
 
 func (cfg *Config) normalise() error {
@@ -184,14 +188,20 @@ func newConn(cfg Config, cancel context.CancelFunc) *Conn {
 	c.events = make(chan Event, c.limit+1) // +1: the final Ended always fits
 	c.quit = make(chan struct{})
 	c.done = make(chan struct{})
-	c.m = telnet.New(telnet.Config{
-		ClientName: cfg.ClientName, Version: cfg.Version, Caps: cfg.Caps, UTF8: c.utf8,
-		TLS: cfg.World.TLS, Proxied: cfg.Proxied, Cols: cfg.Cols, Rows: cfg.Rows,
-	})
+	c.exited = make(chan struct{})
+	c.m = telnet.New(c.telnetConfig())
 	c.lines = newLiner(c.utf8, func(spans []proto.Span, prompt bool) bool {
 		return c.emit(Event{Kind: EvLine, Spans: spans, Prompt: prompt})
 	})
 	return c
+}
+
+func (c *Conn) telnetConfig() telnet.Config {
+	cfg := c.cfg
+	return telnet.Config{
+		ClientName: cfg.ClientName, Version: cfg.Version, Caps: cfg.Caps, UTF8: c.utf8,
+		TLS: cfg.World.TLS, Proxied: cfg.Proxied, Cols: cfg.Cols, Rows: cfg.Rows,
+	}
 }
 
 // Dial connects and returns a running Conn, or a *DialError. ctx governs the
@@ -438,15 +448,27 @@ func (c *Conn) final(ev Event) {
 
 // run is the reader goroutine.
 func (c *Conn) run() {
+	defer close(c.exited)
 	nc := c.nc
-	c.emit(Event{Kind: EvState, Connected: true})
+	if !c.adopted {
+		c.emit(Event{Kind: EvState, Connected: true})
+	}
 	buf := make([]byte, 32*1024)
 	var rerr error
+	if len(c.lines.buf) > 0 { // adopted in the middle of a line: it becomes a prompt if nothing follows
+		_ = nc.SetReadDeadline(time.Now().Add(PromptIdle))
+	}
 loop:
 	for {
+		if c.handoff.Load() {
+			return // Handoff takes over: no end, no close, the socket stays open
+		}
 		n, err := nc.Read(buf)
 		if n > 0 && !c.process(buf[:n]) {
 			break loop
+		}
+		if c.handoff.Load() {
+			return
 		}
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) && !c.closing.Load() {
