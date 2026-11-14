@@ -199,6 +199,9 @@ func New(o Options) *Engine {
 	if topts.Version == "" {
 		topts.Version = o.Version
 	}
+	if topts.LogsDir == "" {
+		topts.LogsDir = o.LogsDir
+	}
 	if topts.LibDirs == nil && o.ConfigDir != "" {
 		topts.LibDirs = []string{o.ConfigDir}
 	}
