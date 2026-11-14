@@ -6,3 +6,5 @@ coverage.txt
 go.work
 go.work.sum
 .tf-oracle
+/squatterd
+/tf-squatterd
