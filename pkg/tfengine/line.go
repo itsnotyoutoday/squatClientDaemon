@@ -1,8 +1,6 @@
 package tfengine
 
 import (
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/itsnotyoutoday/gtfparser"
@@ -38,34 +36,54 @@ func (a *Engine) OnLine(world string, line proto.Line, live bool) LineResult {
 }
 
 // process is the trigger stage on the interpreter goroutine. spans nil means
-// the plain text.
+// the plain text. The engine decides what matched, gags and which attributes
+// apply (priority, fall-through, -P parts, %gag, %hilite); this converts its
+// attributed result into the client's spans.
 func (a *Engine) process(in *gtfparser.Interp, text string, spans []proto.Span, live bool) LineResult {
 	if spans == nil {
 		spans = []proto.Span{{S: text}}
 	}
 	res := LineResult{Live: live, Spans: spans}
-	gagOn := flagOn(in.Var("gag"), true)
-	hiliteOn := flagOn(in.Var("hilite"), true)
-	r := in.Process(text, live)
+	r := in.ProcessText(gtfparser.LineInput{Text: text, Dry: !live})
+	for _, m := range r.Matched {
+		res.Fired = append(res.Fired, m.Name)
+	}
+	res.Gag = r.Gag
+	runs := r.Spans(in)
 	out := append([]proto.Span(nil), spans...)
-	for _, m := range r.Matches {
-		res.Fired = append(res.Fired, m.Macro.Name)
-		whole, parts := parseMatchAttrs(m.Macro.Attrs)
-		if gagOn && (m.Macro.Gag || whole.Gag) {
-			res.Gag = true
+	if r.Substituted {
+		// a trigger replaced the text: the original colours no longer line up
+		out = nil
+		for _, run := range runs {
+			out = append(out, fromEngineAttr(run.Attr).Apply(proto.Span{S: run.Text}))
 		}
-		if !hiliteOn {
-			continue
-		}
-		out = applyRange(out, 0, len(text), whole)
-		for _, p := range parts {
-			if p.n < len(m.Groups) && m.Groups[p.n][0] >= 0 {
-				out = applyRange(out, m.Groups[p.n][0], m.Groups[p.n][1], p.a)
-			}
+	} else {
+		pos := 0
+		for _, run := range runs {
+			out = applyRange(out, pos, pos+len(run.Text), fromEngineAttr(run.Attr))
+			pos += len(run.Text)
 		}
 	}
 	res.Spans = out
 	return res
+}
+
+// fromEngineAttr converts the engine's attribute set (tf's) to this package's Attr.
+func fromEngineAttr(a gtfparser.Attr) Attr {
+	var o Attr
+	o.Bold = a&gtfparser.AttrBold != 0
+	o.Under = a&gtfparser.AttrUnderline != 0
+	o.Rev = a&gtfparser.AttrReverse != 0
+	o.Italic = a&gtfparser.AttrItalic != 0
+	if a.HasFg() {
+		c := proto.Palette(uint8(a.FgColor()))
+		o.Fg = &c
+	}
+	if a.HasBg() {
+		c := proto.Palette(uint8(a.BgColor()))
+		o.Bg = &c
+	}
+	return o
 }
 
 func flagOn(v string, def bool) bool {
@@ -76,39 +94,4 @@ func flagOn(v string, def bool) bool {
 		return false
 	}
 	return true
-}
-
-type partAttr struct {
-	n int
-	a Attr
-}
-
-var rePart = regexp.MustCompile(`P(\d+)`)
-
-// parseMatchAttrs splits a macro's attribute text as the engine stores it: the
-// -a attributes, followed by one "P<n><attrs>" for each -P option.
-func parseMatchAttrs(s string) (whole Attr, parts []partAttr) {
-	idx := rePart.FindAllStringSubmatchIndex(s, -1)
-	head := s
-	if len(idx) > 0 {
-		head = s[:idx[0][0]]
-	}
-	whole, _ = ParseAttr(head)
-	for k, m := range idx {
-		end := len(s)
-		if k+1 < len(idx) {
-			end = idx[k+1][0]
-		}
-		n, _ := strconv.Atoi(s[m[2]:m[3]])
-		if at, err := ParseAttr(s[m[1]:end]); err == nil {
-			parts = append(parts, partAttr{n, at})
-		}
-	}
-	return
-}
-
-// attrsGag reports whether an attribute text contains the g (gag) attribute.
-func attrsGag(s string) bool {
-	whole, _ := parseMatchAttrs(s)
-	return whole.Gag
 }

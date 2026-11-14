@@ -104,7 +104,7 @@ func clientExtension(a *Engine) gtfparser.Extension {
 						return gtfparser.Int(1)
 					}
 					return a.removeMacros("nogag", "gag", func(m *gtfparser.Macro, c *gtfparser.Call) bool {
-						return (m.Gag || attrsGag(m.Attrs)) && m.Trigger == strings.TrimSpace(c.Raw)
+						return m.Gag && m.Trigger == strings.TrimSpace(c.Raw)
 					})(c)
 				}},
 			{Name: "nohilite", Category: "macros", Usage: "[pattern]", Help: "remove hilites; no argument turns hiliting off",
@@ -117,13 +117,23 @@ func clientExtension(a *Engine) gtfparser.Extension {
 						return m.Attrs != "" && m.Trigger == strings.TrimSpace(c.Raw)
 					})(c)
 				}},
-			{Name: "partial", Category: "macros", Usage: "regexp", MinArgs: 1, Help: "highlight just the matching part of lines",
+			{Name: "partial", Category: "macros", Usage: "regexp", MinArgs: 1, Help: "highlight just the matching part of lines (tf's library: /def -F -p%{hpri-0} -Ph -t...)",
 				Do: func(c *gtfparser.Call) gtfparser.Value {
-					attr := c.Var("hiliteattr")
-					if attr == "" {
-						attr = "h"
+					pat := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strings.TrimSpace(c.Raw))
+					hpri := c.Var("hpri")
+					if hpri == "" {
+						hpri = "0"
 					}
-					return c.Exec("/def -P0" + attr + " -F -mregexp -t'" + strings.ReplaceAll(strings.TrimSpace(c.Raw), "'", `\'`) + "'")
+					return c.Exec("/def -F -p" + hpri + ` -Ph -t"` + pat + `"`)
+				}},
+			{Name: "trig", Category: "macros", Usage: "pattern = body", Help: "define a trigger (tf's library: /trigpc 0 100)",
+				Do: func(c *gtfparser.Call) gtfparser.Value { return c.ExecFull("/trigpc 0 100 " + c.Raw) }},
+			{Name: "trigc", Category: "macros", Usage: "chance pattern = body", MinArgs: 1, Help: "define a trigger with a probability",
+				Do: func(c *gtfparser.Call) gtfparser.Value { return c.ExecFull("/trigpc 0 " + c.Raw) }},
+			{Name: "trigp", Category: "macros", Usage: "priority pattern = body", MinArgs: 1, Help: "define a trigger with a priority",
+				Do: func(c *gtfparser.Call) gtfparser.Value {
+					p, rest := cut(c.Raw)
+					return c.ExecFull("/trigpc " + p + " 100 " + rest)
 				}},
 			// tf's wrapping and visual-mode commands are library macros over variables; the GUI
 			// reads those variables (see Host.Var), so these only set them
@@ -155,9 +165,6 @@ func clientExtension(a *Engine) gtfparser.Extension {
 				}},
 		},
 		Functions: []gtfparser.FuncSpec{
-			gtfparser.Func("encode_attr", func(s, attr string) string { return EncodeAttr(s, attr) }),
-			gtfparser.Func("decode_attr", func(s string) string { return stripMarkup(s) }),
-			gtfparser.Func("strip_attr", func(s string) string { return stripMarkup(s) }),
 			gtfparser.Func("isatty", func() int { return 1 }),
 			gtfparser.Func("nread", func() int { return 0 }),
 			gtfparser.Func("nmail", func() int { return 0 }),
@@ -198,30 +205,71 @@ func (a *Engine) removeMacros(who, what string, pred func(*gtfparser.Macro, *gtf
 	}
 }
 
-// defWithGag accepts the old "/def -g" (gag) shortcut next to the engine's /def.
+// defWithGag accepts the old "/def -g" (gag) shortcut next to the engine's /def: it becomes the gag
+// attribute, added to an -a option when there is one (a second -a would replace -ag).
 func (a *Engine) defWithGag(def gtfparser.CmdFunc) gtfparser.CmdFunc {
 	return func(in *gtfparser.Interp, args string) gtfparser.Value {
-		gag := false
-		for _, f := range strings.Fields(args) {
-			if !strings.HasPrefix(f, "-") {
+		opts, rest := splitOptions(args)
+		gag, hasAttr := false, false
+		for i, o := range opts {
+			switch {
+			case o == "-g":
+				gag = true
+			case strings.HasPrefix(o, "-a") && len(o) > 2:
+				hasAttr = true
+				_ = i
+			}
+		}
+		if !gag {
+			return def(in, args)
+		}
+		var out []string
+		for _, o := range opts {
+			switch {
+			case o == "-g":
+				if !hasAttr {
+					out = append(out, "-ag")
+				}
+			case strings.HasPrefix(o, "-a") && len(o) > 2:
+				if q := o[len(o)-1]; len(o) > 3 && (q == '\'' || q == '"') {
+					o = o[:len(o)-1] + ",g" + string(q)
+				} else {
+					o += ",g"
+				}
+				out = append(out, o)
+			default:
+				out = append(out, o)
+			}
+		}
+		return def(in, strings.Join(append(out, rest), " "))
+	}
+}
+
+// splitOptions cuts the leading -option words off a command line; quoted parts (-t'a b') stay in one word.
+func splitOptions(s string) (opts []string, rest string) {
+	rest = strings.TrimLeft(s, " \t")
+	for strings.HasPrefix(rest, "-") && rest != "-" && !strings.HasPrefix(rest, "- ") && !strings.HasPrefix(rest, "--") {
+		i, q := 0, byte(0)
+		for ; i < len(rest); i++ {
+			c := rest[i]
+			if q != 0 {
+				if c == '\\' && i+1 < len(rest) {
+					i++
+				} else if c == q {
+					q = 0
+				}
+				continue
+			}
+			if c == '\'' || c == '"' {
+				q = c
+			} else if c == ' ' || c == '\t' {
 				break
 			}
-			if f == "-g" {
-				gag = true
-			}
 		}
-		if gag {
-			args = dropWord(args, "-g")
-		}
-		before := len(in.Macros())
-		v := def(in, args)
-		if gag {
-			if ms := in.Macros(); len(ms) > before {
-				ms[len(ms)-1].Gag = true
-			}
-		}
-		return v
+		opts = append(opts, rest[:i])
+		rest = strings.TrimLeft(rest[i:], " \t")
 	}
+	return opts, rest
 }
 
 // logInDir resolves a relative /log file name under the logs directory.

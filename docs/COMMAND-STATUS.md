@@ -39,7 +39,7 @@ wrapspace and visual are reported to the window ("tfvar" event) and change how
 the output wraps; keys scripts bind (/bind, /def -b) are run from the input
 line and may edit it (/input, /dokey, kb*()).
 
-57 works, 25 mapped, 12 unsupported.
+60 works, 25 mapped, 11 unsupported.
 
 | Command | Status | Where | In the window (GUI) | Note |
 | --- | --- | --- | --- | --- |
@@ -118,9 +118,11 @@ line and may edit it (/input, /dokey, kb*()).
 | `/status_rm` | mapped | engine | the status bar |  |
 | `/suspend` | mapped | engine | detaches squatter sessions and minimises the window |  |
 | `/test` | works | engine |  |  |
-| `/trig` | works | engine |  |  |
+| `/trig` | works | client |  | library macro in real tf (over /trigpc) |
+| `/trigc` | works | client |  | library macro in real tf |
 | `/trigger` | works | engine |  |  |
-| `/trigpc` | unsupported | - |  | not in the engine yet |
+| `/trigp` | works | client |  | library macro in real tf |
+| `/trigpc` | works | engine |  |  |
 | `/unbind` | works | engine |  |  |
 | `/undef` | works | engine |  |  |
 | `/undefn` | works | engine |  |  |

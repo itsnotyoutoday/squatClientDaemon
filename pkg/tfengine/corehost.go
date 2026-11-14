@@ -15,22 +15,24 @@ import (
 type coreHost struct{ a *Engine }
 
 var (
-	_ gtfparser.Host        = (*coreHost)(nil)
-	_ gtfparser.EchoHost    = (*coreHost)(nil)
-	_ gtfparser.WorldHost   = (*coreHost)(nil)
-	_ gtfparser.ConnectHost = (*coreHost)(nil)
-	_ gtfparser.FgHost      = (*coreHost)(nil)
-	_ gtfparser.SocketHost  = (*coreHost)(nil)
-	_ gtfparser.IdleHost    = (*coreHost)(nil)
-	_ gtfparser.LimitHost   = (*coreHost)(nil)
-	_ gtfparser.LineHost    = (*coreHost)(nil)
-	_ gtfparser.PromptHost  = (*coreHost)(nil)
-	_ gtfparser.WindowHost  = (*coreHost)(nil)
-	_ gtfparser.Notifier    = (*coreHost)(nil)
-	_ gtfparser.TermHost    = (*coreHost)(nil)
-	_ gtfparser.HelpHost    = (*coreHost)(nil)
-	_ gtfparser.KeyHost     = (*coreHost)(nil)
-	_ gtfparser.StatusHost  = (*coreHost)(nil)
+	_ gtfparser.Host            = (*coreHost)(nil)
+	_ gtfparser.EchoHost        = (*coreHost)(nil)
+	_ gtfparser.WorldHost       = (*coreHost)(nil)
+	_ gtfparser.ConnectHost     = (*coreHost)(nil)
+	_ gtfparser.FgHost          = (*coreHost)(nil)
+	_ gtfparser.SocketHost      = (*coreHost)(nil)
+	_ gtfparser.IdleHost        = (*coreHost)(nil)
+	_ gtfparser.LimitHost       = (*coreHost)(nil)
+	_ gtfparser.LineHost        = (*coreHost)(nil)
+	_ gtfparser.PromptHost      = (*coreHost)(nil)
+	_ gtfparser.WindowHost      = (*coreHost)(nil)
+	_ gtfparser.Notifier        = (*coreHost)(nil)
+	_ gtfparser.TermHost        = (*coreHost)(nil)
+	_ gtfparser.HelpHost        = (*coreHost)(nil)
+	_ gtfparser.KeyHost         = (*coreHost)(nil)
+	_ gtfparser.AttrEchoHost    = (*coreHost)(nil)
+	_ gtfparser.HookDisplayHost = (*coreHost)(nil)
+	_ gtfparser.StatusHost      = (*coreHost)(nil)
 )
 
 // ---- output ----
@@ -39,27 +41,31 @@ var (
 // local history, which /recall -l reads).
 func (h *coreHost) Echo(text string) { h.a.echoRecord(h.a.cur, []proto.Span{{S: text}}, text) }
 
-// EchoTo is /echo with -w, -a or -p.
+// EchoTo is /echo with -w, -a or -p. Attributes are tf's (the engine parses them).
 func (h *coreHost) EchoTo(o gtfparser.EchoOpts, text string) {
-	var base Attr
+	a := h.a
+	var base gtfparser.Attr
 	if o.Attrs != "" {
 		var err error
-		if base, err = ParseAttr(o.Attrs); err != nil {
-			h.a.warn("/echo: " + err.Error())
+		if base, err = a.in.ParseAttrs(o.Attrs); err != nil {
+			a.warn("/echo: " + err.Error())
 			return
 		}
 	}
-	world := h.a.cur
+	world := a.cur
 	if o.World != "" {
 		world = o.World
 	}
-	var spans []proto.Span
+	s := gtfparser.AttrString{Text: text, Attr: base}
 	if o.Markup {
-		spans = SpansFromMarkup(text, base)
-	} else {
-		spans = []proto.Span{base.Apply(proto.Span{S: text})}
+		var err error
+		if s, err = a.attrCtx().DecodeAttr(s, 0, 0); err != nil {
+			a.warn("/echo: " + err.Error())
+			return
+		}
+		s.Attr = a.attrCtx().Adj(s.Attr, base)
 	}
-	h.a.echoRecord(world, spans, text)
+	a.echoRecord(world, a.attrSpansWith(s), s.Text)
 }
 
 func (a *Engine) echoRecord(world string, spans []proto.Span, plain string) {
@@ -103,13 +109,11 @@ func (h *coreHost) Send(world, text string) bool {
 		a.inSend = true
 		prev := a.in.CurrentWorld()
 		a.in.SetWorld(world)
-		fired := a.in.FireHook("SEND", text)
+		hr := a.in.FireHookArgs("SEND", text)
 		a.in.SetWorld(prev)
 		a.inSend = false
-		for _, m := range fired {
-			if m.Gag || attrsGag(m.Attrs) {
-				return true // a gagging SEND hook swallows the text, as in real tf (lib/tf/alias.tf)
-			}
+		if hr.Count > 0 {
+			return true // a SEND hook handled the text: it is not sent (tf; lib/tf/alias.tf relies on it)
 		}
 	}
 	if err := a.host.SendToWorld(world, text); err != nil {
@@ -275,4 +279,59 @@ func (h *coreHost) StatusValue(name string) (string, bool) {
 		return "", true // a scrolling window does not page; there is no mail or read-ahead
 	}
 	return "", false
+}
+
+// EchoAttr shows attributed text (echo(), /echo -p without a host option path).
+func (h *coreHost) EchoAttr(s gtfparser.AttrString) {
+	h.a.echoRecord(h.a.cur, h.a.attrSpans(s), s.Text)
+}
+
+// attrSpans converts the engine's attributed text to spans.
+func (a *Engine) attrSpans(s gtfparser.AttrString) []proto.Span { return a.attrSpansWith(s) }
+
+func (a *Engine) attrSpansWith(s gtfparser.AttrString) []proto.Span {
+	ctx := a.attrCtx()
+	out := []proto.Span(nil)
+	for _, run := range s.Spans(ctx) {
+		out = append(out, fromEngineAttr(run.Attr).Apply(proto.Span{S: run.Text}))
+	}
+	if len(out) == 0 {
+		out = []proto.Span{{S: s.Text}}
+	}
+	return out
+}
+
+// attrCtx is the engine's attribute context (%hiliteattr, %error_attr, ...).
+func (a *Engine) attrCtx() gtfparser.AttrCtx {
+	ctx := gtfparser.AttrCtx{}
+	for _, v := range []struct {
+		name string
+		dst  *gtfparser.Attr
+	}{{"hiliteattr", &ctx.Hilite}, {"error_attr", &ctx.Error}, {"warning_attr", &ctx.Warning}, {"info_attr", &ctx.Info}} {
+		if at, err := a.in.ParseAttrs(a.in.Var(v.name)); err == nil {
+			*v.dst = at
+		}
+	}
+	return ctx
+}
+
+// HookMessage places the default message of a hook event. The client prints its own lines for connections
+// ("*** Connected to ..."), so those events' messages are dropped; an unknown command keeps the client's
+// wording; everything else is shown in the current world's window.
+func (h *coreHost) HookMessage(m gtfparser.HookMessage) {
+	a := h.a
+	switch m.Event {
+	case "CONNECT", "DISCONNECT", "CONFAIL", "ICONFAIL", "PENDING", "BAMF", "WORLD", "BGTRIG", "PROXY":
+		return
+	case "NOMACRO":
+		if name, ok := strings.CutSuffix(strings.TrimPrefix(m.Text.Text, "% "), ": no such command or macro"); ok {
+			a.echoText("% /" + name + ": no such command. Type /help for help.")
+			return
+		}
+	}
+	world := a.cur
+	if m.World != "" {
+		world = m.World
+	}
+	a.echoRecord(world, a.attrSpans(m.Text), m.Text.Text)
 }

@@ -29,7 +29,7 @@ Same for every kind of session. In this order, first match wins:
 | `/stop` (new) | interrupts the running script (Ctrl-C of the TF engine) | |
 | any other `/cmd` | 1. Lua aliases / input handlers (`lua.OnInput`) 2. the **local** TF engine | the local engine reports `% /x: no such command. Type /help for help.` itself; commands are NEVER sent on to the remote tf |
 | `//text` | local engine, sent to the game as `/text` | |
-| plain text | 1. Lua input handlers/aliases 2. the local TF engine: `SEND` hook (a hook with the gag attribute swallows the text, as in tf), then the world | on a remote-TF session the text goes to the remote as **raw game text** (never parsed as a TF command there) |
+| plain text | 1. Lua input handlers/aliases 2. the local TF engine: the `SEND` hook (as in tf, text a non-quiet `SEND` hook ran for is not sent: the hook handled it, which is how `lib/tf/alias.tf` works), then the world | on a remote-TF session the text goes to the remote as **raw game text** (never parsed as a TF command there) |
 
 Plain text on a remote-TF session needs the keyboard: while TinyFugue holds it
 (`control input = tf`) the send fails with "TinyFugue has the keyboard ..." shown

@@ -74,15 +74,19 @@ func TestRoutingTFPrefixOnDirectSessionIsRefused(t *testing.T) {
 }
 
 // Plain text is raw game text: it never becomes a TF command remotely, and the
-// local SEND hook sees it first.
+// local SEND hook sees it first: as in tf, text a SEND hook ran for is not sent.
 func TestRoutingPlainTextGoesRawAfterSendHook(t *testing.T) {
 	srv := fakemush.New(t)
 	e, r := newEngine(t)
 	si := dial(t, e, r, srv, nil, "")
+	_ = e.Input(si.ID, "say plain")
+	srv.ExpectLine("say plain")
 	_ = e.Input(si.ID, "/def -hSEND sendhook = /echo hook-saw %*")
 	_ = e.Input(si.ID, "say hi")
-	r.waitLine(t, si.ID, "hook-saw say hi")
-	srv.ExpectLine("say hi")
+	r.waitLine(t, si.ID, "hook-saw say hi") // the hook handled it ...
+	_ = e.Input(si.ID, "/undef sendhook")
+	_ = e.Input(si.ID, "after")
+	srv.ExpectLine("after") // ... so "say hi" never reached the game: the next line is "after"
 	_ = e.Input(si.ID, "//literal")
 	srv.ExpectLine("/literal") // "//" sends a line that starts with a slash
 	_ = strings.TrimSpace

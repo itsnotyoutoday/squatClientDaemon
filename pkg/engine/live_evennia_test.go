@@ -27,7 +27,7 @@ func TestLiveEvennia(t *testing.T) {
 		"/def -hCONNECT conn = /echo CONNECT-HOOK-RAN %*",
 		"/def -t'*Market Square*' -ahCred limbo = /echo TRIGGER-FIRED",
 		"/def -t'*MudInfo*' -ag nocmd",
-		"/def -mregexp -t'(room)' -P1BCblue partial",
+		"/def -mregexp -t'(room)' -P1Cblue partial",
 		"/def hello = /echo ALIAS-VIA-MACRO %*",
 	} {
 		_ = e.Input(si.ID, c)
@@ -48,7 +48,7 @@ func TestLiveEvennia(t *testing.T) {
 			red = true
 		}
 		for _, sp := range l.Spans {
-			if strings.Contains(sp.S, "room") && sp.Bg != nil {
+			if strings.Contains(sp.S, "room") && sp.Fg != nil {
 				blue = true
 			}
 		}

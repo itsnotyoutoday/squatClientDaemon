@@ -324,7 +324,7 @@ func (a *Engine) Macros() []MacroInfo {
 		for _, m := range in.Macros() {
 			out = append(out, MacroInfo{Num: m.ID, Name: m.Name, Body: m.Body, Trigger: m.Trigger, Hook: m.Hook,
 				Bind: m.Bind, Matching: m.Matching, Priority: m.Priority, Shots: m.Shots, Attrs: m.Attrs,
-				World: m.World, Gag: m.Gag || attrsGag(m.Attrs)})
+				World: m.World, Gag: m.Gag})
 		}
 	})
 	return out

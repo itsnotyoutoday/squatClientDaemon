@@ -168,10 +168,10 @@ func line(s string) proto.Line {
 
 func TestEchoAttrsReachHost(t *testing.T) {
 	e, h := newTest(t)
-	_ = e.Exec("w", "/echo -aC#112233,BC200 hi")
-	_ = e.Exec("w", "/echo -p x@{Cbrightcyan}y")
+	_ = e.Exec("w", "/echo -aCred hi")
+	_ = e.Exec("w", "/echo -p x@{Cgreen}y")
 	_ = e.Exec("w", "/echo plain")
-	if got := h.dump(); got != "echo w: <fg=#112233>hi</>\necho w: x<fg=14>y</>\necho w: plain" {
+	if got := h.dump(); got != "echo w: <fg=1>hi</>\necho w: x<fg=2>y</>\necho w: plain" {
 		t.Errorf("%q", got)
 	}
 }
@@ -184,18 +184,26 @@ func TestEchoToOtherWorld(t *testing.T) {
 	}
 }
 
-func TestPlainTextSendsToCurrentWorldThroughSendHook(t *testing.T) {
+func TestPlainTextSendsToCurrentWorldAndASendHookHandlesIt(t *testing.T) {
 	e, h := newTest(t)
-	_ = e.Exec("w", "/def -hSEND sh = /echo hooked %*")
 	_ = e.Exec("w", "say hi")
 	if got := h.sentTexts(); len(got) != 1 || got[0] != "w:say hi" {
 		t.Fatalf("sent %v", got)
 	}
-	if !strings.Contains(h.dump(), "hooked say hi") {
+	// as in tf, text a SEND hook ran for is not sent (the hook handled it); -q hooks do not count
+	_ = e.Exec("w", "/def -hSEND sh = /echo hooked %*")
+	_ = e.Exec("w", "second")
+	if got := h.sentTexts(); len(got) != 1 {
+		t.Fatalf("a SEND hook did not hold back the text: %v", got)
+	}
+	if !strings.Contains(h.dump(), "hooked second") {
 		t.Fatalf("SEND hook did not run: %q", h.dump())
 	}
+	_ = e.Exec("w", "/undef sh")
+	_ = e.Exec("w", "/def -q -hSEND qh = /echo quiet %*")
+	_ = e.Exec("w", "third")
 	_ = e.Exec("w", "//lit")
-	if got := h.sentTexts(); got[1] != "w:/lit" {
+	if got := h.sentTexts(); len(got) != 3 || got[1] != "w:third" || got[2] != "w:/lit" {
 		t.Fatalf("%v", got)
 	}
 }
@@ -220,13 +228,13 @@ func TestUnknownCommandMessage(t *testing.T) {
 func TestTriggerGagHiliteAndPartial(t *testing.T) {
 	e, _ := newTest(t)
 	_ = e.Exec("w", "/def -t'danger*' -g -ahCred dg = /echo run")
-	_ = e.Exec("w", "/def -mregexp -t'(gold) coins' -P1BCblue part")
+	_ = e.Exec("w", "/def -mregexp -t'(gold) coins' -P1Cblue part")
 	r := e.OnLine("w", line("danger ahead"), false)
-	if !r.Gag || len(r.Spans) == 0 || r.Spans[0].Fg == nil || !r.Spans[0].B || r.Live {
+	if !r.Gag || len(r.Spans) == 0 || r.Spans[0].Fg == nil || r.Live {
 		t.Fatalf("display-only result: %+v", r)
 	}
 	r = e.OnLine("w", line("5 gold coins"), false)
-	if r.Gag || len(r.Spans) != 3 || r.Spans[1].S != "gold" || r.Spans[1].Bg == nil {
+	if r.Gag || len(r.Spans) != 3 || r.Spans[1].S != "gold" || r.Spans[1].Fg == nil {
 		t.Fatalf("partial hilite: %+v", r.Spans)
 	}
 	// -ag gags too

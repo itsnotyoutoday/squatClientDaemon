@@ -109,6 +109,22 @@ binding `StopScript()`; the time budget does the same automatically.
 
 Until they are released, `go.mod` carries a local-development `replace`.
 
+## Engine v0.0.5 (triggers, hooks, attributes rewritten after tf's macro.c)
+
+Adapted in `line.go`, `corehost.go`, `extension.go`; the engine's behaviour now reaches SquatClient:
+
+* **Equal-priority triggers**: of the non-fall-through macros of the same priority ONE is chosen at random
+  (tf); only `-F` macros all run. The old client ran them in definition order.
+* **SEND hook**: text a non-quiet `SEND` hook ran for is not sent (tf). The old client sent it anyway.
+* **Attributes are tf's**: `BCred` is bold + red foreground (background is `Cbgred`), `-P` partial hilites,
+  `%hiliteattr`, `%gag`/`%hilite` flags and `%max_trig` rate limits come from the engine. `/echo -a/-p`,
+  `echo()` and hook messages use the same grammar (the old client's `BC<colour>` meant background).
+* **Names are case-insensitive**; negative `-p/-c/-n` mean "not given".
+* **Hook messages**: tf's default messages for hooks the client fires are rendered through
+  `HookDisplayHost` (`HookMessage` in corehost.go): connection events are dropped (the client prints its own
+  lines), an unknown command keeps the client's wording, everything else is shown in the world's window.
+* `/def -g` is rewritten to the gag attribute (`-ag`, or `,g` added to an `-a` option).
+
 ## Intentional behavior changes from the old `pkg/tf`
 
 Routing: none (docs/TF-ROUTING.md). Language and library:
