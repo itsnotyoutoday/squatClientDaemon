@@ -2,7 +2,7 @@
 // sends a few commands, and prints what arrives: text lines, GMCP and MSDP. With -out it also writes the
 // events as JSON lines (a fixture for tests and for a UI's replay mode).
 //
-//	gmcpdump -addr 127.0.0.1:4392 -login 'connect god layouttest' -send 'look;hurt 20;say hi' -for 20s -out fixture.jsonl
+//	gmcpdump -addr 127.0.0.1:4392 -login 'connect USER PASSWORD' -send 'look;hurt 20;say hi' -for 20s -out fixture.jsonl
 package main
 
 import (
