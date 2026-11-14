@@ -23,6 +23,11 @@ tf's printed output and return values; only a command typed alone at the
 input line (/listworlds, /world, /addworld) opens a window instead, and
 /listworlds with any argument (for example "/listworlds *" or "-s") prints.
 
+Not wired: paging. A scrolling window does not pause output, so %more, the
+PAUSE/PAGE/FLUSH dokeys and morepaused(), moresize(), morescroll() keep the
+engine's own counters and nothing in the window reacts to them; the status
+fields @more, @read and @mail are empty.
+
 How the pieces connect: the client's world store is the source of truth for
 the world book (changes in the Worlds dialog reach /listworlds, world_info()
 and /connect; /addworld, /unworld and /renameworld from a script are written

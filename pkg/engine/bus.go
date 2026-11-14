@@ -30,6 +30,7 @@ const (
 	EvTFWorlds                            // Text: squatter id; its TinyFugue world records changed
 	EvMsdp                                // Session, Msdp (tf-squatterd)
 	EvData                                // Session, Data: latest GMCP/MSDP values after an attach (tf-squatterd)
+	EvTFKeys                              // Text: the key sequences scripts have bound, one per line (changes only)
 )
 
 // Notice levels.
