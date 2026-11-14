@@ -20,16 +20,28 @@ make build                      # static binary ./squatterd (CGO_ENABLED=0)
 
 In SquatClient add a squatter with the `host:port` and the pairing code, and confirm the TLS fingerprint matches what `squatterd pair` printed (it is pinned on first use). The client generates an ed25519 key; the daemon remembers its public key, so the code is needed only once per device.
 
-Other commands:
+Other commands (`squatterd` with no arguments prints them all):
 
 ```
 squatterd devices               list paired devices
 squatterd revoke <deviceId>     remove a device (takes effect at its next connect)
 squatterd status                data dir, fingerprint, paired devices, sessions on disk
+squatterd reload                restart onto a new binary without losing the game connections (docs/RELOAD.md)
+squatterd user ...              named users and their ssh keys (docs in SquatClient's SQUATTER-HUB.md)
 squatterd version
 ```
 
 `serve` flags: `--port 10327 --bind 0.0.0.0 --data-dir ~/.squatterd --cert F --key F --insecure-loopback --max-sessions 64 --max-clients 32 --log-level info`.
+
+## tf-squatterd: the TinyFugue bridge
+
+`make build` also produces **`tf-squatterd`**, the helper that lets a running [TinyFugue](https://github.com/itsnotyoutoday/tinyfugue)
+(branch `squatterbridge`) be paired with SquatClient: TinyFugue keeps the game connections and runs its own triggers,
+and the app attaches to them. You do not start it yourself: put it on your `PATH` (or `/set squat_bin=...` in
+TinyFugue) and run `/squat on` and `/squat pair` inside TinyFugue. It listens on `127.0.0.1:10328` (`/tfsp`) with the
+same TLS pinning and ed25519 device keys as `squatterd`. Build and pairing steps are in the
+[SquatClient README](https://github.com/itsnotyoutoday/squatclient#tinyfugue-and-the-tf-bridge); the protocol is in
+`docs/TF-SQUATTER.md`.
 
 ## Security model
 
