@@ -460,7 +460,16 @@ func loginLine(w World, password string) string {
 	if w.Login == nil || w.Login.Template == "" {
 		return ""
 	}
-	return strings.NewReplacer("{name}", w.Login.CharName, "{password}", password, "{world}", w.Name).Replace(w.Login.Template)
+	t := w.Login.Template
+	// A login that needs a character name or a password nobody has set must not be sent at all: the
+	// game would get "connect  " and answer with an error. The user then logs in by hand.
+	if strings.Contains(t, "{name}") && strings.TrimSpace(w.Login.CharName) == "" {
+		return ""
+	}
+	if strings.Contains(t, "{password}") && password == "" {
+		return ""
+	}
+	return strings.NewReplacer("{name}", w.Login.CharName, "{password}", password, "{world}", w.Name).Replace(t)
 }
 
 // Disconnect closes the session's connection (it ends with client_quit and

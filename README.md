@@ -8,15 +8,31 @@
 
 This repository also holds the shared Go engine packages (`pkg/...`) used by the SquatClient app. See `docs/STRUCTURE.md`, `docs/PROTOCOL.md` (SWP v1) and `docs/DAEMON.md`.
 
-## Quickstart
+## What is in the box
 
-```sh
-make build                      # static binary ./squatterd (CGO_ENABLED=0)
-./squatterd --port 10327        # serve (default port 10327, TLS, data in ~/.squatterd)
+| Program | What it is | Who needs it |
+|---|---|---|
+| `squatterd` | A small always-on program that holds your game connections while SquatClient is closed (like `screen`). | Anyone who wants persistent sessions. |
+| `tf-squatterd` | A helper that TinyFugue starts itself (`/squat on`) so SquatClient can attach to a running TinyFugue. | Only TinyFugue users. |
 
-# on the same host, in another shell:
-./squatterd pair                # prints a one-time code, its expiry, the TLS fingerprint and a host:port hint
-```
+Both are single static files: **no Go, no root, no installer**.
+
+## Quickstart (no build needed)
+
+1. Download the archive for your system from the [Releases page](https://github.com/itsnotyoutoday/squatClientDaemon/releases) (Linux `amd64` for most servers, `arm64` for Raspberry Pi 4/5 and ARM servers) and unpack it:
+   ```sh
+   tar xzf squatclientdaemon-*-linux-amd64.tar.gz && cd squatclientdaemon-*-linux-amd64
+   ```
+2. Start it and leave it running (inside `screen` or `tmux` is fine, see the systemd section for a service):
+   ```sh
+   ./squatterd                     # port 10327, TLS, data in ~/.squatterd
+   ```
+3. In a second window on the same machine, make a one-time pairing code:
+   ```sh
+   ./squatterd pair                # prints the code, its expiry, the TLS fingerprint and a host:port hint
+   ```
+
+Prefer to build it yourself? `make build` (needs Go) produces the same static binaries.
 
 In SquatClient add a squatter with the `host:port` and the pairing code, and confirm the TLS fingerprint matches what `squatterd pair` printed (it is pinned on first use). The client generates an ed25519 key; the daemon remembers its public key, so the code is needed only once per device.
 

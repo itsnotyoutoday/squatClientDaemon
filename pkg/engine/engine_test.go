@@ -491,3 +491,24 @@ func TestNoLeaksAfterClose(t *testing.T) {
 	e.Close() // idempotent
 	leakCheck(t)
 }
+
+func TestNoLoginLineIsSentWhenTheCharacterOrPasswordIsMissing(t *testing.T) {
+	type tc struct {
+		name, tmpl, char, pw, want string
+	}
+	for _, c := range []tc{
+		{"all set", "connect {name} {password}", "kirk", "pw", "connect kirk pw"},
+		{"no character set", "connect {name} {password}", "", "pw", ""},
+		{"blank character", "connect {name} {password}", "   ", "pw", ""},
+		{"no password saved", "connect {name} {password}", "kirk", "", ""},
+		{"nothing set (a new world)", "connect {name} {password}", "", "", ""},
+		{"a login without a password needs only the name", "connect {name}", "guest", "", "connect guest"},
+		{"a template with neither", "hello", "", "", "hello"},
+		{"no template", "", "kirk", "pw", ""},
+	} {
+		got := engine.LoginLineForTest(engine.World{Name: "W", Login: &engine.Login{Template: c.tmpl, CharName: c.char}}, c.pw)
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
