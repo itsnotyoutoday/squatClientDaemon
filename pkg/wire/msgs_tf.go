@@ -77,14 +77,20 @@ const (
 	TExec           = "tf.exec"
 	TExecResult     = "tf.exec.result"
 	TControlPending = "control.pending"
+
+	TScriptPut    = "tf.script.put"
+	TScriptResult = "tf.script.result"
+	TScriptList   = "tf.script.list"
+	TScriptDelete = "tf.script.delete"
 )
 
 // Features advertised by tf-squatterd when TinyFugue supports them.
 const (
 	FeatureWorldEdit = "worldedit"
 	FeatureGmcp      = "gmcp"
-	FeatureExec      = "tfexec" // remote commands are switched on in TinyFugue (squat_exec)
-	FeatureAsk       = "ask"    // TinyFugue asks its user before a takeover (squat_takeover=ask)
+	FeatureExec      = "tfexec"  // remote commands are switched on in TinyFugue (squat_exec)
+	FeatureAsk       = "ask"     // TinyFugue asks its user before a takeover (squat_takeover=ask)
+	FeatureScripts   = "scripts" // script upload is switched on in TinyFugue (squat_scripts=safe|on)
 )
 
 // WorldPutReq is world.put: create the world if Name is new, otherwise replace
@@ -194,4 +200,52 @@ type MsdpSendReq struct {
 	ID      string         `json:"id,omitempty"`
 	Session string         `json:"session"`
 	Vars    map[string]any `json:"vars"`
+}
+
+// MaxScriptBytes bounds one uploaded script.
+const MaxScriptBytes = 256 * 1024
+
+// ScriptPutReq is tf.script.put: store a script file in TinyFugue's scripts
+// directory and, with Load, run it. Admin only, and only when TinyFugue has
+// squat_scripts=safe (sandboxed: no shell, files, new connections or Lua, also
+// when its macros run later) or on (TinyFugue's own rights). Name is letters,
+// digits, ".", "_", "-" and ends in ".tf"; putting the same name again replaces it.
+type ScriptPutReq struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Load    bool   `json:"load,omitempty"`
+}
+
+// ScriptResultMsg is the reply to tf.script.put: Stored says the file is saved,
+// Loaded that TinyFugue loaded it without an error; Out is what TinyFugue printed.
+type ScriptResultMsg struct {
+	V      int      `json:"v"`
+	T      string   `json:"t"`
+	ReqID  string   `json:"reqId,omitempty"`
+	Stored bool     `json:"stored"`
+	Loaded bool     `json:"loaded"`
+	Out    []string `json:"out"`
+}
+
+// ScriptInfo describes one stored script.
+type ScriptInfo struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	Mtime int64  `json:"mtime"` // unix milliseconds
+}
+
+// ScriptListMsg is the reply to tf.script.list.
+type ScriptListMsg struct {
+	V       int          `json:"v"`
+	T       string       `json:"t"`
+	ReqID   string       `json:"reqId,omitempty"`
+	Scripts []ScriptInfo `json:"scripts"`
+}
+
+// ScriptDeleteReq is tf.script.delete: remove the stored file. Macros it already
+// defined stay in TinyFugue until they are undefined or TinyFugue restarts.
+type ScriptDeleteReq struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
 }

@@ -60,6 +60,7 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 				s.publishInfoLocked()
 				s.mu.Unlock()
 				q.attachDone()
+				q.maybeClaimAutomation(s)
 			}
 		case wire.Line:
 			if s := q.lookup(v.Session); s != nil {
@@ -70,6 +71,25 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 				g := v.GmcpMsg
 				q.ingest(s, wire.Entry{Gmcp: &g}, true)
 			}
+		case wire.Msdp:
+			if s := q.lookup(v.Session); s != nil {
+				m := v.MsdpMsg
+				q.ingest(s, wire.Entry{Msdp: &m}, true)
+			}
+		case wire.State:
+			if s := q.lookup(v.Session); s != nil {
+				q.e.bus.publish(Event{Kind: EvData, Session: s.id, Data: &SessionData{Session: s.id, AsOf: v.AsOf, Gmcp: v.Gmcp, Msdp: v.Msdp}})
+			}
+		case wire.ControlState:
+			if s := q.lookup(v.Session); s != nil {
+				s.applyControl(v.ControlStateMsg)
+			}
+		case wire.ControlPending:
+			if s := q.lookup(v.Session); s != nil {
+				q.e.bus.publish(Event{Kind: EvControlPending, Session: s.id, Pending: &ControlPending{Session: s.id, Axis: v.Axis, Mode: v.Mode, DeviceName: v.DeviceName}})
+			}
+		case wire.WorldChanged:
+			q.e.bus.publish(Event{Kind: EvTFWorlds, Text: q.id})
 		case wire.Error:
 			q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: fmt.Sprintf("squatter %s: %s: %s", q.name(), v.Code, v.Message)})
 			q.attachDoneIfPending()
@@ -104,6 +124,8 @@ func (q *squatter) ingest(s *session, en wire.Entry, live bool) {
 		s.ingestLine(*en.Line, live)
 	case en.Gmcp != nil && live:
 		s.onGmcp(en.Gmcp.Package, en.Gmcp.Data)
+	case en.Msdp != nil && live:
+		s.onMsdp(en.Msdp.Vars)
 	}
 }
 
@@ -147,6 +169,10 @@ func (e *Engine) newRemoteSession(q *squatter, in proto.SessionInfo, link string
 		return nil, err
 	}
 	s.info.State, s.info.StartedAt, s.info.RemoteEcho, s.info.Attached = in.State, in.StartedAt, in.RemoteEcho, in.Attached
+	if in.TF != nil {
+		tf := *in.TF
+		s.info.TF = &tf
+	}
 	if in.State == proto.StateEnded {
 		s.info.EndedAt, s.info.EndReason, s.info.EndDetail, s.info.LastText = in.EndedAt, in.EndReason, in.EndDetail, in.LastText
 	}
@@ -194,8 +220,13 @@ func (e *Engine) dialVia(w World, password string) (SessionInfo, error) {
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 20*time.Second)
 	defer cancel()
-	in, err := c.Connect(ctx, proto.World{Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
-		TLSVerify: orDefault(w.TLSVerify, "strict"), Encoding: orDefault(w.Encoding, "utf-8")})
+	tfq := q.isTF()
+	pw := proto.World{Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
+		TLSVerify: orDefault(w.TLSVerify, "strict"), Encoding: orDefault(w.Encoding, "utf-8")}
+	if tfq && w.Ref != "" {
+		pw = proto.World{Ref: w.Ref} // a world record TinyFugue already has
+	}
+	in, err := c.Connect(ctx, pw)
 	if err != nil {
 		return SessionInfo{}, fmt.Errorf("squatter %s: %w", q.name(), err)
 	}
@@ -203,7 +234,15 @@ func (e *Engine) dialVia(w World, password string) (SessionInfo, error) {
 	if s == nil {
 		return SessionInfo{}, ErrClosed
 	}
-	s.armLogin(w, loginLine(w, password))
+	if !tfq || w.Ref == "" { // a TinyFugue world record logs in by itself; a plain host:port gets the client's login line
+		if tfq {
+			// a connection this client opened must be typeable by it, or even the login would be refused
+			if err := e.SetControl(s.id, "input", "both"); err != nil {
+				s.systemLine("% could not take the keyboard for the login: " + err.Error())
+			}
+		}
+		s.armLogin(w, loginLine(w, password))
+	}
 	q.attach(c, s)
 	return s.snapshot(), nil
 }

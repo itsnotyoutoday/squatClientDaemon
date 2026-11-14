@@ -86,7 +86,8 @@ the reply echoes as `reqId`. Errors are `{"t":"error","reqId","code","message"}`
 | `world.delete {name}` | `world.changed` | operator | `busy` while connected |
 | `gmcp.send {session, package, data?}` | `ok` | operator + controller | `unsupported` if the game did not negotiate GMCP |
 | `msdp.send {session, vars}` | `ok` | operator + controller | `vars` is an object: `{"LIST":"COMMANDS"}`, `{"REPORT":["HEALTH","MANA"]}`, `{"SEND":"ROOM"}`; arrays and objects become MSDP arrays and tables; `bad_request` for reserved bytes (1-6, NUL, 255) or empty `vars`; `unsupported` if the game did not negotiate MSDP |
-| `tf.exec {line}` | `tf.exec.result {ok, out[]}` | admin | line must start with `/`; `forbidden` unless TF has `squat_exec` on |
+| `tf.script.put {name, content, load}` / `tf.script.list` / `tf.script.delete {name}` | `tf.script.result {stored, loaded, out[]}` / `tf.script.list {scripts[]}` / `ok` | admin | name `[A-Za-z0-9][A-Za-z0-9._-]{0,59}.tf`, UTF-8 text up to 256 KiB; `forbidden` unless TinyFugue has `squat_scripts` safe/on (nothing is written then); feature `scripts` |
+| `tf.exec {line}` | `tf.exec.result {ok, out[]}` | admin | line must start with `/`; `forbidden` unless TF has `squat_exec` allow/on, and in `allow` mode unless the command is in `squat_exec_allow` (no `%;`, no control characters) |
 
 | Pushed by the bridge | Meaning |
 |---|---|
@@ -365,7 +366,9 @@ setting (default revert); the TF user can reset everything with `/control tf`.
 | `squat_takeover` (enum `auto\|ask\|off`, default `ask`) | whether `control.set remote\|both` from a device is accepted, prompts the TF user, or refused |
 | `squat_port` (10328), `squat_bind` (127.0.0.1), `squat_dir`, `squat_bin` | bridge config. **Default bind is loopback**; exposing to a LAN is explicit |
 | `squat_disp` (off) | also send post-trigger `disp` text |
-| `squat_exec` (off) | master switch allowing admin devices to use `tf.exec` |
+| `squat_scripts` (off) | `off` / `safe` (uploaded scripts and the macros they define run sandboxed, as under `/restrict world` plus no Lua and no changes to `squat_*`) / `on` (TinyFugue's own rights); admin devices only; enforced in TinyFugue |
+| `squat_exec` (off) | `off` / `allow` (only commands in `squat_exec_allow`, default read-only) / `on` (any command, equals shell access); admin devices only; enforced in TinyFugue |
+| `squat_exec_allow` | command names permitted in `allow` mode |
 | hook `SQUAT` | fired with `pair <dev>`, `unpair <dev>`, `control <world> <mode> <dev>` |
 
 All of `/squat` forks a process, so it is refused under TF's restricted modes

@@ -115,13 +115,7 @@ func Serve(ctx context.Context, o ServeOptions) error {
 		return err
 	}
 
-	mc := o.MaxClients
-	if mc <= 0 {
-		mc = 32
-	}
-	srv := wire.NewServer(wire.ServerConfig{Backend: b, Auth: as, ServerName: "tf-squatterd/" + o.Version, Logger: log,
-		MaxClients: mc, Kind: proto.KindTFSquatterd, Path: "/tfsp", Instance: instance,
-		ExtraFeatures: featuresFor(b.Features())})
+	srv := wire.NewServer(b.ServerConfig(as, "tf-squatterd/"+o.Version, instance, o.MaxClients, log))
 	hs.Handler = srv.Handler()
 	log.Info("tf-squatterd listening", "url", hint, "instance", instance, "data-dir", o.DataDir)
 	if fp != "" {
@@ -171,4 +165,14 @@ func featuresFor(tf []string) []string {
 		}
 	}
 	return f
+}
+
+// ServerConfig is the wire server configuration for this bridge: kind, path,
+// features (as TinyFugue announced them) and instance. Call it after WaitReady.
+func (b *Bridge) ServerConfig(as *auth.Store, serverName, instance string, maxClients int, log *slog.Logger) wire.ServerConfig {
+	if maxClients <= 0 {
+		maxClients = 32
+	}
+	return wire.ServerConfig{Backend: b, Auth: as, ServerName: serverName, Logger: log, MaxClients: maxClients,
+		Kind: proto.KindTFSquatterd, Path: "/tfsp", Instance: instance, ExtraFeatures: featuresFor(b.Features())}
 }

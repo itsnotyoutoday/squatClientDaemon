@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
@@ -25,14 +28,19 @@ func main() {
 		keep        = flag.Bool("keep", false, "keep the work directory")
 		interactive = flag.Bool("interactive", false, "after the checks, leave everything running and open a remote-client console")
 		verbose     = flag.Bool("v", false, "print TinyFugue's screen at the end")
+		serve       = flag.String("serve", "", "start the stack (TLS, like a real install), write how to reach it as JSON to this file, and run until interrupted; no checks")
 	)
 	flag.Parse()
 	if *tfBin == "" || *tfLib == "" {
 		fmt.Fprintln(os.Stderr, "usage: tfharness --tf-bin /path/to/tf --tf-lib /path/to/lib/tf   (or set TF_BIN and TF_LIB)")
 		os.Exit(2)
 	}
+	serveFile = *serve
 	os.Exit(run(*tfBin, *tfLib, *bridgeBin, *cobraGame, *evenniaDir, *evenniaPort, *keep, *interactive, *verbose))
 }
+
+// serveFile is set by --serve: TLS bridge, no checks, details written for an outside client test.
+var serveFile string
 
 func defaultPath(rel string) string {
 	h, err := os.UserHomeDir()
@@ -114,7 +122,9 @@ func run(tfBin, tfLib, bridgeBin, cobraGame, evenniaDir string, evenniaPort int,
 	e.addr = fmt.Sprintf("127.0.0.1:%d/tfsp", e.bridgeP)
 	tf.typ("/set squat_bin=" + bridgeBin)
 	tf.typ(fmt.Sprintf("/set squat_port=%d", e.bridgeP))
-	tf.typ("/set squat_plain=1")
+	if serveFile == "" {
+		tf.typ("/set squat_plain=1")
+	}
 	tf.typ("/set squat_dir=" + filepath.Join(work, "sq"))
 	tf.typ("/set squat_exec=on")
 	if os.Getenv("HARNESS_DEBUG") != "" {
@@ -130,6 +140,9 @@ func run(tfBin, tfLib, bridgeBin, cobraGame, evenniaDir string, evenniaPort int,
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	if serveFile != "" {
+		return serveStack(e, code)
 	}
 	if e.admin, err = dial(e.addr, code, "harness-admin", newKey()); err != nil {
 		fmt.Fprintln(os.Stderr, "pairing the admin client:", err)
@@ -160,7 +173,7 @@ func run(tfBin, tfLib, bridgeBin, cobraGame, evenniaDir string, evenniaPort int,
 		fn   func()
 	}{
 		{"handshake", e.handshake}, {"worlds", e.worlds}, {"cobra", e.cobraScenario}, {"evennia", e.evenniaScenario}, {"msdp", e.msdpScenario}, {"state", e.stateScenario}, {"mtts", e.mttsScenario},
-		{"ask", e.askScenario}, {"exec", e.execScenario}, {"restart", e.restartScenario},
+		{"ask", e.askScenario}, {"exec", e.execScenario}, {"scripts", e.scriptsScenario}, {"restart", e.restartScenario},
 	}
 	for _, s := range steps {
 		if !want(s.name) {
@@ -182,6 +195,42 @@ func run(tfBin, tfLib, bridgeBin, cobraGame, evenniaDir string, evenniaPort int,
 		return 1
 	}
 	return 0
+}
+
+// serveStack publishes how to reach the running stack and waits for SIGINT/SIGTERM.
+// The client test (squatClient internal/app, TF_LIVE) reads the file.
+func serveStack(e *env, adminCode string) int {
+	info := map[string]any{"host": "127.0.0.1", "port": e.bridgeP, "adminCode": adminCode}
+	if e.cobra != nil {
+		info["cobraPort"] = e.cobra.port
+	}
+	b, _ := json.Marshal(info)
+	tmp := serveFile + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	_ = os.Rename(tmp, serveFile) // appears atomically: the reader waits for the file
+	fmt.Printf("serving: %s\n", b)
+	// further pairing codes on request: touch <file>.code-<role> and read <file>.code-<role>.out
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	for {
+		select {
+		case <-sig:
+			return 0
+		case <-time.After(200 * time.Millisecond):
+			for _, role := range []string{"viewer", "operator", "admin"} {
+				req := serveFile + ".code-" + role
+				if _, err := os.Stat(req); err == nil {
+					_ = os.Remove(req)
+					if c, err := e.tf.pairCode(role); err == nil {
+						_ = os.WriteFile(req+".out", []byte(c), 0o600)
+					}
+				}
+			}
+		}
+	}
 }
 
 func summarize(r *report, logf func(string, ...any)) int {
