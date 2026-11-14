@@ -182,7 +182,9 @@ func TestReloadKeepsTheGameConnection(t *testing.T) {
 	}
 	game.SendLine("before the reload")
 	waitLines(t, c1, "before the reload")
-	game.Send([]byte("half a li")) // an unfinished line must survive too
+	peer := game.Peer()
+	fromBefore := peer.RemoteAddr() // the squatterd's side of the TCP connection to the game
+	game.Send([]byte("half a li"))  // an unfinished line must survive too
 
 	var out strings.Builder
 	rc := run(context.Background(), []string{"reload", "--data-dir", dir}, &out, &out, nil)
@@ -225,6 +227,14 @@ func TestReloadKeepsTheGameConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	game.ExpectLine("hello again")
+	// and it really is the very same TCP connection: the game saw exactly one, from the same source
+	// port, and it was never closed
+	if n := game.Connections(); n != 1 {
+		t.Fatalf("the game saw %d connections, want 1", n)
+	}
+	if game.Peer().RemoteAddr() != fromBefore || peer.Gone() {
+		t.Fatalf("the connection changed or closed: before %s, now %s, gone=%v", fromBefore, game.Peer().RemoteAddr(), peer.Gone())
+	}
 }
 
 // An upgrade to a broken binary fails safely: the old process takes everything back and carries on.
@@ -249,6 +259,8 @@ func TestReloadWithABrokenBinaryRollsBack(t *testing.T) {
 	}
 	game.SendLine("one")
 	waitLines(t, c1, "one")
+	peer := game.Peer()
+	fromBefore := peer.RemoteAddr()
 
 	// the "upgrade": the binary on disk is replaced by something that cannot work
 	if err := os.WriteFile(bin+".new", []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
@@ -278,6 +290,10 @@ func TestReloadWithABrokenBinaryRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	game.ExpectLine("still me")
+	// the failed upgrade never touched the connection to the game
+	if n := game.Connections(); n != 1 || game.Peer().RemoteAddr() != fromBefore || peer.Gone() {
+		t.Fatalf("the game saw %d connections; before %s, now %s, gone=%v", n, fromBefore, game.Peer().RemoteAddr(), peer.Gone())
+	}
 }
 
 // stopPID stops the process named in a control "status" reply when the test ends: a reloaded squatterd
