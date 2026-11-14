@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,7 +9,7 @@ import (
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/ansi"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
-	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tf"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tfengine"
 )
 
 // tfHost adapts the engine to tf.Host. TF "world" arguments are the
@@ -37,9 +36,6 @@ func (h *tfHost) SendToWorld(world, text string) error {
 
 func (h *tfHost) Notify(title, body string) { h.e.notify(title, body) }
 func (h *tfHost) Now() time.Time            { return h.e.now() }
-func (h *tfHost) Schedule(d time.Duration, fn func()) func() {
-	return h.e.schedule(d, fn)
-}
 
 func (e *Engine) notify(title, body string) {
 	if e.opts.Notify != nil {
@@ -86,8 +82,8 @@ func (h *tfHost) Foreground(world string) error {
 	return h.e.SetForeground(s.id)
 }
 
-func toTFWorld(w World, connected bool) tf.WorldInfo {
-	wi := tf.WorldInfo{Name: w.Name, Host: w.Host, Port: strconv.Itoa(w.Port), TLS: w.TLS, Connected: connected}
+func toTFWorld(w World, connected bool) tfengine.WorldInfo {
+	wi := tfengine.WorldInfo{Name: w.Name, Host: w.Host, Port: strconv.Itoa(w.Port), TLS: w.TLS, Connected: connected}
 	if w.Login != nil {
 		wi.Character = w.Login.CharName
 		// the password is deliberately never exposed to scripts
@@ -95,25 +91,25 @@ func toTFWorld(w World, connected bool) tf.WorldInfo {
 	return wi
 }
 
-func (h *tfHost) WorldInfo(world string) (tf.WorldInfo, bool) {
+func (h *tfHost) WorldInfo(world string) (tfengine.WorldInfo, bool) {
 	if w, ok := h.e.findWorld(world); ok {
 		return toTFWorld(w, h.IsConnected(w.Name)), true
 	}
 	if s := h.e.resolve(world); s != nil {
 		return toTFWorld(s.world, !s.isEnded()), true
 	}
-	return tf.WorldInfo{}, false
+	return tfengine.WorldInfo{}, false
 }
 
-func (h *tfHost) ListWorlds() []tf.WorldInfo {
-	var out []tf.WorldInfo
+func (h *tfHost) ListWorlds() []tfengine.WorldInfo {
+	var out []tfengine.WorldInfo
 	for _, w := range h.e.Worlds() {
 		out = append(out, toTFWorld(w, h.IsConnected(w.Name)))
 	}
 	return out
 }
 
-func (h *tfHost) AddWorld(wi tf.WorldInfo) error {
+func (h *tfHost) AddWorld(wi tfengine.WorldInfo) error {
 	port, err := strconv.Atoi(wi.Port)
 	if err != nil || port <= 0 || port > 65535 {
 		return fmt.Errorf("bad port %q", wi.Port)
@@ -195,42 +191,6 @@ func (h *tfHost) ForegroundWorld() string {
 		return s.tfName
 	}
 	return ""
-}
-
-// ---- files (the interpreter has applied /restrict already) ----
-
-func (h *tfHost) ReadFile(path string) ([]byte, error) { return os.ReadFile(h.e.resolvePath(path)) }
-
-func (h *tfHost) WriteFile(path string, data []byte, appendMode bool) error {
-	p := h.e.resolvePath(path)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	flag := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
-	if appendMode {
-		flag = os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	}
-	f, err := os.OpenFile(p, flag, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-func (h *tfHost) ListDir(path string) ([]string, error) {
-	ents, err := os.ReadDir(h.e.resolvePath(path))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(ents))
-	for _, e := range ents {
-		out = append(out, e.Name())
-	}
-	return out, nil
 }
 
 // ---- display / UI operations ----

@@ -16,7 +16,7 @@ import (
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/lua"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
-	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tf"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tfengine"
 )
 
 // Errors.
@@ -93,8 +93,8 @@ type Options struct {
 	RingSize      int // in-memory lines per session (default 20000)
 
 	Caps     proto.Caps // zero value = proto.DefaultCaps()
-	Restrict tf.Restrict
-	TF       tf.Options
+	Restrict tfengine.Restrict
+	TF       tfengine.Options
 	Lua      lua.Options
 	// OnLuaVar, if set, is told when a Lua variable (squat.var) is set or deleted (value nil). It is called
 	// while the Lua runtime holds its lock: hand the change on and return.
@@ -133,7 +133,7 @@ type Engine struct {
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
 	log        *slog.Logger
-	tf         *tf.Interp
+	tf         *tfengine.Engine
 	lua        *lua.Runtime
 	bus        *bus
 
@@ -197,7 +197,10 @@ func New(o Options) *Engine {
 	if topts.Version == "" {
 		topts.Version = o.Version
 	}
-	e.tf = tf.New(&tfHost{e}, topts)
+	if topts.LibDirs == nil && o.ConfigDir != "" {
+		topts.LibDirs = []string{o.ConfigDir}
+	}
+	e.tf = tfengine.New(&tfHost{e}, topts)
 	if o.OnLuaVar != nil {
 		o.Lua.OnVar = o.OnLuaVar
 	}
@@ -245,6 +248,7 @@ func (e *Engine) Close() {
 		s.shutdown()
 		s.closeStore()
 	}
+	e.tf.Close()
 	e.lua.Close()
 	e.bus.shutdown()
 }

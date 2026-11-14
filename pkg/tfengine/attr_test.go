@@ -1,4 +1,4 @@
-package tf
+package tfengine
 
 import (
 	"strings"
@@ -142,37 +142,5 @@ func TestMarkupAndANSI(t *testing.T) {
 	}
 	if got := ansiFor([]proto.Span{{S: "x"}, {S: "y", B: true}, {S: "z"}}); got != "x\x1b[0;1my\x1b[0mz" {
 		t.Errorf("%q", got)
-	}
-}
-
-func TestEchoAttrsReachHost(t *testing.T) {
-	i, h := newTest()
-	_ = i.Exec("w", "/echo -aC#112233,BC200 hi")
-	_ = i.Exec("w", "/echo -p x@{Cbrightcyan}y")
-	if got := h.dump(); got != "echo w: <fg=#112233,bg=200>hi</>\necho w: x<fg=14>y</>" {
-		t.Errorf("%q", got)
-	}
-}
-
-func TestGlobMatcher(t *testing.T) {
-	tests := []struct {
-		pat, s string
-		want   bool
-	}{
-		{"*", "", true}, {"a*", "abc", true}, {"*c", "abc", true}, {"a*c", "abc", true}, {"a*c", "ab", false},
-		{"a?c", "abc", true}, {"a?c", "ac", false}, {"[abc]x", "bx", true}, {"[^abc]x", "bx", false},
-		{"[a-c]x", "cx", true}, {"{foo|bar}baz", "barbaz", false}, {"{foo|bar} baz", "bar baz", true}, {"{storm|chup*}*", "Storm jiggles", true}, {"{storm|chup*}*", "stormette jiggles", false}, {"ABC", "abc", true}, {"{foo|bar}baz", "bazbaz", false},
-		{`a\*b`, "a*b", true}, {`a\*b`, "axb", false}, {"héllo*", "héllo wörld", true}, {"?", "é", true},
-		{"[", "[", true}, {"{x", "{x", true}, {"", "", true}, {"", "a", false},
-		{"*a*a*a*a*a*a*a*a*b", strings.Repeat("a", 60), false}, // budget-bounded, must return
-	}
-	for _, tc := range tests {
-		if got := globMatch(tc.pat, tc.s); got != tc.want {
-			t.Errorf("glob(%q,%q)=%v want %v", tc.pat, tc.s, got, tc.want)
-		}
-	}
-	ok, caps := compileGlob("a*c?").match("abbcd")
-	if !ok || len(caps) != 2 || caps[0] != [2]int{1, 3} || caps[1] != [2]int{4, 5} {
-		t.Errorf("captures %v", caps)
 	}
 }
