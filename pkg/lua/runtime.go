@@ -258,6 +258,7 @@ func (r *Runtime) Unload(name string) {
 	}
 	r.units = kept
 	r.removeOwner(name)
+	r.closeUIOwned(name)
 }
 
 // LoadFile reads name through Host.ReadScript and runs it like LoadString.

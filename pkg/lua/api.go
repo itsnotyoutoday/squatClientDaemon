@@ -129,6 +129,7 @@ func (r *Runtime) buildSquat(so *scriptEnv) *glua.LTable {
 	fn("after", func(L *glua.LState) int { return r.apiTimer(L, so, true) })
 
 	sq.RawSetString("var", r.varTable(L))
+	sq.RawSetString("ui", r.uiTable(L, so))
 	sq.RawSetString("regex", r.regexTable(L))
 	return sq
 }
