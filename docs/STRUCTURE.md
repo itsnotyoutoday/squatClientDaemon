@@ -43,7 +43,7 @@ squatClientDaemon/
   internal/                    # daemon-only; NOT importable by the app
     daemon/                    # squatterd server wiring: session registry, client fan-out, persistence
   docs/
-    STRUCTURE.md  PROTOCOL.md  AUTOMATION.md  TF-ENGINE.md  TF-ROUTING.md  COMMAND-STATUS.md  LUA-API.md
+    STRUCTURE.md  PROTOCOL.md  AUTOMATION.md  TF-ENGINE.md  TF-ROUTING.md  COMMAND-STATUS.md  LUA-API.md  (TF-LANGUAGE.md, TF-COMPAT.md: historical)
     adr/                       # architecture decision records
   testdata/
     ansi-vectors.json          # shared with the app
