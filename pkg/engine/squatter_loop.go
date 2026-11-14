@@ -94,6 +94,8 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 		case wire.Error:
 			q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: fmt.Sprintf("squatter %s: %s: %s", q.name(), v.Code, v.Message)})
 			q.attachDoneIfPending()
+		case wire.Ext:
+			q.e.dispatchExt(q.id, c, v)
 		case wire.Closed:
 			q.onLost(c, v.Err)
 		}
@@ -165,6 +167,7 @@ func (e *Engine) newRemoteSession(q *squatter, in proto.SessionInfo, link string
 	tfName := e.uniqueName(in.Name)
 	e.mu.Unlock()
 	w := World{Name: in.Name, Host: in.Host, Port: in.Port, TLS: in.TLS, Via: q.id}
+	e.tf.SessionOpened(tfName, in.Host, in.Port, in.TLS)
 	s, err := newSession(e, id, tfName, w, conn.Config{}, "")
 	if err != nil {
 		return nil, err
@@ -325,6 +328,7 @@ func (q *squatter) followRename(s *session, in proto.SessionInfo) {
 	e.mu.Lock()
 	tfName := e.uniqueName(in.Name)
 	e.mu.Unlock()
+	e.tf.SessionOpened(tfName, in.Host, in.Port, in.TLS)
 	s.mu.Lock()
 	s.tfName = tfName
 	s.info.Name = in.Name

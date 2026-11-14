@@ -43,13 +43,13 @@ squatClientDaemon/
   internal/                    # daemon-only; NOT importable by the app
     daemon/                    # squatterd server wiring: session registry, client fan-out, persistence
   docs/
-    STRUCTURE.md  PROTOCOL.md  AUTOMATION.md  TF-LANGUAGE.md  TF-COMPAT.md  LUA-API.md
+    STRUCTURE.md  PROTOCOL.md  AUTOMATION.md  TF-ENGINE.md  TF-ROUTING.md  COMMAND-STATUS.md  LUA-API.md  (TF-LANGUAGE.md, TF-COMPAT.md: historical)
     adr/                       # architecture decision records
   testdata/
     ansi-vectors.json          # shared with the app
     tf/                        # TF language golden tests: name.tf + name.expected
     lua/
-  scripts/                     # dev scripts (oracle build, fuzz runner, release)
+  scripts/                     # dev scripts (command-status generator, harnesses, release)
   .github/workflows/
   Makefile  go.mod  README.md  LICENSE  .gitignore
 ```

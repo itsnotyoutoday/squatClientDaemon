@@ -52,6 +52,9 @@ type Hello struct {
 	Sig        string      `json:"sig"`
 	PairCode   string      `json:"pairCode,omitempty"`
 	Caps       *proto.Caps `json:"caps,omitempty"`
+	// Offer lists the protocol extensions this client supports (see ext.go). Empty today: servers
+	// that predate negotiation never see the field.
+	Offer []string `json:"offer,omitempty"`
 	// Named-user login (docs/SQUATTER-HUB.md): User plus EITHER an ssh key (SSHKey: the public key in ssh
 	// wire encoding, base64; SSHSig: the ssh signature, base64, over auth.SSHChallengeMessage) OR a device
 	// key (PublicKey and Sig as for a paired device, but Sig is over auth.UserChallengeMessage).
@@ -94,6 +97,8 @@ type Welcome struct {
 	// UpdateAvailable is the newest released version when it is newer than the running daemon
 	// (set only by squatterd with auto_update on; absent otherwise). Informational.
 	UpdateAvailable string `json:"updateAvailable,omitempty"`
+	// Negotiated is the subset of Hello.Offer the server accepted (see ext.go).
+	Negotiated []string `json:"negotiated,omitempty"`
 }
 
 // FeatureNoEcho: the daemon honours SendReq.NoEcho (the line is delivered to the

@@ -90,6 +90,8 @@ type SquatterInfo struct {
 	Instance   string   `json:"instance,omitempty"`
 	Features   []string `json:"features,omitempty"`
 	Automation string   `json:"automation,omitempty"`
+	// Negotiated lists the protocol extensions this squatter accepted on the current connection.
+	Negotiated []string `json:"negotiated,omitempty"`
 }
 
 // AwayItem is one entry of the "While you were away" summary.
@@ -108,23 +110,24 @@ type squatter struct {
 	e  *Engine
 	id string
 
-	mu        sync.Mutex
-	cfg       SquatterConfig
-	state     string
-	problem   string
-	message   string
-	seenFP    string
-	deviceID  string
-	server    string
-	role      string
-	instance  string
-	features  []string
-	cl        *wire.Client
-	loopDone  chan struct{}
-	sessions  map[string]*session // by daemon session id
-	pending   int                 // attaches awaiting their final backlog frame
-	awayTimer func()              // cancels the away fallback timer
-	closed    bool
+	mu         sync.Mutex
+	cfg        SquatterConfig
+	state      string
+	problem    string
+	message    string
+	seenFP     string
+	deviceID   string
+	server     string
+	role       string
+	instance   string
+	features   []string
+	negotiated []string // protocol extensions the squatter accepted (extension.go)
+	cl         *wire.Client
+	loopDone   chan struct{}
+	sessions   map[string]*session // by daemon session id
+	pending    int                 // attaches awaiting their final backlog frame
+	awayTimer  func()              // cancels the away fallback timer
+	closed     bool
 
 	retryCancel func() // pending automatic reconnect attempt (nil = none)
 	attempts    int    // automatic attempts since the connection was lost
@@ -161,7 +164,7 @@ func (sq *squatter) infoLocked() SquatterInfo {
 	return SquatterInfo{ID: sq.id, Name: sq.cfg.Name, Host: sq.cfg.Host, Port: sq.cfg.Port, State: sq.state,
 		Problem: sq.problem, Message: sq.message, Fingerprint: sq.seenFP, DeviceID: sq.deviceID,
 		Server: sq.server, Sessions: len(sq.sessions), Suspended: susp,
-		Kind: normKind(sq.cfg.Kind), Role: sq.role, Instance: sq.instance, Features: sq.features, Automation: sq.cfg.Automation}
+		Kind: normKind(sq.cfg.Kind), Role: sq.role, Instance: sq.instance, Features: sq.features, Negotiated: sq.negotiated, Automation: sq.cfg.Automation}
 }
 
 func (sq *squatter) publish() {
@@ -326,7 +329,7 @@ func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) err
 
 	c, err := wire.Dial(ctx, cfg.url(), wire.ClientOptions{Key: cfg.Key, PairCode: cfg.PairCode, DeviceName: cfg.DeviceName,
 		ClientName: "SquatClient", Caps: e.getCaps(), PinnedFingerprint: cfg.Fingerprint, InsecureLoopback: cfg.InsecureLoopback,
-		ExpectKind: normKind(cfg.Kind)})
+		ExpectKind: normKind(cfg.Kind), Offer: e.offeredExtensions()})
 	if err != nil {
 		state, problem, msg := classifyDialErr(cfg, err)
 		q.mu.Lock()
@@ -348,11 +351,12 @@ func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) err
 	q.cl, q.cfg.PairCode = c, "" // the pairing code is single use: forget it
 	q.state, q.problem, q.message = SqConnected, "", ""
 	q.seenFP, q.deviceID, q.server = c.ServerFingerprint(), c.DeviceID(), c.ServerName()
-	q.role, q.instance, q.features = c.Role(), c.Instance(), c.Features()
+	q.role, q.instance, q.features, q.negotiated = c.Role(), c.Instance(), c.Features(), c.Negotiated()
 	q.loopDone = make(chan struct{})
 	go q.loop(c, q.loopDone)
 	q.mu.Unlock()
 	q.adoptWelcome(c, c.Sessions())
+	q.e.dispatchNegotiated(q.id, c)
 	q.publish()
 	return nil
 }
@@ -672,4 +676,11 @@ func (e *Engine) Away() []AwayItem {
 		out = append(out, awayOf(s.remote.sq.id, []*session{s})...)
 	}
 	return out
+}
+
+// roleValue is this device's role on the squatter ("viewer", "operator", "admin", "" when unknown).
+func (q *squatter) roleValue() string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.role
 }

@@ -1,3 +1,5 @@
+> **Historical.** This describes SquatClient's previous in-house interpreter (`pkg/tf`, removed). TinyFugue scripting now runs on the shared gtfparser engine: see TF-ENGINE.md and COMMAND-STATUS.md. The client's in-app help still imports this file; it is kept until that help is regenerated from the engine's own documentation.
+
 # TinyFugue Script Compatibility: reference
 
 SquatClient's scripting language is modelled on TinyFugue ("tf") and designed

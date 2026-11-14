@@ -337,7 +337,7 @@ func TestRunawayWhileAborts(t *testing.T) {
 	}
 	_ = e.Input(si.ID, "after")
 	srv.ExpectLine("after")
-	r.waitLine(t, si.ID, "budget")
+	r.waitLine(t, si.ID, "exceeded") // engine v0.0.7+: instruction count usually trips before the wall-time budget
 }
 
 func TestColoursAndUTF8ByteExact(t *testing.T) {

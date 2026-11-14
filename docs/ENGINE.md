@@ -49,9 +49,9 @@ NOT also sent as `notice` events. `EvNotice` is used only when no session exists
 
 * `host_tf.go` (tf.Host) and `host_lua.go` (lua.Host). TF world names = session script name (world name, `#2`
   suffix for duplicates) or session id; Lua uses ids. `squat.tf("/lua ...")` re-enters Lua through
-  `ExecInCallback`. Files: relative paths under `ConfigDir`, gated by `/restrict` (done by pkg/tf). `/log` writes under
+  `ExecInCallback`. Files: relative paths under `ConfigDir`, gated by `/restrict` and the Policy (done by pkg/tfengine). `/log` writes under
   `LogsDir`. `/recall` and `/limit` use the scrollback (`/limit` filters live output and `Scrollback`, emitting `EvReset`).
-* Not wired (pkg/tf has no hook yet): TF macros calling `/lua`. From the input line and from Lua `squat.tf` it works.
+* Not wired: TF macros calling `/lua` (gtfparser's `/calllua` is the engine's own Lua, not ours). From the input line and from Lua `squat.tf` it works.
   `/input`, `/dokey` are ignored (no UI path). Status fields (`/status_add`, `/prompt`) are recorded and published as `EvStatus`.
 
 ## Login automation
@@ -123,7 +123,7 @@ Handled in `Engine.Input` before TF (`/suspend`, `/detach`): `Suspend()` detache
 sets `Suspended()`, emits `EvSuspend{Suspended:true}` and always emits `EvWindow{Text:"minimise"}` (the app minimises/hides its window).
 Direct sessions stay live; with only direct sessions nothing is suspended (no `EvSuspend`). `ResumeSquatters(ctx)` re-attaches with `since`
 (reconnecting a squatter whose connection is down: an explicit user action), replays with `live=false` and emits `EvAway`.
-Not wired: a TF macro body calling `/suspend` (pkg/tf registers `/suspend` as an accepted no-op; TODO in pkg/tf: route it through a Host hook), Lua `squat.suspend`.
+Not wired: a TF macro body calling `/suspend` (pkg/tfengine registers `/suspend` and tells scripts to type it alone), Lua `squat.suspend`.
 
 ### Events added
 

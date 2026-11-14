@@ -176,6 +176,15 @@ A missing file or field means the default; unknown fields are ignored; an unread
 defaults. When squatterd runs with `--data-dir DIR` its file is `DIR/config.json`; tf-squatterd always reads
 `~/.squatterd/config.json` (override: `--config-dir`).
 
+## TinyFugue scripting in the client engine
+
+`pkg/engine` (the brain of SquatClient) scripts sessions with TinyFugue's language through the shared
+[gtfparser](https://github.com/itsnotyoutoday/gtfparser) library, via the one adapter package `pkg/tfengine`
+(the in-house interpreter that used to live in `pkg/tf` is gone). `squatterd` itself runs no TF scripts. See
+`docs/TF-ENGINE.md` (architecture, policy and limits, upgrading the engine), `docs/TF-ROUTING.md` (what is run
+locally and what reaches a remote TinyFugue; `/tf`, `/local`, `/stop`) and `docs/COMMAND-STATUS.md` (every
+TinyFugue command and how this client answers it).
+
 ## tf-squatterd: the TinyFugue bridge
 
 `make build` also produces **`tf-squatterd`**, the helper that lets a running [TinyFugue](https://github.com/itsnotyoutoday/tinyfugue)

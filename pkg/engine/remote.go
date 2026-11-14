@@ -84,6 +84,10 @@ func (r *remoteState) send(s *session, text string, secret bool) error {
 		// TinyFugue would refuse it asynchronously; say so now instead of dropping the text silently
 		return errors.New("TinyFugue has the keyboard for this connection: take control first")
 	}
+	if r.sq.roleValue() == "viewer" {
+		// the squatter would refuse it asynchronously ("forbidden"): tell the caller now
+		return fmt.Errorf("this device is paired as a viewer of squatter %s: it can read but not type (pair again as operator)", r.sq.name())
+	}
 	switch link {
 	case LinkDetached:
 		return errors.New("detached from the squatter (suspended): resume first")
@@ -238,6 +242,7 @@ func (s *session) applyRemoteInfo(in proto.SessionInfo) {
 		if prev != proto.StateEnded {
 			after = append(after, func() {
 				s.e.tf.FireHookWorld(s.tfName, "DISCONNECT", s.world.Name)
+				s.e.tf.WorldClosed(s.tfName)
 				s.e.lua.FireEventFor(s.id, "disconnect", map[string]any{"world": s.id, "name": s.tfName, "reason": in.EndReason}, true)
 			})
 		}

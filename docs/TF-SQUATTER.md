@@ -541,7 +541,7 @@ ignore. `ServerConfig` gains `Kind`, `Path`, and `Features`.
 
 * **TF is authoritative on `tf-squatterd` sessions** (it is the persistent
   process; a bot keeps working while the client is away).
-* The client's script engine (`pkg/tf`, `pkg/lua`) **must not run triggers or
+* The client's script engine (`pkg/tfengine`, `pkg/lua`) **must not run triggers or
   macros on tf-squatterd sessions**, to avoid double-firing. Pure display
   behaviour (highlight, gag-for-display) is allowed. Setting
   `automation: tf|client` per squatter record, default `tf`.
@@ -556,7 +556,7 @@ already defines "sites" (client now, daemon later), reserves
 tf-squatterd is a daemon-side site whose engine is TF, not the Go engine.
 Consequences:
 * Scripts are never synced from the client into TF. The two languages differ on
-  purpose (`TF-COMPAT.md` §1: RE2 vs PCRE2, 64-bit vs 32-bit ints, UTF-8 vs byte
+  purpose (the gtfparser engine follows real tf closely now, but the two are still separate implementations: UTF-8 vs byte
   strings, client-only `&&`/`x++`/`/do…/while`, deterministic vs random
   equal-priority triggers). TF scripts run unchanged in the client, not the
   reverse.

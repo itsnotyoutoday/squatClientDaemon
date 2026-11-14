@@ -5,7 +5,7 @@ Status: design frozen for v1; daemon-side execution is a documented future step.
 ## 1. Where scripts run: "sites"
 
 Scripts are executed by `pkg/engine`'s **Pipeline**. The pipeline and the two script
-engines (`pkg/tf`, `pkg/lua`) depend only on a `Host` interface, never on a network
+engines (`pkg/tfengine` on the shared gtfparser engine, `pkg/lua`) depend only on a `Host` interface, never on a network
 connection or a UI, so the same code can run at either of two **sites**:
 
 | Site | When | Effect |
@@ -34,13 +34,13 @@ raw entry (conn or wire) -> Pipeline.OnLine(line, live bool)
 `SendToWorld(world, text)`, `Echo(window, spans)`, `Notify(title, body)`, `Now()` (injectable clock),
 `Schedule(after, fn)` (timers through the host so they can be paused/serialised), `VarStore` (engine-owned
 variables with export/import), `ReadFile/WriteFile` (gated by `/restrict`), `WorldInfo()`, `Log()`.
-`pkg/tf` and `pkg/lua` each define the small interface they need; `pkg/engine` adapts one `Host` to both.
+`pkg/tfengine` and `pkg/lua` each define the small interface they need; `pkg/engine` adapts one `Host` to both.
 
 ## 4. Making offload possible later
 
 1. **Scripts are data**: `.tf` and `.lua` files plus a manifest `{id, world, enabled, hash}`. No compiled state.
 2. **State is exportable**: variable stores serialise to JSON; timers are reconstructed from definitions.
-3. **Deterministic core**: `pkg/tf` and `pkg/lua` do no I/O and read time only from the host.
+3. **Deterministic core**: `pkg/lua` does no I/O and reads time only from the host; the TF engine's file, shell and world access is gated by `/restrict` and a Policy (see TF-ENGINE.md).
 4. **Reserved SWP messages** (not implemented in v1): `automation.sync {world, files[], hashes}`,
    `automation.state {world, vars}`, `automation.fired {world, name, kind, ts}` (so a client can show what ran while away),
    `automation.site {world, site:"client"|"daemon"}`.

@@ -141,7 +141,7 @@ func TestMTTSNAWSAndTTYPE(t *testing.T) {
 		}
 		got = append(got, string(d[1:]))
 	}
-	want := []string{"SquatClient", "XTERM-TRUECOLOR", "MTTS 269"}
+	want := []string{"TINYFUGUE", "XTERM-TRUECOLOR", "MTTS 269"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("ttype %v want %v", got, want)
 	}
