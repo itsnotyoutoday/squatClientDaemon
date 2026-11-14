@@ -57,6 +57,8 @@ func (b *Bridge) HandleExt(p wire.Peer, t, reqID string, raw []byte) (bool, erro
 		return true, b.worldPut(p, reqID, raw)
 	case wire.TWorldDelete:
 		return true, b.worldDelete(p, reqID, raw)
+	case wire.TWorldRename:
+		return true, b.worldRename(p, reqID, raw)
 	case wire.TGmcpSend:
 		return true, b.gmcpSend(p, reqID, raw)
 	case wire.TStateGet:
@@ -295,6 +297,23 @@ func (b *Bridge) worldDelete(p wire.Peer, reqID string, raw []byte) error {
 		return err
 	}
 	b.broadcastWorldChanged(wire.WorldChangedMsg{V: proto.Version, T: wire.TWorldChanged, ReqID: reqID, Name: req.Name, Deleted: true})
+	return nil
+}
+
+func (b *Bridge) worldRename(p wire.Peer, reqID string, raw []byte) error {
+	if err := need(p, rankOperator, "renaming worlds"); err != nil {
+		return err
+	}
+	var req wire.WorldRenameReq
+	if err := json.Unmarshal(raw, &req); err != nil || !validWorldName(req.NewName) ||
+		// the old name may be a temporary world "(unnamedN)": renaming it turns the connection into a named world
+		req.Name == "" || len(req.Name) > 128 || strings.ContainsAny(req.Name, " \t\r\n") {
+		return wire.Errf(proto.ErrBadRequest, "bad world.rename")
+	}
+	if _, err := b.request("WORLD_REN", req.Name, req.NewName, boolField(req.Save)); err != nil {
+		return err
+	}
+	b.broadcastWorldChanged(wire.WorldChangedMsg{V: proto.Version, T: wire.TWorldChanged, ReqID: reqID, Name: req.NewName, OldName: req.Name})
 	return nil
 }
 

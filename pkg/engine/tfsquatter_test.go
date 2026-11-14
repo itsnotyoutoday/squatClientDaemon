@@ -302,9 +302,8 @@ func TestTFWorldsEditAndConnectByRef(t *testing.T) {
 	if strings.Contains(string(raw), "\"pw\"") {
 		t.Fatalf("a password came back: %s", raw)
 	}
-	// connect from the record: no client login template runs (TinyFugue autologs in)
-	si, err := e.Dial(engine.World{ID: "x", Name: "newmud", Via: "tf", Ref: "newmud",
-		Login: &engine.Login{Template: "connect {name} {password}", CharName: "bob"}}, "hunter2")
+	// connect from the record with no Login given here: TinyFugue's own record logs in (autologin)
+	si, err := e.Dial(engine.World{ID: "x", Name: "newmud", Via: "tf", Ref: "newmud"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,5 +512,93 @@ func TestTFScriptsUploadListDelete(t *testing.T) {
 	}
 	if ls, _ := e.TFScripts("tf"); len(ls) != 0 {
 		t.Fatalf("a refused upload left a file: %+v", ls)
+	}
+}
+
+func TestTFWorldRename(t *testing.T) {
+	v := newTFEnv(t)
+	e, _ := v.connect(t)
+	if _, err := e.PutTFWorld("tf", wire.WorldPutReq{World: proto.TFWorld{Name: "old", Host: "h", Port: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PutTFWorld("tf", wire.WorldPutReq{World: proto.TFWorld{Name: "taken", Host: "h", Port: "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RenameTFWorld("tf", "old", "new", false); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := e.TFWorlds("tf")
+	names := map[string]bool{}
+	for _, w := range ws {
+		names[w.Name] = true
+	}
+	if names["old"] || !names["new"] || !names["taken"] || len(ws) != 2 {
+		t.Fatalf("after rename: %+v", ws)
+	}
+	if err := e.RenameTFWorld("tf", "new", "taken", false); err == nil {
+		t.Fatal("renaming onto an existing world was accepted")
+	}
+	if err := e.RenameTFWorld("tf", "ghost", "x", false); err == nil {
+		t.Fatal("renaming a missing world was accepted")
+	}
+	for _, bad := range []string{"has space", "(paren", ""} {
+		if err := e.RenameTFWorld("tf", "new", bad, false); err == nil {
+			t.Fatalf("name %q was accepted", bad)
+		}
+	}
+}
+
+func TestTFRenameIsFollowedByTheSessionAndAnnounced(t *testing.T) {
+	v := newTFEnv(t)
+	e, r := v.connect(t)
+	id := v.session(t, e, r)
+	// renamed from this client
+	if _, err := e.PutTFWorld("tf", wire.WorldPutReq{World: proto.TFWorld{Name: "alpha", Host: "h", Port: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RenameTFWorld("tf", "alpha", "alpha2", true); err != nil {
+		t.Fatal(err)
+	}
+	r.until(t, "the tab follows the new name", func() bool {
+		si, _ := e.Session(id)
+		return si.Name == "alpha2" && si.TF != nil && si.TF.World == "alpha2"
+	})
+	r.until(t, "the rename is announced with both names", func() bool {
+		for _, ev := range r.kinds(engine.EvTFWorlds) {
+			if ev.OldName == "alpha" && ev.NewName == "alpha2" {
+				return true
+			}
+		}
+		return false
+	})
+	// renamed on TinyFugue's side
+	v.fake.RenameSessionWorld("alpha2", "alpha3")
+	r.until(t, "a rename made in TinyFugue reaches the tab too", func() bool {
+		si, _ := e.Session(id)
+		return si.Name == "alpha3"
+	})
+	// and a change at its keyboard (add/delete/redefine) tells us to re-list
+	n := len(r.kinds(engine.EvTFWorlds))
+	v.fake.WorldsChanged()
+	r.until(t, "a world-list change in TinyFugue is announced", func() bool { return len(r.kinds(engine.EvTFWorlds)) > n })
+}
+
+func TestTFRecordConnectWithALoginHereSendsTheClientsLogin(t *testing.T) {
+	v := newTFEnv(t)
+	e, _ := v.connect(t)
+	if _, err := e.PutTFWorld("tf", wire.WorldPutReq{World: proto.TFWorld{Name: "mirrored", Host: "h", Port: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// a world of the app that is mirrored into TinyFugue without credentials: this client logs in
+	if _, err := e.Dial(engine.World{ID: "x", Name: "mirrored", Via: "tf", Ref: "mirrored",
+		Login: &engine.Login{Template: "connect {name} {password}", CharName: "bob"}}, "hunter2"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) && len(v.fake.SendTexts()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := v.fake.SendTexts(); len(got) != 1 || got[0] != "connect bob hunter2" {
+		t.Fatalf("login line sent: %v", got)
 	}
 }

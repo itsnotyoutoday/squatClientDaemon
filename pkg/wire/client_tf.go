@@ -293,3 +293,14 @@ func (c *Client) DeleteScript(ctx context.Context, name string) error {
 	_, err := c.ext(ctx, TScriptDelete, func(string) map[string]any { return map[string]any{"name": name} })
 	return err
 }
+
+// RenameWorld gives a TinyFugue world record a new name.
+func (c *Client) RenameWorld(ctx context.Context, name, newName string, save bool) (WorldChangedMsg, error) {
+	v, err := c.ext(ctx, TWorldRename, func(string) map[string]any {
+		return map[string]any{"name": name, "newName": newName, "save": save}
+	})
+	if err != nil {
+		return WorldChangedMsg{}, err
+	}
+	return v.(WorldChangedMsg), nil
+}

@@ -98,6 +98,8 @@ the reply echoes as `reqId`. Errors are `{"t":"error","reqId","code","message"}`
 | `control.pending {session,axis,mode,deviceName}` | a device asked and TF's user has not answered |
 | `world.changed {name,created?,deleted?}` | a world record was created, edited or deleted through the bridge |
 
+> **Updates after the first design.** `world.rename {name, newName, save}` renames a record in place, also while it is connected; the session keeps its id (a session id is fixed when TinyFugue first announces the connection) and its `SESS` carries the new world name. TinyFugue tells the bridge when its world list changes by any means (`WCHG`), and the bridge broadcasts `world.changed` (with `oldName` for a rename). A reported prompt (a partial line) is held for 400 ms by the bridge: when the finished line follows and starts with the same text, only the finished line is recorded, so a client never shows both. Uploaded scripts: `tf.script.put/list/delete` and `squat_scripts` (section on scripts in README.squat.md).
+
 ## 1. Goals and non-goals
 
 **Goal.** A user runs TinyFugue (TF) in `screen`/`tmux` as today. With one

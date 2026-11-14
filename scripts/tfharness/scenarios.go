@@ -557,6 +557,127 @@ func (e *env) varValue(name string) string {
 	return all[len(all)-1][1] // the last one: the first may be the echo of what was typed
 }
 
+// ---------------------------------------------------------------- 5b. renaming worlds
+
+func (e *env) renameScenario() {
+	g := "rename"
+	a := e.admin.c
+	r := e.admin
+	ctx := func() context.Context { return tctx(10 * time.Second) }
+	names := func() map[string]proto.TFWorld {
+		ws, _ := a.Worlds(ctx())
+		m := map[string]proto.TFWorld{}
+		for _, w := range ws {
+			m[w.Name] = w
+		}
+		return m
+	}
+	_, err := a.PutWorld(ctx(), wire.WorldPutReq{World: proto.TFWorld{Name: "hw-ren", Host: "127.0.0.1", Port: "1", Char: "bob", Type: "tiny"}, Password: "pw"})
+	e.check(g, "set up: a world with a password", err == nil, "%v", err)
+	var other *remote // a second device: the requester gets the reply, others the broadcast
+	if code, cerr := e.tf.pairCode("operator"); cerr == nil {
+		other, _ = dial(e.addr, code, "harness-rename-watcher", newKey())
+	}
+	if other != nil {
+		defer other.close()
+		other.mark()
+	}
+	r.mark()
+	_, err = a.RenameWorld(ctx(), "hw-ren", "hw-renamed", false)
+	m := names()
+	e.check(g, "rename: the old name is gone and the new one is there", err == nil && m["hw-ren"].Name == "" && m["hw-renamed"].Name == "hw-renamed", "err=%v %v", err, m)
+	e.check(g, "rename: host, port, character and password are kept", m["hw-renamed"].Host == "127.0.0.1" && m["hw-renamed"].Port == "1" && m["hw-renamed"].Char == "bob" && m["hw-renamed"].PassSet, "%+v", m["hw-renamed"])
+	ev, ok := other.waitEvent(3*time.Second, func(ev wire.Event) bool {
+		w, is := ev.(wire.WorldChanged)
+		return is && w.OldName == "hw-ren" && w.Name == "hw-renamed"
+	})
+	_ = ev
+	e.check(g, "rename: other devices are told (world.changed with oldName)", ok, "")
+	// a change made at TinyFugue's own keyboard is announced to clients too
+	if other != nil {
+		other.mark()
+		e.tf.typ("/addworld hw-kbd 127.0.0.1 9")
+		_, ok = other.waitEvent(5*time.Second, func(ev wire.Event) bool { _, is := ev.(wire.WorldChanged); return is })
+		m = names()
+		e.check(g, "a world added at TinyFugue's keyboard is announced and listed", ok && m["hw-kbd"].Name == "hw-kbd", "ok=%v %v", ok, m["hw-kbd"])
+		other.mark()
+		e.tf.typ("/unworld hw-kbd")
+		_, ok = other.waitEvent(5*time.Second, func(ev wire.Event) bool { _, is := ev.(wire.WorldChanged); return is })
+		e.check(g, "a world deleted at TinyFugue's keyboard is announced", ok && names()["hw-kbd"].Name == "", "ok=%v", ok)
+	}
+	_, _ = a.PutWorld(ctx(), wire.WorldPutReq{World: proto.TFWorld{Name: "hw-other", Host: "127.0.0.1", Port: "2"}})
+	_, err = a.RenameWorld(ctx(), "hw-renamed", "hw-other", false)
+	e.check(g, "rename onto an existing world is refused", protoCode(err) == proto.ErrBadRequest, "%v", err)
+	_, err = a.RenameWorld(ctx(), "hw-nope", "hw-x", false)
+	e.check(g, "rename of a missing world is refused", err != nil, "%v", err)
+	for _, bad := range []string{"has space", "(paren", "default"} {
+		_, err = a.RenameWorld(ctx(), "hw-renamed", bad, false)
+		e.check(g, fmt.Sprintf("rename to %q is refused", bad), err != nil, "%v", err)
+	}
+	_, _ = a.DeleteWorld(ctx(), "hw-renamed")
+	_, _ = a.DeleteWorld(ctx(), "hw-other")
+
+	// a connection made by address (a temporary world, "(unnamedN)") can be turned into a named, kept world
+	{
+		cobraPort := fmt.Sprint(e.cobra.port)
+		info, cerr := a.Connect(ctx(), proto.World{Name: "adhoc", Host: "127.0.0.1", Port: e.cobra.port})
+		e.check(g, "set up: a connection by address (temporary world)", cerr == nil && info.TF != nil && strings.HasPrefix(info.TF.World, "("), "err=%v %+v", cerr, info.TF)
+		if cerr == nil && info.TF != nil {
+			tmp := info.TF.World
+			_, err = a.RenameWorld(ctx(), tmp, "hw-adopted", true)
+			m := names()
+			e.check(g, "adopt: the temporary world becomes a named one, not temporary", err == nil && m["hw-adopted"].Name == "hw-adopted" && !m["hw-adopted"].Temp && m["hw-adopted"].Port == cobraPort, "err=%v %+v", err, m["hw-adopted"])
+			_, ok := r.waitEvent(5*time.Second, func(ev wire.Event) bool {
+				st, is := ev.(wire.SessionState)
+				return is && st.Info.ID == info.ID && st.Info.TF != nil && st.Info.TF.World == "hw-adopted"
+			})
+			e.check(g, "adopt: the connection keeps running under the new name", ok, "")
+			_ = a.Disconnect(ctx(), info.ID)
+			_ = a.Dismiss(ctx(), info.ID)
+			time.Sleep(300 * time.Millisecond)
+			e.check(g, "adopt: the world is still there after the connection closed", names()["hw-adopted"].Name == "hw-adopted", "")
+			_, _ = a.DeleteWorld(ctx(), "hw-adopted")
+		}
+		// the same from TinyFugue's own keyboard
+		info2, cerr := a.Connect(ctx(), proto.World{Name: "adhoc2", Host: "127.0.0.1", Port: e.cobra.port})
+		if cerr == nil && info2.TF != nil {
+			e.tf.typ("/renameworld " + info2.TF.World + " hw-typed")
+			time.Sleep(400 * time.Millisecond)
+			m := names()
+			e.check(g, "/renameworld at TinyFugue's keyboard turns a temporary world into a named one", m["hw-typed"].Name == "hw-typed" && !m["hw-typed"].Temp, "%+v", m["hw-typed"])
+			e.tf.typ("/renameworld hw-typed hw-typed2") // two arguments: rename any world
+			time.Sleep(300 * time.Millisecond)
+			e.check(g, "/renameworld <old> <new> renames a world", names()["hw-typed2"].Name == "hw-typed2" && names()["hw-typed"].Name == "", "")
+			_ = a.Disconnect(ctx(), info2.ID)
+			_ = a.Dismiss(ctx(), info2.ID)
+			time.Sleep(300 * time.Millisecond)
+			_, _ = a.DeleteWorld(ctx(), "hw-typed2")
+		}
+	}
+
+	// a world that is connected can be renamed; the session keeps working
+	if e.cobraSID == "" {
+		e.skip(g, "rename a connected world", "no live session")
+		return
+	}
+	sid := e.cobraSID
+	r.mark()
+	_, err = a.RenameWorld(ctx(), "cobra", "cobra-renamed", false)
+	e.check(g, "rename while connected is accepted", err == nil, "%v", err)
+	_, ok = r.waitEvent(5*time.Second, func(ev wire.Event) bool {
+		s, is := ev.(wire.SessionState)
+		return is && s.Info.ID == sid && s.Info.TF != nil && s.Info.TF.World == "cobra-renamed"
+	})
+	e.check(g, "the session reports its new world name", ok, "")
+	_, err = a.ControlPreset(ctx(), sid, "takeover")
+	r.mark()
+	err2 := a.Send(ctx(), sid, "think after-rename")
+	_, got := r.waitLine(sid, "after-rename", 8*time.Second)
+	e.check(g, "the connection still works after the rename", err == nil && err2 == nil && got, "%v %v", err, err2)
+	_, err = a.RenameWorld(ctx(), "cobra-renamed", "cobra", false)
+	e.check(g, "and it can be renamed back", err == nil, "%v", err)
+}
+
 // ---------------------------------------------------------------- 6b. uploaded scripts
 
 func (e *env) scriptsScenario() {

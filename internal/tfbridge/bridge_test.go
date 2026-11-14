@@ -370,7 +370,7 @@ func TestSessionLinesAttachAndReplay(t *testing.T) {
 	h.tf.send("LINE", sid, "g", "", "game", "1700000000002", "\x1b[31mred\x1b[0m text")
 	h.tf.send("LINE", sid, "g", "g", "game", "1700000000003", "gagged line")
 	h.tf.send("LINE", sid, "g", "p", "game", "1700000000004", "Password: ")
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(promptHold + 300*time.Millisecond) // a prompt is held briefly (see TestPromptThatBecomesALineIsNotShownTwice)
 
 	c := h.dial("operator")
 	sessions := c.welcome["sessions"].([]any)
@@ -1080,5 +1080,50 @@ func TestNoSnapshotForPlainTextSessions(t *testing.T) {
 	// the next thing is the live line, not an empty snapshot
 	if m := c.until(func(m map[string]any) bool { return m["t"] == "state" || m["t"] == "line" }); m["t"] != "line" {
 		t.Fatalf("got %v, want the live line", m)
+	}
+}
+
+// TinyFugue reports an unterminated line as a prompt and keeps the partial text, so
+// when the line completes it reports the whole line again. A remote must see it once.
+func TestPromptThatBecomesALineIsNotShownTwice(t *testing.T) {
+	h := newHarness(t)
+	announce(h)
+	c := h.dial("operator")
+	c.write(map[string]any{"v": 1, "t": "attach", "id": "a1", "session": sid})
+	c.untilType("backlog")
+
+	// partial line, then the finished line (with TinyFugue's highlight): one line, the finished one
+	h.tf.send("LINE", sid, "g", "p", "game", "1700000000001", `You say, "hello"`)
+	h.tf.send("LINE", sid, "g", "", "game", "1700000000002", `You say, "hello"`, "\x1b[1mYou say, \"hello\"\x1b[0m")
+	l := c.untilType("line")
+	if l["prompt"] == true || l["seq"].(float64) != 1 {
+		t.Fatalf("first line = %v, want the finished line as seq 1", l)
+	}
+	if l["disp"] == nil {
+		t.Errorf("the finished line lost TinyFugue's display text: %v", l)
+	}
+
+	// a prompt that stays a prompt appears (once) after the hold, and keeps its place in the order
+	h.tf.send("LINE", sid, "g", "p", "game", "1700000000003", "Login: ")
+	p := c.untilType("line")
+	if p["prompt"] != true || p["seq"].(float64) != 2 {
+		t.Fatalf("prompt = %v, want seq 2 and prompt", p)
+	}
+
+	// a prompt followed by an UNRELATED line is flushed first (order kept)
+	h.tf.send("LINE", sid, "g", "p", "game", "1700000000004", "Password: ")
+	h.tf.send("LINE", sid, "g", "", "game", "1700000000005", "something else")
+	a := c.untilType("line")
+	b := c.untilType("line")
+	if a["prompt"] != true || a["seq"].(float64) != 3 || b["seq"].(float64) != 4 {
+		t.Fatalf("order: %v then %v", a, b)
+	}
+
+	// a growing prompt is shown as its final form only
+	h.tf.send("LINE", sid, "g", "p", "game", "1700000000006", "Pass")
+	h.tf.send("LINE", sid, "g", "p", "game", "1700000000007", "Password again: ")
+	g := c.untilType("line")
+	if g["seq"].(float64) != 5 || g["spans"].([]any)[0].(map[string]any)["s"] != "Password again: " {
+		t.Fatalf("growing prompt = %v", g)
 	}
 }

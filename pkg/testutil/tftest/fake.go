@@ -59,6 +59,7 @@ type Fake struct {
 	// ScriptsOn: TinyFugue accepts script uploads (squat_scripts). Set before use.
 	ScriptsOn bool
 	loaded    []string
+	unnamed   int
 }
 
 type ask struct{ m []string }
@@ -92,6 +93,29 @@ func (f *Fake) AddSession(sid, world, host, port string) {
 	f.Send("SESS", sid, world, host, port, "0", "connected", "0", "1", strconv.FormatInt(time.Now().UnixMilli(), 10), "")
 	f.Send("CTRL", sid, "tf", "tf", "")
 }
+
+// RenameSessionWorld announces the new world name of every session of the old one.
+func (f *Fake) RenameSessionWorld(oldName, newName string) {
+	f.mu.Lock()
+	type upd struct {
+		sid string
+		s   sess
+	}
+	var ups []upd
+	for sid, ss := range f.sess {
+		if ss.world == oldName {
+			ss.world = newName
+			ups = append(ups, upd{sid, *ss})
+		}
+	}
+	f.mu.Unlock()
+	for _, u := range ups {
+		f.Send("SESS", u.sid, u.s.world, u.s.host, u.s.port, "0", u.s.state, "0", "1", strconv.FormatInt(u.s.started, 10), "")
+	}
+}
+
+// WorldsChanged tells the bridge the world list changed in TinyFugue (a change made at its keyboard).
+func (f *Fake) WorldsChanged() { f.Send("WCHG") }
 
 // Line sends one LINE (kind g/e/s, flags gag=g prompt=p).
 func (f *Fake) Line(sid, kind, flags, origin, text string, disp ...string) {
@@ -269,6 +293,28 @@ func (f *Fake) respond(m []string) {
 		} else {
 			f.Send("OK", m[1], "created")
 		}
+	case "WORLD_REN":
+		// WORLD_REN reqid old new save
+		f.mu.Lock()
+		w, ok := f.worlds[m[2]]
+		_, clash := f.worlds[m[3]]
+		if ok && !clash {
+			delete(f.worlds, m[2])
+			w[0] = m[3]
+			w[len(w)-1] = "0" // a temporary world becomes a kept one
+			f.worlds[m[3]] = w
+		}
+		f.mu.Unlock()
+		switch {
+		case !ok:
+			f.Send("ERR", m[1], "no_such_world", "no such world")
+		case clash:
+			f.Send("ERR", m[1], "bad_request", "a world named "+m[3]+" already exists")
+		default:
+			f.RenameSessionWorld(m[2], m[3]) // like TinyFugue: sessions of the world carry the new name
+			f.Send("OK", m[1])
+			f.Send("WCHG")
+		}
 	case "WORLD_DEL":
 		f.mu.Lock()
 		_, ok := f.worlds[m[2]]
@@ -292,7 +338,12 @@ func (f *Fake) respond(m []string) {
 			}
 			host, port = w[1], w[2]
 		} else {
-			world = "(unnamed)"
+			// like TinyFugue: a connection by address makes a temporary world "(unnamedN)"
+			f.mu.Lock()
+			f.unnamed++
+			world = "(unnamed" + strconv.Itoa(f.unnamed) + ")"
+			f.worlds[world] = []string{world, host, port, "", "", "0", "0", "0", "", "", "1"}
+			f.mu.Unlock()
 		}
 		sid := "w-" + strings.ReplaceAll(world, " ", "_") + "-1-" + strconv.Itoa(len(f.Messages()))
 		f.AddSession(sid, world, host, port)
