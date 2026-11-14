@@ -28,32 +28,50 @@ row against the command's real behaviour).
   silently succeeds.
 
 "Where" says who implements it: **engine** is the shared gtfparser library,
-**client** is this repository's adapter (pkg/tfengine) acting on the client's
-own worlds, sessions, scrollback and logs. Rows marked client are the ones that
-move into the engine if it grows its own world database or history; the
-client's registration then simply stops being needed.
+which keeps the state (history, world database, filters, status rows, key
+bindings, logs); this repository's adapter (pkg/tfengine) feeds it the client's
+data and shows its results. **client** is a command real tf defines in its
+library (lib/tf/stdlib.tf) or a SquatClient extension, supplied by the adapter
+so it works without the library (the library's own definition takes over when
+it is loaded: Options.StdLib / SQUATCLIENT_TFLIB).
+
+"In the window" says what a mapped command does in the GUI. **The text form
+always exists**: scripts, pipes, $(...), /eval and commands given arguments get
+tf's printed output and return values; only a command typed alone at the
+input line (/listworlds, /world, /addworld) opens a window instead, and
+/listworlds with any argument (for example "/listworlds *" or "-s") prints.
+
+How the pieces connect: the client's world store is the source of truth for
+the world book (changes in the Worlds dialog reach /listworlds, world_info()
+and /connect; /addworld, /unworld and /renameworld from a script are written
+back to the store); sessions are the engine's sockets; received lines are
+recorded in the engine's history (/recall) and logs (/log); typed lines go to
+the input history; /limit's filter is handed to the window and its
+scrollback; the status bar shows the engine's status rows; wrap, wrapsize,
+wrapspace and visual are reported to the window ("tfvar" event) and change how
+the output wraps; keys scripts bind (/bind, /def -b) are run from the input
+line and may edit it (/input, /dokey, kb*()).
 
 `)
 	fmt.Printf("%d works, %d mapped, %d unsupported.\n\n", n[tfengine.Works], n[tfengine.Mapped], n[tfengine.Unsupported])
-	fmt.Println("| Command | Status | Where | Note |")
-	fmt.Println("| --- | --- | --- | --- |")
+	fmt.Println("| Command | Status | Where | In the window (GUI) | Note |")
+	fmt.Println("| --- | --- | --- | --- | --- |")
 	for _, r := range rows {
-		fmt.Printf("| `/%s` | %s | %s | %s |\n", r.Name, r.Status, r.Where, r.Note)
+		fmt.Printf("| `/%s` | %s | %s | %s | %s |\n", r.Name, r.Status, r.Where, r.GUI, r.Note)
 	}
 	fmt.Print(`
 ## Functions
 
-Answered from the client's own state (registered by the adapter): world_info,
-is_connected, is_open, fg_world, nactive, nlog, winlines, isatty, prompt,
-features, encode_attr, decode_attr, strip_attr, echo (with attributes and
-markup), fake_recv. columns() and lines() report the window size.
-
-Everything else real tf has is the engine's: the string, math, time, regexp,
-file-stream and process functions. Not available yet (the engine says "not
-supported by this client" when called): the kb* input-line editing functions
-(kbhead, kbtail, kbpoint, kblen, kbgoto, kbdel, kbmatch, kbwordleft,
-kbwordright, kbcharback, kbcharfwd), idle, sidle, status_fields, status_width,
-nmail, nread, morepaused, moresize, morescroll, the embedded Lua/Python
-functions, gmcp, msdp, atcp. SquatClient's own Lua API covers GMCP and MSDP.
+The engine implements nearly all of real tf's functions itself: string, math,
+time, regexp, file-stream and process functions, the kb*() input-line family,
+world_info(), addworld(), is_connected(), is_open(), fg_world(), idle(),
+sidle(), nactive(), nlog(), status_fields(), status_width(), morepaused(),
+moresize(), morescroll(), winlines(), columns(), lines(), prompt(), fake_recv()
+and echo() with attributes. The adapter adds encode_attr(), decode_attr(),
+strip_attr(), isatty(), nread() and nmail() (a GUI has no mail or read-ahead:
+0). Not available: the embedded Lua/Python functions (calllua, python), gmcp(),
+msdp(), atcp(), option102(), read(), mktime(), substitute(), strcmpattr(),
+fwrite(), decode_ansi()/encode_ansi() (the engine does not have them yet).
+SquatClient's own Lua API covers GMCP and MSDP.
 `)
 }

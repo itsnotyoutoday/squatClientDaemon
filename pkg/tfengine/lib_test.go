@@ -1,6 +1,7 @@
 package tfengine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,5 +67,26 @@ func TestAliasLibraryOnSendHook(t *testing.T) {
 	_ = e.Exec("w", "hi again")
 	if got := h.sentTexts(); got[len(got)-1] != "w:hi again" {
 		t.Fatalf("after /unalias: %v", got)
+	}
+}
+
+// With real tf's stdlib loaded at start (Options.StdLib), its library commands drive the same
+// engine state: /wrap, /nowrap, /visual and /wrapspace reach the window.
+func TestStdLibCommandsDriveTheClient(t *testing.T) {
+	dir := tfLibDir(t)
+	e, h := newTest(t, func(o *Options) { o.StdLib = dir; o.LibDirs = []string{dir} })
+	for _, c := range []string{"/nowrap", "/wrap 66", "/wrapspace 3", "/visual on", "/listdef -s"} {
+		_ = e.Exec("w", c)
+	}
+	h.mu.Lock()
+	vars := fmt.Sprint(h.vars)
+	h.mu.Unlock()
+	for _, want := range []string{"wrap:on", "wrapsize:66", "wrapspace:3", "visual:on"} {
+		if !strings.Contains(vars, want) {
+			t.Errorf("window variables %s lack %s", vars, want)
+		}
+	}
+	if strings.Contains(h.dump(), "no such command") {
+		t.Fatalf("library command missing:\n%s", h.dump())
 	}
 }

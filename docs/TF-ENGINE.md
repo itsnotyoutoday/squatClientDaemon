@@ -19,34 +19,47 @@ All contact with the library is in **`pkg/tfengine`**.
 
 ```
 pkg/engine (sessions, world book, logs, scrollback, bus)
-    |  implements tfengine.Host (host_tf.go)           ^  Echo, SendToWorld, Connect, Log, Recall ...
+    |  implements tfengine.Host (host_tf.go)           ^  Echo, SendToWorld, Connect, Sockets, SetLimit ...
     v                                                  |
 pkg/tfengine.Engine  ---- Runner (one goroutine) ----> gtfparser.Interp
-    Exec / OnLine / FireHookWorld / LoadFile / Key / Interrupt
+    Type / Exec / OnLine / FireHookWorld / LoadFile / Key / Interrupt
 ```
 
 * **One interpreter per client process**, as `pkg/tf` had: macros, variables and
   timers are global; a session is a "world", named by its script name (the world
-  name, `#2` suffixed for duplicates). This is the same scope as before.
+  name, `#2` suffixed for duplicates; `Engine.SessionOpened` defines it in the
+  engine's world database so per-world history works for quick connections too).
 * **Single owner.** The interpreter lives behind `gtfparser.Runner`; sockets,
   timers and the UI call `Engine` methods, which run on the interpreter
   goroutine (`do`). Host callbacks run on that goroutine too: they must not
   call back into `Engine` synchronously (use `Engine.Post`).
-* **World context.** Each call sets `Interp.SetWorld(world)`; `Engine.cur` is
-  the same for the host callbacks. `-w` macros fire only for their world,
-  `/echo`, `/send`, `/log`, `/recall`, `/limit` ... act on it, `Send("")` means
-  it (or the foreground session).
-* **Display effects** (`line.go`): `Interp.Process(line, live)` returns the
-  matching macros and where they matched; the adapter turns `-a`/`-P`
-  attributes into `proto.Span` hilites and the gag flag (`attr.go`).
-  `live=false` is the replay/remote-automation mode (see TF-ROUTING.md).
-* **Echo** (`corehost.go`): plain echo, and `EchoTo` for `/echo -a -w -p` with
-  attributes and `@{...}` markup. `% ` diagnostics come through `Interp.Warn`.
-* **Client commands** (`commands.go`, `functions.go`): the commands and
-  functions that need the client's own data. `status.go` is the table behind
-  `docs/COMMAND-STATUS.md` (regenerate with
-  `go run ./scripts/gencmdstatus > docs/COMMAND-STATUS.md`); two tests keep the
-  table honest.
+* **World context.** Each call sets `Interp.SetWorld(world)`; `-w` macros fire
+  only for their world; `Send("")` means it (or the foreground session).
+* **The engine owns the state, the client feeds and shows it** (`corehost.go`,
+  `worlds.go`, `lifecycle.go`, `line.go`):
+  | engine state | fed by | shown by |
+  | --- | --- | --- |
+  | world database (`/listworlds`, `world_info()`, `/connect name`) | `syncWorlds`: the client's world store is the source of truth; before every call a changed list is defined into the engine | `reconcileWorlds` writes a script's `/addworld`, `/unworld`, `/renameworld` back through `Host.PutWorld/DeleteWorld/RenameWorld` (persisted by the app's hooks) |
+  | history (`/recall`, `/recordline`, `/histsize`) | `RecordWorldLine` per received line, `RecordInput` per typed line, `RecordLocalLine` per echo | text |
+  | `/limit` | `Redraw` -> `LimitFilter` snapshot handed to the session (live lines and scrollback) | the window, via the view reset |
+  | `/log` | the same recorded lines; relative names go under the logs directory | files |
+  | sockets (`/listsockets`, `is_connected()`, `/dc`, `/fg`, `idle()`) | `Host.Sockets()`, `LastKeyboard()` | tabs |
+  | status line (`/status_*`) | `StatusRows` after a `status` event; internal fields via `StatusHost` | the status bar |
+  | wrapping and layout variables | `PollVars` after each call, `var` events | CSS on the output window (`tfvar` event) |
+  | key bindings (`/bind`, `/def -b`) | `Engine.Key(seq, text, cursor)` from the input line; `KeyBindings` tells the window which keys to forward | the input line |
+* **Display effects of triggers** (`line.go`): `Interp.Process(line, live)` returns
+  the matching macros and where they matched; the adapter turns `-a`/`-P`
+  attributes into `proto.Span` hilites and the gag flag (`attr.go`). `live=false`
+  is the replay/remote-automation mode (see TF-ROUTING.md).
+* **Client extension** (`extension.go`): one `gtfparser.Extension` table with
+  what the engine does not do: library commands real tf defines in lib/tf
+  (`/untrig`, `/partial`, `/addworld`, `/wrap`, `/visual`, ...), `/world`,
+  `/notify`, the `/def -g` shortcut, `/log` under the logs directory, a few
+  functions. Optional real tf library: `Options.StdLib` / `SQUATCLIENT_TFLIB`.
+* **GUI mappings** (docs/COMMAND-STATUS.md): `/listworlds`, `/world`,
+  `/addworld` typed alone open the Worlds dialog (`pkg/engine/input.go`); with
+  arguments, in scripts, pipes and `$(...)` they print. `/help` opens the help
+  browser, `/input` fills the input line, `/suspend` detaches and minimises.
 * **Not silent:** a command the client cannot offer says "not supported by this
   client" (the engine's stub) or "not available in this client".
 
@@ -78,14 +91,11 @@ binding `StopScript()`; the time budget does the same automatically.
 2. `go get github.com/itsnotyoutoday/gtfparser@vX.Y.Z` (remove the local
    `replace` first if there is one).
 3. `go build ./... && go test ./...`. Fix `pkg/tfengine` only. Things to look at:
-   * a command the adapter registers that the engine now implements properly
-     (world book, history, /limit, /recall, /status_*): delete our registration
-     and the row's `Where: client` in `status.go`; `TestStatusTableMatchesBehaviour`
-     will tell you what changed;
-   * `Process` / `FireHook` / `SetWorld` / `EchoHost` / `UndefID` are the
-     unreleased-at-the-time `core:` additions this adapter uses (listed below);
-   * `Extension` tables (`gtfparser.Extension`, `Load`) are the preferred way to
-     declare commands; `commands.go` can be converted mechanically.
+   * a command in `extension.go` that the engine now implements: delete the
+     entry and its row's `Where: client` in `status.go`;
+     `TestStatusTableMatchesBehaviour` will tell you what changed;
+   * `Process` / `FireHook` / `SetWorld` / `EchoHost` / `UndefID` / `LimitFilter`
+     are the `core:` additions this adapter uses (listed below).
 4. Regenerate `docs/COMMAND-STATUS.md`.
 
 ## `core:` commits this adapter needs (engine repo, branch `core-for-squat`)
@@ -95,6 +105,7 @@ binding `StopScript()`; the time budget does the same automatically.
 * `UndefID`
 * `FireHook` returns the macros that ran (SEND-hook gag, used by lib/tf/alias.tf)
 * hook bodies expand even when fired inside a typed line (bug fix)
+* `LimitFilter`: a goroutine-safe snapshot of a world's /limit filter
 
 Until they are released, `go.mod` carries a local-development `replace`.
 
@@ -107,8 +118,11 @@ Routing: none (docs/TF-ROUTING.md). Language and library:
   restrict with `SQUATCLIENT_TF_RESTRICT` or `/restrict shell`.
 * `/def -g` (the old gag shortcut) is still accepted (rewritten by the adapter);
   real tf itself rejects it.
-* `/enable`, `/disable` (old extensions, not in tf) and `-c` (macro chance) are gone;
-  the kb* functions, `idle()`, `sidle()`, `/trigpc` and `/liststreams` are not available yet.
+* `/enable`, `/disable` (old extensions, not in tf) and `-c` (macro chance) are gone; `/trigpc` is not available yet.
+* `/recall` is the engine's (tf's ranges and options), not the old substring search; `/limit` takes tf's options
+  (`-a -v -m`) and a glob by default, not a regexp.
+* `/status_add` fields use tf's syntax (`@world:10`).
+* `/dokey` and the key bindings now work from the input line (they used to be ignored).
 * Error and `%`-substitution wording follows real tf where the engine is
   verified against it (hundreds of differential cases); a few messages differ
   from the old ones.
