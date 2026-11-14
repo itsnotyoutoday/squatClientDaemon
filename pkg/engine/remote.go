@@ -32,6 +32,7 @@ type remoteState struct {
 	sized       bool   // the UI reported a size (re-sent after a re-attach)
 	pairs       []seqPair
 	ended       chan struct{} // closed when the session ended
+	selfCtlBusy int           // tf-squatterd: own control requests in flight
 }
 
 // seqPair maps a local scrollback seq to the daemon seq it came from.
@@ -77,7 +78,12 @@ func (t *remoteTransport) Close() {
 func (r *remoteState) send(s *session, text string, secret bool) error {
 	s.mu.Lock()
 	link := r.link
+	tfLocked := s.info.TF != nil && s.info.TF.Input == "tf"
 	s.mu.Unlock()
+	if tfLocked {
+		// TinyFugue would refuse it asynchronously; say so now instead of dropping the text silently
+		return errors.New("TinyFugue has the keyboard for this connection: take control first")
+	}
 	switch link {
 	case LinkDetached:
 		return errors.New("detached from the squatter (suspended): resume first")
@@ -135,12 +141,21 @@ func (s *session) ingestLine(l proto.Line, live bool) {
 		if l.Kind == proto.KindEcho && s.cap.dropEcho(l.Plain()) {
 			return // echo of an internal Capture send (daemon without noEcho)
 		}
+		spans := l.Spans
+		if l.Kind == proto.KindEcho {
+			spans = s.echoWithOrigin(spans, l.Origin)
+		}
 		s.mu.Lock()
-		s.appendRemoteLocked(l.Kind, l.Spans, l.Prompt, l.Ts, l.Seq)
+		s.appendRemoteLocked(l.Kind, spans, l.Prompt, l.Ts, l.Seq)
 		s.mu.Unlock()
 		return
 	}
-	line := proto.Line{V: proto.Version, T: proto.TLine, Session: s.id, Ts: l.Ts, Kind: proto.KindGame, Spans: l.Spans, Prompt: l.Prompt}
+	// TinyFugue's display text (after its triggers) wins when it sent one.
+	base := l.Spans
+	if len(l.Disp) > 0 {
+		base = l.Disp
+	}
+	line := proto.Line{V: proto.Version, T: proto.TLine, Session: s.id, Ts: l.Ts, Kind: proto.KindGame, Spans: base, Prompt: l.Prompt}
 	if live {
 		if s.cap.offer(line) {
 			return // diverted by Capture
@@ -151,11 +166,15 @@ func (s *session) ingestLine(l proto.Line, live bool) {
 	s.mu.Lock()
 	s.collecting = true
 	s.mu.Unlock()
-	res := s.e.runPipeline(s, line, live)
+	// On a tf-squatterd session TinyFugue runs the triggers unless this client owns
+	// automation: then the pipeline computes display effects only (no sends, no
+	// triggers), so nothing fires twice.
+	runLive := live && (!s.remote.sq.isTF() || s.ownsAutomation())
+	res := s.e.runPipeline(s, line, runLive)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.collecting = false
-	if !res.Gag {
+	if !res.Gag && !(l.Gag && !s.e.showGagged.Load()) {
 		s.appendRemoteLocked(proto.KindGame, res.Spans, l.Prompt, l.Ts, l.Seq)
 	}
 	for _, d := range s.deferred {
@@ -188,6 +207,17 @@ func (s *session) applyRemoteInfo(in proto.SessionInfo) {
 	r := s.remote
 	prev := s.info.State
 	s.info.State, s.info.StartedAt, s.info.RemoteEcho, s.info.Attached = in.State, in.StartedAt, in.RemoteEcho, in.Attached
+	if in.TF != nil {
+		tf := *in.TF
+		var old proto.TFInfo
+		if s.info.TF != nil {
+			old = *s.info.TF
+		}
+		if n := s.lossNoticeLocked(old, tf); n != "" {
+			after = append(after, func() { s.publishLoss(n) })
+		}
+		s.info.TF = &tf
+	}
 	if in.State == proto.StateEnded {
 		s.cap.abort()
 		s.info.EndedAt, s.info.EndReason, s.info.EndDetail, s.info.LastText = in.EndedAt, in.EndReason, in.EndDetail, in.LastText
@@ -263,4 +293,29 @@ func (s *session) armLogin(w World, login string) {
 	for _, f := range after {
 		f()
 	}
+}
+
+// echoWithOrigin marks echo lines typed by someone else: "[tf] " for TinyFugue's
+// own keyboard, "[remote] " for another device. Our own typing is shown as it was.
+func (s *session) echoWithOrigin(spans []proto.Span, origin string) []proto.Span {
+	if origin == "" || !s.remote.sq.isTF() || origin == s.remote.sq.deviceIDValue() {
+		return spans
+	}
+	tag := "[remote] "
+	if origin == "tf" {
+		tag = "[tf] "
+	}
+	return append([]proto.Span{{S: tag, Dim: true}}, spans...)
+}
+
+// ownsAutomation reports whether TinyFugue hands trigger execution for this
+// session to THIS client (automation=client and we are the device that set it).
+func (s *session) ownsAutomation() bool {
+	s.mu.Lock()
+	var t proto.TFInfo
+	if s.info.TF != nil {
+		t = *s.info.TF
+	}
+	s.mu.Unlock()
+	return t.Automation == "client" && t.ControllerDevice != "" && t.ControllerDevice == s.remote.sq.deviceIDValue()
 }

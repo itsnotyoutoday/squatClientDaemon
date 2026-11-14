@@ -35,6 +35,14 @@ Flags: `--cobra DIR` / `--evennia DIR` (use `''` to skip a game), `--evennia-por
 Environment: `HARNESS_ONLY=cobra,ask` runs only those groups; `HARNESS_DEBUG=1`
 makes the bridge log every TFCTL message to `<workdir>/sq/bridge.log`.
 
+## Serving the stack to an outside test
+
+`--serve FILE` starts the same stack (real TinyFugue with a TLS bridge, private CobraMUSH),
+writes `{host, port, adminCode, cobraPort}` to FILE and runs until interrupted, without
+running any checks. A second pairing code is made by creating `FILE.code-admin` (or
+`-operator`, `-viewer`); it is written to `FILE.code-<role>.out`. The SquatClient
+repository uses this for `internal/app/tf_live_test.go` (`TF_LIVE=FILE`).
+
 ## Interactive console
 
 `--interactive` leaves everything running after the checks and gives you a

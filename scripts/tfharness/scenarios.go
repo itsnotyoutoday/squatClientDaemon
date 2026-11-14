@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -512,8 +514,160 @@ func (e *env) execScenario() {
 	res, err = a.Exec(tctx(5*time.Second), "/echo back-on")
 	e.check(g, "and it can be switched on again", err == nil && res.OK, "%v", err)
 
+	// squat_exec=allow: only a short list of read-only commands, nothing that can change TinyFugue
+	e.tf.typ("/set squat_exec=allow")
+	res, err = a.Exec(tctx(5*time.Second), "/version")
+	e.check(g, "allow: a listed command (/version) runs", err == nil && res.OK && len(res.Out) > 0, "err=%v res=%+v", err, res)
+	res, err = a.Exec(tctx(5*time.Second), "/VERSION")
+	e.check(g, "allow: command names are not case sensitive", err == nil && res.OK, "err=%v res=%+v", err, res)
+	for _, line := range []string{"/set squat_exec=on", "/eval /set squat_exec=on", "/sh echo hi", "/quote !echo hi", "/def evil = /echo x", "/load /etc/passwd", "/version %; /set squat_exec=on", "/version\n/set squat_exec=on"} {
+		_, err = a.Exec(tctx(5*time.Second), line)
+		e.check(g, fmt.Sprintf("allow: %q is refused", line), protoCode(err) == proto.ErrForbidden, "%v", err)
+	}
+	e.check(g, "allow: squat_exec was not changed by the refused lines", e.varValue("squat_exec") == "allow", "squat_exec=%q", e.varValue("squat_exec"))
+	e.tf.typ("/set squat_exec_allow=echo")
+	res, err = a.Exec(tctx(5*time.Second), "/echo custom-list")
+	e.check(g, "allow: squat_exec_allow replaces the default list", err == nil && res.OK && strings.Contains(strings.Join(res.Out, "\n"), "custom-list"), "err=%v res=%+v", err, res)
+	_, err = a.Exec(tctx(5*time.Second), "/version")
+	e.check(g, "allow: a command not in the custom list is refused", protoCode(err) == proto.ErrForbidden, "%v", err)
+	_, err = a.PutWorld(tctx(5*time.Second), wire.WorldPutReq{World: proto.TFWorld{Name: "hw-allow-mfile", Host: "127.0.0.1", Port: "1", MFile: "/tmp/x.tf"}, SetMFile: true})
+	e.check(g, "allow: a macro file cannot be set (needs squat_exec=on)", protoCode(err) == proto.ErrForbidden, "%v", err)
+	// world fields are data: command-looking text in them must not run, and squat_exec stays as it was
+	inj := proto.TFWorld{Name: "hw-inject", Host: "127.0.0.1", Port: "1", Char: "x%;/set squat_exec=on", Type: "tiny%;/set squat_exec=on"}
+	_, err = a.PutWorld(tctx(5*time.Second), wire.WorldPutReq{World: inj, Password: "p%;/set squat_exec=on", Save: false})
+	e.check(g, "world fields with command text are stored as data, not run", e.varValue("squat_exec") == "allow", "squat_exec=%q err=%v", e.varValue("squat_exec"), err)
+	_, _ = a.DeleteWorld(tctx(5*time.Second), "hw-inject")
+	e.tf.typ("/set squat_exec_allow=")
+	e.tf.typ("/set squat_exec=on")
+	res, err = a.Exec(tctx(5*time.Second), "/echo full-again")
+	e.check(g, "and on is full power again", err == nil && res.OK, "%v", err)
+
 	st := e.statusVar()
 	e.check("status", "squat_status variable reports the bridge ("+st+")", regexp.MustCompile(`^sq:\d+`).MatchString(st), "status=%q", st)
+}
+
+// varValue reads one TinyFugue variable from its own keyboard (not through the bridge).
+func (e *env) varValue(name string) string {
+	n := len(e.tf.out.String())
+	e.tf.typ("/eval /echo VAR=%{" + name + "}=END")
+	all := regexp.MustCompile(`VAR=([^=\s]*)=END`).FindAllStringSubmatch(e.tf.out.String()[n:], -1)
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1][1] // the last one: the first may be the echo of what was typed
+}
+
+// ---------------------------------------------------------------- 6b. uploaded scripts
+
+func (e *env) scriptsScenario() {
+	g := "scripts"
+	a := e.admin.c
+	ctx := func() context.Context { return tctx(10 * time.Second) }
+	mk := func(name string) string { return filepath.Join(e.work, name) }
+	exists := func(name string) bool { _, err := os.Stat(mk(name)); return err == nil }
+	e.tf.typ("/set squat_exec=on") // so the checks can ask TinyFugue what happened
+
+	// off (the default): refused, and nothing is written
+	_, err := a.PutScript(ctx(), "off.tf", "/echo x", false)
+	e.check(g, "squat_scripts off (default) refuses an upload", protoCode(err) == proto.ErrForbidden, "%v", err)
+	ls, _ := a.ListScripts(ctx())
+	e.check(g, "and nothing was stored", len(ls) == 0, "%v", ls)
+
+	// safe: a normal script loads and its trigger works
+	e.tf.typ("/set squat_scripts=safe")
+	res, err := a.PutScript(ctx(), "hello.tf", `/def -t"*HELLOSCRIPT*" hello_script = /echo hello-from-script`+"\n", true)
+	e.check(g, "safe: a script is stored and loaded", err == nil && res.Stored && res.Loaded, "err=%v res=%+v", err, res)
+	x, err := a.Exec(ctx(), "/hello_script")
+	e.check(g, "safe: the macro it defined runs", err == nil && strings.Contains(strings.Join(x.Out, "\n"), "hello-from-script"), "err=%v x=%+v", err, x)
+
+	// safe: every way out is closed, at load time and when its macros run later
+	evil := strings.Join([]string{
+		"/sh touch " + mk("sbx-shell"),
+		"/quote -0 !touch " + mk("sbx-quote"),
+		"/calllua os.execute('touch " + mk("sbx-lua") + "')",
+		"/log " + mk("sbx-log"),
+		"/lcd /",
+		"/restrict none",
+		"/set squat_exec=on",
+		"/set squat_scripts=on",
+		"/squat pair admin",
+		`/def evil_later = /sh touch ` + mk("sbx-later"),
+		`/def evil_lua = /calllua os.execute('touch ` + mk("sbx-lua2") + `')`,
+		`/def evil_set = /set squat_scripts=on`,
+		`/def evil_chain = /eval /sh touch ` + mk("sbx-chain"),
+		"/echo evil-script-finished",
+	}, "\n") + "\n"
+	res, err = a.PutScript(ctx(), "evil.tf", evil, true)
+	e.check(g, "safe: a hostile script is stored and loaded (its dangerous lines are refused one by one)", err == nil && res.Stored, "err=%v res=%+v", err, res)
+	e.check(g, "safe: the refusals are reported", strings.Contains(strings.Join(res.Out, "\n"), "restricted"), "out=%v", res.Out)
+	for _, name := range []string{"evil_later", "evil_lua", "evil_set", "evil_chain"} {
+		_, _ = a.Exec(ctx(), "/"+name)
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, f := range []string{"sbx-shell", "sbx-quote", "sbx-lua", "sbx-log", "sbx-later", "sbx-lua2", "sbx-chain"} {
+		e.check(g, "safe: "+f+" was NOT created", !exists(f), "")
+	}
+	e.check(g, "safe: squat_scripts was not loosened by the script", e.varValue("squat_scripts") == "safe", "squat_scripts=%q", e.varValue("squat_scripts"))
+	e.check(g, "safe: squat_exec was not loosened by the script", e.varValue("squat_exec") == "on", "squat_exec=%q", e.varValue("squat_exec"))
+	x, _ = a.Exec(ctx(), "/restrict")
+	e.check(g, "safe: TinyFugue's own restriction level is back to none", strings.Contains(strings.Join(x.Out, " "), "none"), "%v", x.Out)
+	// and TinyFugue itself (not sandboxed) can still do all of it
+	e.tf.typ("/sh touch " + mk("tf-own-shell"))
+	time.Sleep(500 * time.Millisecond)
+	e.check(g, "safe: TinyFugue's own keyboard can still run /sh", exists("tf-own-shell"), "")
+
+	// names and content
+	for _, bad := range []string{"../x.tf", "x.txt", "a b.tf", ".hidden.tf", "", "sub/x.tf"} {
+		_, err = a.PutScript(ctx(), bad, "/echo x", false)
+		e.check(g, fmt.Sprintf("name %q is refused", bad), protoCode(err) == proto.ErrBadRequest, "%v", err)
+	}
+	_, err = a.PutScript(ctx(), "nul.tf", "a\x00b", false)
+	e.check(g, "a script with a NUL byte is refused", protoCode(err) == proto.ErrBadRequest, "%v", err)
+	_, err = a.PutScript(ctx(), "big.tf", strings.Repeat("x", wire.MaxScriptBytes+1), false)
+	e.check(g, "a too large script is refused", protoCode(err) == proto.ErrBadRequest, "%v", err)
+
+	// list / replace / delete
+	ls, err = a.ListScripts(ctx())
+	names := map[string]bool{}
+	for _, i := range ls {
+		names[i.Name] = true
+	}
+	e.check(g, "list shows the stored scripts", err == nil && names["hello.tf"] && names["evil.tf"], "%v %v", ls, err)
+	_, err = a.PutScript(ctx(), "hello.tf", `/def -t"*HELLOSCRIPT*" hello_script = /echo hello-v2`+"\n", true)
+	x, _ = a.Exec(ctx(), "/hello_script")
+	e.check(g, "putting the same name replaces it and reloads", err == nil && strings.Contains(strings.Join(x.Out, "\n"), "hello-v2"), "err=%v %v", err, x.Out)
+	err = a.DeleteScript(ctx(), "evil.tf")
+	ls, _ = a.ListScripts(ctx())
+	e.check(g, "delete removes the file", err == nil && len(ls) == 1, "err=%v %v", err, ls)
+	e.check(g, "deleting a missing script is an error", a.DeleteScript(ctx(), "evil.tf") != nil, "")
+
+	// a script without a load flag is stored only
+	e.tf.typ("/undef hello_script")
+	_, err = a.PutScript(ctx(), "stored.tf", `/def stored_only = /echo x`+"\n", false)
+	x, _ = a.Exec(ctx(), "/stored_only")
+	e.check(g, "put without load stores but does not run it", err == nil && !x.OK, "err=%v %+v", err, x)
+
+	// an operator may not use any of it
+	if code, err := e.tf.pairCode("operator"); err == nil {
+		if o, err := dial(e.addr, code, "harness-operator3", newKey()); err == nil {
+			_, err = o.c.PutScript(ctx(), "op.tf", "/echo x", false)
+			e.check(g, "an operator may not upload scripts", protoCode(err) == proto.ErrForbidden, "%v", err)
+			_, err = o.c.ListScripts(ctx())
+			e.check(g, "an operator may not list scripts", protoCode(err) == proto.ErrForbidden, "%v", err)
+			o.close()
+		}
+	}
+
+	// on: trusted, TinyFugue's own rights
+	e.tf.typ("/set squat_scripts=on")
+	res, err = a.PutScript(ctx(), "trusted.tf", "/sh touch "+mk("trusted-shell")+"\n", true)
+	time.Sleep(500 * time.Millisecond)
+	e.check(g, "on: the script runs with TinyFugue's own rights (shell works)", err == nil && res.Loaded && exists("trusted-shell"), "err=%v res=%+v", err, res)
+
+	e.tf.typ("/set squat_scripts=off")
+	_, err = a.PutScript(ctx(), "again.tf", "/echo x", false)
+	e.check(g, "switching it off again refuses uploads", protoCode(err) == proto.ErrForbidden, "%v", err)
+	e.tf.typ("/set squat_exec=on")
 }
 
 func (e *env) oper2Exec() {

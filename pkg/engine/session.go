@@ -240,6 +240,13 @@ func (s *session) onGmcp(pkg string, data json.RawMessage) {
 	s.e.bus.publish(Event{Kind: EvGmcp, Session: s.id, Gmcp: &msg})
 }
 
+// onMsdp publishes an MSDP message from the game to scripts and the UI.
+func (s *session) onMsdp(vars map[string]any) {
+	msg := proto.MsdpMsg{V: proto.Version, T: proto.TMsdp, Session: s.id, Ts: s.e.now().UnixMilli(), Vars: vars}
+	s.e.lua.FireEventFor(s.id, "msdp", map[string]any{"vars": vars, "world": s.id}, true)
+	s.e.bus.publish(Event{Kind: EvMsdp, Session: s.id, Msdp: &msg})
+}
+
 func (s *session) onConnected() {
 	s.mu.Lock()
 	s.info.State = proto.StateConnected

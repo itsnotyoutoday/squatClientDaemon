@@ -103,6 +103,16 @@ func (c *Client) handleExt(env proto.Envelope, data []byte) {
 		if json.Unmarshal(data, &m) == nil {
 			c.resolve(m.ReqID, m)
 		}
+	case TScriptResult:
+		var m ScriptResultMsg
+		if json.Unmarshal(data, &m) == nil {
+			c.resolve(m.ReqID, m)
+		}
+	case TScriptList:
+		var m ScriptListMsg
+		if json.Unmarshal(data, &m) == nil {
+			c.resolve(m.ReqID, m)
+		}
 	case TOK:
 		var m okMsg
 		if json.Unmarshal(data, &m) == nil {
@@ -251,4 +261,35 @@ func (c *Client) GetState(ctx context.Context, session string) (StateMsg, error)
 		return StateMsg{}, err
 	}
 	return v.(StateMsg), nil
+}
+
+// PutScript uploads a script file to TinyFugue and, with load, runs it. Admin
+// devices only, and only when TinyFugue has squat_scripts on.
+func (c *Client) PutScript(ctx context.Context, name, content string, load bool) (ScriptResultMsg, error) {
+	v, err := c.ext(ctx, TScriptPut, func(string) map[string]any {
+		return map[string]any{"name": name, "content": content, "load": load}
+	})
+	if err != nil {
+		return ScriptResultMsg{}, err
+	}
+	return v.(ScriptResultMsg), nil
+}
+
+// ListScripts lists the scripts stored in TinyFugue's scripts directory.
+func (c *Client) ListScripts(ctx context.Context) ([]ScriptInfo, error) {
+	v, err := c.ext(ctx, TScriptList, func(string) map[string]any { return map[string]any{} })
+	if err != nil {
+		return nil, err
+	}
+	out := v.(ScriptListMsg).Scripts
+	if out == nil {
+		out = []ScriptInfo{}
+	}
+	return out, nil
+}
+
+// DeleteScript removes a stored script file.
+func (c *Client) DeleteScript(ctx context.Context, name string) error {
+	_, err := c.ext(ctx, TScriptDelete, func(string) map[string]any { return map[string]any{"name": name} })
+	return err
 }

@@ -51,6 +51,10 @@ type World struct {
 	// Via is "" or "direct" for a direct connection, or the id of a squatter
 	// added with AddSquatter: the daemon then holds the game connection.
 	Via string
+	// Ref (tf-squatterd only) names a world record that TinyFugue already has; the
+	// connection is opened from it (TinyFugue's autologin applies, the client login
+	// template does not). Empty: Host and Port make a temporary TinyFugue world.
+	Ref string
 }
 
 // SessionInfo is proto.SessionInfo plus the engine-side extras the UI needs.
@@ -126,10 +130,12 @@ type Engine struct {
 
 	// noAutoReconnect turns off automatic reconnection of lost squatter connections (default: on).
 	noAutoReconnect atomic.Bool
-	log             *slog.Logger
-	tf              *tf.Interp
-	lua             *lua.Runtime
-	bus             *bus
+	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
+	showGagged atomic.Bool
+	log        *slog.Logger
+	tf         *tf.Interp
+	lua        *lua.Runtime
+	bus        *bus
 
 	ctx    context.Context
 	cancel context.CancelFunc

@@ -40,6 +40,7 @@ const (
 	ProblemAuth         = "auth_failed"
 	ProblemRateLimited  = "rate_limited"
 	ProblemConnectionLo = "connection_lost"
+	ProblemWrongKind    = "wrong_kind" // the address is a different kind of squatter than the record says
 )
 
 // SquatterConfig describes one squatterd. The device key lives in memory only
@@ -57,7 +58,13 @@ type SquatterConfig struct {
 	Fingerprint string
 	// PairCode is a one-time pairing code, sent in hello on the next connect
 	// only and forgotten after a successful handshake.
-	PairCode         string
+	PairCode string
+	// Kind is "squatterd" (default) or "tf-squatterd" (a TinyFugue bridge). Dial refuses
+	// a server of the other kind before the device key is sent.
+	Kind string
+	// Automation (tf-squatterd only): "tf" (default, TinyFugue runs the triggers and this
+	// client only displays) or "client" (this client asks to run them: TinyFugue stops).
+	Automation       string
 	InsecureLoopback bool // allow ws:// to a loopback host (tests, local daemon)
 	MaxBacklog       int  // entries requested per attach (default wire.DefaultBacklog)
 }
@@ -76,6 +83,13 @@ type SquatterInfo struct {
 	Server      string `json:"server,omitempty"`
 	Sessions    int    `json:"sessions"`
 	Suspended   bool   `json:"suspended,omitempty"`
+	// Kind is "squatterd" or "tf-squatterd"; Role, Instance, Features and Automation are
+	// set once connected (tf-squatterd) / from the record.
+	Kind       string   `json:"kind"`
+	Role       string   `json:"role,omitempty"`
+	Instance   string   `json:"instance,omitempty"`
+	Features   []string `json:"features,omitempty"`
+	Automation string   `json:"automation,omitempty"`
 }
 
 // AwayItem is one entry of the "While you were away" summary.
@@ -102,6 +116,9 @@ type squatter struct {
 	seenFP    string
 	deviceID  string
 	server    string
+	role      string
+	instance  string
+	features  []string
 	cl        *wire.Client
 	loopDone  chan struct{}
 	sessions  map[string]*session // by daemon session id
@@ -119,6 +136,18 @@ func (sq *squatter) name() string {
 	return sq.cfg.Name
 }
 
+func (sq *squatter) isTF() bool {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	return normKind(sq.cfg.Kind) == proto.KindTFSquatterd
+}
+
+func (sq *squatter) deviceIDValue() string {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	return sq.deviceID
+}
+
 func (sq *squatter) client() *wire.Client {
 	sq.mu.Lock()
 	defer sq.mu.Unlock()
@@ -131,7 +160,8 @@ func (sq *squatter) infoLocked() SquatterInfo {
 	sq.e.mu.RUnlock()
 	return SquatterInfo{ID: sq.id, Name: sq.cfg.Name, Host: sq.cfg.Host, Port: sq.cfg.Port, State: sq.state,
 		Problem: sq.problem, Message: sq.message, Fingerprint: sq.seenFP, DeviceID: sq.deviceID,
-		Server: sq.server, Sessions: len(sq.sessions), Suspended: susp}
+		Server: sq.server, Sessions: len(sq.sessions), Suspended: susp,
+		Kind: normKind(sq.cfg.Kind), Role: sq.role, Instance: sq.instance, Features: sq.features, Automation: sq.cfg.Automation}
 }
 
 func (sq *squatter) publish() {
@@ -251,7 +281,19 @@ func (cfg SquatterConfig) url() string {
 	if cfg.InsecureLoopback {
 		scheme = "ws"
 	}
-	return scheme + "://" + net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)) + "/swp"
+	path := "/swp"
+	if normKind(cfg.Kind) == proto.KindTFSquatterd {
+		path = "/tfsp"
+	}
+	return scheme + "://" + net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)) + path
+}
+
+// normKind maps the empty kind (records from before kinds existed) to squatterd.
+func normKind(k string) string {
+	if k == proto.KindTFSquatterd {
+		return k
+	}
+	return proto.KindSquatterd
 }
 
 // ConnectSquatter dials the squatter, authenticates, mirrors all of its
@@ -283,7 +325,8 @@ func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) err
 	q.publish()
 
 	c, err := wire.Dial(ctx, cfg.url(), wire.ClientOptions{Key: cfg.Key, PairCode: cfg.PairCode, DeviceName: cfg.DeviceName,
-		ClientName: "SquatClient", Caps: e.getCaps(), PinnedFingerprint: cfg.Fingerprint, InsecureLoopback: cfg.InsecureLoopback})
+		ClientName: "SquatClient", Caps: e.getCaps(), PinnedFingerprint: cfg.Fingerprint, InsecureLoopback: cfg.InsecureLoopback,
+		ExpectKind: normKind(cfg.Kind)})
 	if err != nil {
 		state, problem, msg := classifyDialErr(cfg, err)
 		q.mu.Lock()
@@ -305,6 +348,7 @@ func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) err
 	q.cl, q.cfg.PairCode = c, "" // the pairing code is single use: forget it
 	q.state, q.problem, q.message = SqConnected, "", ""
 	q.seenFP, q.deviceID, q.server = c.ServerFingerprint(), c.DeviceID(), c.ServerName()
+	q.role, q.instance, q.features = c.Role(), c.Instance(), c.Features()
 	q.loopDone = make(chan struct{})
 	go q.loop(c, q.loopDone)
 	q.mu.Unlock()
@@ -315,7 +359,11 @@ func (e *Engine) connectSquatter(ctx context.Context, id string, quiet bool) err
 
 func classifyDialErr(cfg SquatterConfig, err error) (state, problem, msg string) {
 	var pe *wire.ProtoError
+	var km *wire.KindMismatchError
 	switch {
+	case errors.As(err, &km):
+		return SqRefused, ProblemWrongKind, fmt.Sprintf("%q is a %s server, but this squatter was added as a %s server. "+
+			"Nothing was sent to it. Remove it and add it again with the right type.", cfg.Name, kindLabel(km.Got), kindLabel(km.Want))
 	case errors.Is(err, tlsutil.ErrFingerprintMismatch) || strings.Contains(err.Error(), "fingerprint"):
 		return SqRefused, ProblemFingerprint, fmt.Sprintf("Squatter %q presented a different certificate than the one you trusted. "+
 			"Refusing to connect (someone may be intercepting the connection, or squatterd was reinstalled). Remove and re-pair it only if you are sure.", cfg.Name)
@@ -324,7 +372,23 @@ func classifyDialErr(cfg SquatterConfig, err error) (state, problem, msg string)
 	case errors.As(err, &pe) && pe.Code == proto.ErrRateLimited:
 		return SqUnreachable, ProblemRateLimited, fmt.Sprintf("Squatter %q is rate limiting this address; wait a few minutes.", cfg.Name)
 	}
+	if strings.Contains(err.Error(), "but got 404") {
+		// the port answers TLS and HTTP but not at this kind's path: very likely the other kind
+		other := "TinyFugue (tf-squatterd)"
+		if normKind(cfg.Kind) == proto.KindTFSquatterd {
+			other = "squatterd"
+		}
+		return SqRefused, ProblemWrongKind, fmt.Sprintf("Squatter %q (%s:%d) is not a %s server: it answers, but not at that kind's address. "+
+			"It is probably a %s server; remove this entry and add it again with that type.", cfg.Name, cfg.Host, cfg.Port, kindLabel(normKind(cfg.Kind)), other)
+	}
 	return SqUnreachable, ProblemUnreachable, fmt.Sprintf("Cannot reach squatter %q (%s:%d): %v", cfg.Name, cfg.Host, cfg.Port, err)
+}
+
+func kindLabel(k string) string {
+	if k == proto.KindTFSquatterd {
+		return "TinyFugue (tf-squatterd)"
+	}
+	return "squatterd"
 }
 
 // DisconnectSquatter closes the connection on purpose. Its sessions keep

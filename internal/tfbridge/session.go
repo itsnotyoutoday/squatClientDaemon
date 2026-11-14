@@ -44,15 +44,19 @@ type session struct {
 	fg         bool
 	remoteEcho bool
 	input      string // "tf" | "remote" | "both"
-	automation string // "tf" | "client"
-	controller string // deviceID that last changed control, "" if none
-	ctrlName   string
-	acks       map[string]uint64
-	attached   map[uint64]wire.Peer
-	gmcpLatest map[string]json.RawMessage // package -> latest data
-	msdpLatest map[string]any             // variable -> latest value
-	parser     *ansi.Parser
-	closed     bool
+	// the state a remote control change is about to leave (see setControl)
+	wantInput, wantAuto string
+	wantStale           [][2]string // the intermediate states of that change
+	wantUntil           time.Time
+	automation          string // "tf" | "client"
+	controller          string // deviceID that last changed control, "" if none
+	ctrlName            string
+	acks                map[string]uint64
+	attached            map[uint64]wire.Peer
+	gmcpLatest          map[string]json.RawMessage // package -> latest data
+	msdpLatest          map[string]any             // variable -> latest value
+	parser              *ansi.Parser
+	closed              bool
 }
 
 func newSession(b *Bridge, id string) (*session, error) {
@@ -265,6 +269,20 @@ func (s *session) update(world, host, port string, tls bool, state string, remot
 func (s *session) setControl(input, automation string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.wantUntil.After(time.Now()) {
+		// A remote change is in flight (a preset is two steps): TinyFugue reports each
+		// step as it happens, and the early ones are stale by the time they arrive.
+		// Only those intermediate states are ignored; anything else is a real change.
+		if input == s.wantInput && automation == s.wantAuto {
+			s.wantUntil = time.Time{} // the final state arrived
+		} else {
+			for _, st := range s.wantStale {
+				if st == [2]string{input, automation} {
+					return false
+				}
+			}
+		}
+	}
 	if s.input == input && s.automation == automation {
 		return false
 	}
@@ -377,4 +395,40 @@ func (s *session) close() {
 	s.mu.Unlock()
 	_ = s.store.Close()
 	_ = os.RemoveAll(s.dir)
+}
+
+// expectControl declares the final state of a remote control change that is about
+// to be requested; until d has passed (or that state is reported) TinyFugue's
+// reports of earlier steps are ignored. It returns the state.
+func (s *session) expectControl(changes [][2]string, d time.Duration) (input, automation string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	input, automation = s.input, s.automation
+	s.wantStale = nil
+	for i, c := range changes {
+		if c[0] == wire.AxisInput {
+			input = c[1]
+		} else {
+			automation = c[1]
+		}
+		if i < len(changes)-1 {
+			s.wantStale = append(s.wantStale, [2]string{input, automation})
+		}
+	}
+	s.wantInput, s.wantAuto, s.wantUntil = input, automation, time.Now().Add(d)
+	return input, automation
+}
+
+// endExpect lets the expectation lapse d from now (late reports of the final state still match it).
+func (s *session) endExpect(d time.Duration) {
+	s.mu.Lock()
+	s.wantUntil = time.Now().Add(d)
+	s.mu.Unlock()
+}
+
+// dropExpect forgets the expectation (the request failed).
+func (s *session) dropExpect() {
+	s.mu.Lock()
+	s.wantUntil = time.Time{}
+	s.mu.Unlock()
 }

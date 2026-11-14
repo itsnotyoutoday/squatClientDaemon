@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
@@ -25,6 +26,10 @@ const (
 	EvSuspend                             // Suspended: squatter sessions were detached / resumed
 	EvWindow                              // Text: "minimise" (a /suspend asked the app to hide its window)
 	EvAway                                // Away: "While you were away" summary after (re)attaching
+	EvControlPending                      // Pending: a device asked TinyFugue for control and is waiting (tf-squatterd)
+	EvTFWorlds                            // Text: squatter id; its TinyFugue world records changed
+	EvMsdp                                // Session, Msdp (tf-squatterd)
+	EvData                                // Session, Data: latest GMCP/MSDP values after an attach (tf-squatterd)
 )
 
 // Notice levels.
@@ -55,6 +60,27 @@ type Event struct {
 	Squatter  *SquatterInfo // EvSquatter
 	Suspended bool          // EvSuspend
 	Away      []AwayItem    // EvAway
+
+	Msdp    *proto.MsdpMsg  // EvMsdp
+	Pending *ControlPending // EvControlPending
+	Data    *SessionData    // EvData
+}
+
+// ControlPending says a device asked for control of a session and TinyFugue's user
+// has not answered yet (squat_takeover=ask).
+type ControlPending struct {
+	Session    string `json:"session"` // engine session id
+	Axis       string `json:"axis"`
+	Mode       string `json:"mode"`
+	DeviceName string `json:"deviceName,omitempty"`
+}
+
+// SessionData is the latest GMCP and MSDP data of a session, as of daemon seq AsOf.
+type SessionData struct {
+	Session string                     `json:"session"` // engine session id
+	AsOf    uint64                     `json:"asOf"`
+	Gmcp    map[string]json.RawMessage `json:"gmcp"`
+	Msdp    map[string]any             `json:"msdp"`
 }
 
 func (e Event) coalesceKey() (string, bool) {
