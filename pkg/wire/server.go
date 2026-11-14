@@ -288,14 +288,16 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	var dev auth.Device
 	var userName string
 	if hello.User != "" {
-		// ssh-key login: a malformed key or signature is just a failed attempt (it counts against the limiter)
+		// named-user login with an ssh key or a device key: a malformed key or signature is just a failed
+		// attempt (it counts against the limiter)
 		kb, _ := base64.StdEncoding.DecodeString(hello.SSHKey)
 		sb, _ := base64.StdEncoding.DecodeString(hello.SSHSig)
 		var p auth.Principal
-		p, err = s.cfg.Auth.AuthenticateSSH(remoteIP(r), auth.SSHRequest{User: hello.User, KeyBlob: kb, Sig: sb, PairCode: hello.PairCode}, nonce, s.cfg.TLSBinding)
+		p, err = s.cfg.Auth.AuthenticateUser(remoteIP(r), auth.UserRequest{User: hello.User, SSHKey: kb, SSHSig: sb,
+			PublicKey: hello.PublicKey, Sig: hello.Sig, PairCode: hello.PairCode, DeviceName: hello.DeviceName}, nonce, s.cfg.TLSBinding)
 		if err == nil {
 			userName = p.User
-			dev = auth.Device{DeviceID: auth.DeviceID(kb), Name: p.User + " (" + hello.DeviceName + ")", Role: p.Role}
+			dev = auth.Device{DeviceID: auth.DeviceID([]byte(p.Fingerprint)), Name: p.User + " (" + hello.DeviceName + ")", Role: p.Role}
 		}
 	} else {
 		dev, err = s.cfg.Auth.Authenticate(remoteIP(r), auth.Request{PublicKey: hello.PublicKey, Sig: hello.Sig, PairCode: hello.PairCode, DeviceName: hello.DeviceName}, nonce)

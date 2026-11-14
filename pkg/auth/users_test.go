@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -28,9 +29,20 @@ func newKP(comment string) kp {
 	return kp{pub, priv, SSHKeyFromEd25519(pub, comment)}
 }
 
-func (k kp) login(user string, nonce, binding []byte, code string) SSHRequest {
+// login signs as an ssh key would (an ssh-agent returns this encoding).
+func (k kp) login(user string, nonce, binding []byte, code string) UserRequest {
 	sig := SSHSignatureBlob(ed25519.Sign(k.priv, SSHChallengeMessage(user, nonce, binding)))
-	return SSHRequest{User: user, KeyBlob: k.key.Blob, Sig: sig, PairCode: code}
+	return UserRequest{User: user, SSHKey: k.key.Blob, SSHSig: sig, PairCode: code}
+}
+
+// deviceLogin logs in with the same key pair as an app-generated device key.
+func (k kp) deviceLogin(user string, nonce, binding []byte, code string) UserRequest {
+	return UserRequest{User: user, PublicKey: base64.StdEncoding.EncodeToString(k.pub),
+		Sig: SignUserChallenge(k.priv, user, nonce, binding), PairCode: code, DeviceName: "app"}
+}
+
+func (k kp) deviceLine(label string) string {
+	return base64.StdEncoding.EncodeToString(k.pub) + " " + label
 }
 
 var (
@@ -112,12 +124,12 @@ func TestNoTakeoverRule(t *testing.T) {
 		t.Fatalf("pairing after reset: %v", err)
 	}
 	// the old key no longer logs in
-	if _, err := s.AuthenticateSSH("1.2.3.4", mine.login("nereus", []byte("n"), nil, ""), []byte("n"), nil); !errors.Is(err, ErrAuthFailed) {
+	if _, err := s.AuthenticateUser("1.2.3.4", mine.login("nereus", []byte("n"), nil, ""), []byte("n"), nil); !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("old key still works: %v", err)
 	}
 }
 
-func TestAuthenticateSSH(t *testing.T) {
+func TestAuthenticateUser(t *testing.T) {
 	s := newUserStore(t)
 	_ = s.AddUser("nereus", RoleAdmin, host)
 	k := newKP("laptop")
@@ -125,7 +137,7 @@ func TestAuthenticateSSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce, bind := []byte("server-nonce"), []byte("tls-fp")
-	p, err := s.AuthenticateSSH("1.1.1.1", k.login("nereus", nonce, bind, ""), nonce, bind)
+	p, err := s.AuthenticateUser("1.1.1.1", k.login("nereus", nonce, bind, ""), nonce, bind)
 	if err != nil || p.User != "nereus" || p.Role != RoleAdmin || p.Fingerprint != k.key.Fingerprint() || p.NewKey {
 		t.Fatalf("%+v %v", p, err)
 	}
@@ -134,23 +146,23 @@ func TestAuthenticateSSH(t *testing.T) {
 	}
 	// every kind of failure is the same error
 	stranger := newKP("x")
-	for name, r := range map[string]SSHRequest{
+	for name, r := range map[string]UserRequest{
 		"unknown key":   stranger.login("nereus", nonce, bind, ""),
 		"unknown user":  k.login("ghost", nonce, bind, ""),
-		"wrong user":    {User: "nereus", KeyBlob: k.key.Blob, Sig: k.login("alice", nonce, bind, "").Sig},
+		"wrong user":    {User: "nereus", SSHKey: k.key.Blob, SSHSig: k.login("alice", nonce, bind, "").SSHSig},
 		"wrong nonce":   k.login("nereus", []byte("other"), bind, ""),
 		"wrong server":  k.login("nereus", nonce, []byte("other-fp"), ""),
-		"no signature":  {User: "nereus", KeyBlob: k.key.Blob},
-		"garbage key":   {User: "nereus", KeyBlob: []byte("zz"), Sig: []byte("zz")},
+		"no signature":  {User: "nereus", SSHKey: k.key.Blob},
+		"garbage key":   {User: "nereus", SSHKey: []byte("zz"), SSHSig: []byte("zz")},
 		"bad pair code": stranger.login("nereus", nonce, bind, "ABCD-EFGH"),
 	} {
-		if _, err := s.AuthenticateSSH("2.2.2.2", r, nonce, bind); !errors.Is(err, ErrAuthFailed) && !errors.Is(err, ErrRateLimited) {
+		if _, err := s.AuthenticateUser("2.2.2.2", r, nonce, bind); !errors.Is(err, ErrAuthFailed) && !errors.Is(err, ErrRateLimited) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// disabled users cannot log in
 	_ = s.SetDisabled("nereus", true, host)
-	if _, err := s.AuthenticateSSH("3.3.3.3", k.login("nereus", nonce, bind, ""), nonce, bind); !errors.Is(err, ErrAuthFailed) {
+	if _, err := s.AuthenticateUser("3.3.3.3", k.login("nereus", nonce, bind, ""), nonce, bind); !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("disabled user logged in: %v", err)
 	}
 }
@@ -166,19 +178,19 @@ func TestFirstKeyByPairingCode(t *testing.T) {
 	nonce := []byte("n1")
 	// the code is bound to the user
 	_ = s.AddUser("alice", "", admin)
-	if _, err := s.AuthenticateSSH("4.4.4.4", k.login("alice", nonce, nil, code), nonce, nil); !errors.Is(err, ErrAuthFailed) {
+	if _, err := s.AuthenticateUser("4.4.4.4", k.login("alice", nonce, nil, code), nonce, nil); !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("code worked for another user: %v", err)
 	}
-	p, err := s.AuthenticateSSH("4.4.4.4", k.login("nereus", nonce, nil, code), nonce, nil)
+	p, err := s.AuthenticateUser("4.4.4.4", k.login("nereus", nonce, nil, code), nonce, nil)
 	if err != nil || !p.NewKey {
 		t.Fatalf("%+v %v", p, err)
 	}
 	// single use; the key now works without it
 	k2 := newKP("other")
-	if _, err := s.AuthenticateSSH("4.4.4.4", k2.login("nereus", nonce, nil, code), nonce, nil); !errors.Is(err, ErrAuthFailed) {
+	if _, err := s.AuthenticateUser("4.4.4.4", k2.login("nereus", nonce, nil, code), nonce, nil); !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("code reused: %v", err)
 	}
-	if p, err := s.AuthenticateSSH("4.4.4.4", k.login("nereus", nonce, nil, ""), nonce, nil); err != nil || p.NewKey {
+	if p, err := s.AuthenticateUser("4.4.4.4", k.login("nereus", nonce, nil, ""), nonce, nil); err != nil || p.NewKey {
 		t.Fatalf("%+v %v", p, err)
 	}
 	u, _ := s.User("nereus")
@@ -192,9 +204,9 @@ func TestSSHLoginRateLimited(t *testing.T) {
 	_ = s.AddUser("nereus", "", host)
 	k := newKP("x")
 	for i := 0; i < MaxFailures; i++ {
-		_, _ = s.AuthenticateSSH("9.9.9.9", k.login("nereus", []byte("n"), nil, ""), []byte("n"), nil)
+		_, _ = s.AuthenticateUser("9.9.9.9", k.login("nereus", []byte("n"), nil, ""), []byte("n"), nil)
 	}
-	if _, err := s.AuthenticateSSH("9.9.9.9", k.login("nereus", []byte("n"), nil, ""), []byte("n"), nil); !errors.Is(err, ErrRateLimited) {
+	if _, err := s.AuthenticateUser("9.9.9.9", k.login("nereus", []byte("n"), nil, ""), []byte("n"), nil); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("not rate limited: %v", err)
 	}
 }
@@ -216,5 +228,55 @@ func TestRevokeKey(t *testing.T) {
 	}
 	if u, _ := s.User("nereus"); len(u.Keys) != 1 {
 		t.Fatalf("%+v", u.Keys)
+	}
+}
+
+// A user may have both kinds of key: an ssh key (added by its public key, no code) and an app-generated
+// device key (added by its public key or enrolled with a pairing code).
+func TestBothKindsOfKey(t *testing.T) {
+	s := newUserStore(t)
+	_ = s.AddUser("nereus", "", host)
+	sshKey, dev := newKP("laptop"), newKP("phone")
+	nonce, bind := []byte("n"), []byte("fp")
+	if _, err := s.AuthorizeKey("nereus", sshKey.key.Marshal(), host); err != nil {
+		t.Fatal(err)
+	}
+	// the ssh key logs in with no code at all
+	if p, err := s.AuthenticateUser("1.1.1.1", sshKey.login("nereus", nonce, bind, ""), nonce, bind); err != nil || p.NewKey {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// a device key is enrolled by a pairing code issued from the user's own device
+	code, _, err := s.NewUserPairing("nereus", time.Minute, Issuer{Kind: "device", Name: "nereus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.AuthenticateUser("1.1.1.1", dev.deviceLogin("nereus", nonce, bind, code), nonce, bind)
+	if err != nil || !p.NewKey {
+		t.Fatalf("device key not enrolled by the code: %+v %v", p, err)
+	}
+	if p, err := s.AuthenticateUser("1.1.1.1", dev.deviceLogin("nereus", nonce, bind, ""), nonce, bind); err != nil || p.NewKey {
+		t.Fatalf("enrolled device key: %+v %v", p, err)
+	}
+	u, _ := s.User("nereus")
+	if len(u.Keys) != 2 || u.Keys[0].Type != KeyTypeEd25519 || u.Keys[1].Type != KeyTypeDevice || u.Keys[1].AddedBy != "pairing" {
+		t.Fatalf("%+v", u.Keys)
+	}
+	// a device key can also just be added by its public key (no code)
+	third := newKP("tablet")
+	if _, err := s.AuthorizeKey("nereus", third.deviceLine("tablet"), host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AuthenticateUser("1.1.1.1", third.deviceLogin("nereus", nonce, bind, ""), nonce, bind); err != nil {
+		t.Fatalf("device key added by public key: %v", err)
+	}
+	// the same key pair presented as the other kind is a different, unenrolled key
+	if _, err := s.AuthenticateUser("2.2.2.2", dev.login("nereus", nonce, bind, ""), nonce, bind); !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("a device key pair worked as an ssh key: %v", err)
+	}
+	// a device signature is not valid as an ssh signature and vice versa (different message domains)
+	mixed := dev.deviceLogin("nereus", nonce, bind, "")
+	mixed.Sig = SignUserChallenge(dev.priv, "alice", nonce, bind)
+	if _, err := s.AuthenticateUser("3.3.3.3", mixed, nonce, bind); !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("signature for another user accepted: %v", err)
 	}
 }

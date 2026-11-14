@@ -33,7 +33,9 @@ var ErrClosed = errors.New("wire: client closed")
 // ClientOptions configures Dial.
 type ClientOptions struct {
 	Key ed25519.PrivateKey // device key (required unless SSH is set)
-	// SSH logs in as a named user with an ssh key instead of a paired device key.
+	// User, with Key, logs in as a named user with the device key (enrolled for the user, or enrolled
+	// now with PairCode). SSH logs in as a named user with an ssh key instead (no code needed).
+	User              string
 	SSH               *SSHLogin
 	PairCode          string // one-time pairing code (first connect only)
 	DeviceName        string
@@ -216,7 +218,13 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	}
 	var sig string
 	var sshHello *Hello
-	if opts.SSH != nil {
+	if opts.SSH == nil && opts.User != "" {
+		nonce, derr := base64.StdEncoding.DecodeString(ch.Nonce)
+		if derr != nil {
+			return nil, fmt.Errorf("wire: bad challenge: %w", derr)
+		}
+		sig = auth.SignUserChallenge(opts.Key, opts.User, nonce, []byte(c.ServerFingerprint()))
+	} else if opts.SSH != nil {
 		nonce, derr := base64.StdEncoding.DecodeString(ch.Nonce)
 		if derr != nil {
 			return nil, fmt.Errorf("wire: bad challenge: %w", derr)
@@ -239,10 +247,11 @@ func Dial(ctx context.Context, rawURL string, opts ClientOptions) (*Client, erro
 	caps := opts.Caps
 	hello := Hello{V: proto.Version, T: THello, Client: name, DeviceName: opts.DeviceName,
 		Sig: sig, PairCode: opts.PairCode, Caps: &caps}
-	if sshHello != nil {
+	switch {
+	case sshHello != nil:
 		hello.User, hello.SSHKey, hello.SSHSig = sshHello.User, sshHello.SSHKey, sshHello.SSHSig
-	} else {
-		hello.PublicKey = auth.PublicKeyB64(opts.Key)
+	default:
+		hello.PublicKey, hello.User = auth.PublicKeyB64(opts.Key), opts.User
 	}
 	b, _ := json.Marshal(hello)
 	if err := ws.Write(dctx, websocket.MessageText, b); err != nil {

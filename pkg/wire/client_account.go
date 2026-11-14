@@ -104,3 +104,26 @@ func (c *Client) AdminAudit(ctx context.Context, n int) ([]auth.AuditEntry, erro
 	err := c.account(ctx, TAdminAudit, map[string]any{"n": n}, &r)
 	return r.Entries, err
 }
+
+// KeyResult is the answer to UserAuthorize and AdminAuthorizeUser.
+type KeyResult struct {
+	User        string `json:"user"`
+	Fingerprint string `json:"fingerprint"`
+	Type        string `json:"type"` // "ssh-ed25519" or "ed25519-device"
+}
+
+// UserAuthorize adds a public key (an ssh public key line, or a base64 device key) to this named user's
+// own account, for another device of theirs. No pairing code is needed: a public key is not a secret.
+func (c *Client) UserAuthorize(ctx context.Context, key string) (KeyResult, error) {
+	var r KeyResult
+	err := c.account(ctx, TUserAuthorize, map[string]any{"key": key}, &r)
+	return r, err
+}
+
+// AdminAuthorizeUser adds the FIRST key of a user who has none (admin role). For a user who already has
+// keys the daemon refuses: only that user's own device (UserAuthorize) or the host shell can.
+func (c *Client) AdminAuthorizeUser(ctx context.Context, name, key string) (KeyResult, error) {
+	var r KeyResult
+	err := c.account(ctx, TAdminUserAuth, map[string]any{"name": name, "key": key}, &r)
+	return r, err
+}

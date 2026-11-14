@@ -56,11 +56,11 @@ type Issuer struct {
 	Name string // admin user name, or the user the device belongs to; used for the audit log
 }
 
-// UserKey is one authorised public key of a user.
+// UserKey is one authorised key of a user: an ssh key ("ssh-ed25519") or a device key ("ed25519-device").
 type UserKey struct {
 	Fingerprint string `json:"fingerprint"`
 	Type        string `json:"type"`
-	Blob        string `json:"blob"` // base64 of the ssh wire encoding
+	Blob        string `json:"blob"` // base64: the ssh wire encoding (ssh keys) or the raw public key (device keys)
 	Comment     string `json:"comment,omitempty"`
 	AddedAt     int64  `json:"addedAt"`
 	AddedBy     string `json:"addedBy"` // "host", "admin:<name>", "device:<name>" or "pairing"
@@ -298,20 +298,22 @@ func mayAddKey(by Issuer, u User) error {
 	return ErrNeedOwnerOK
 }
 
-// AuthorizeKey adds a public key (an authorized_keys-style line) to a user, subject to the
-// no-takeover rule. A key added from the host shell or by an admin is written to the audit log; the
-// user's other devices learn of any addition through the audit log too.
+// AuthorizeKey adds a public key to a user, subject to the no-takeover rule. The key is either an ssh
+// public key (an authorized_keys line: "ssh-ed25519 AAAA... comment") or an app-generated device key
+// (base64 of the raw ed25519 public key, optionally followed by a label). No code is involved: a public
+// key is not a secret. The addition is written to the audit log; the user's other devices learn of it
+// from there.
 func (s *Store) AuthorizeKey(user, line string, by Issuer) (UserKey, error) {
-	k, err := ParseSSHPublicKey(line)
+	e, err := parseAnyKey(line)
 	if err != nil {
 		return UserKey{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.addKeyLocked(user, k, by, by.actor())
+	return s.addKeyLocked(user, e, by, by.actor())
 }
 
-func (s *Store) addKeyLocked(user string, k SSHKey, by Issuer, addedBy string) (UserKey, error) {
+func (s *Store) addKeyLocked(user string, k keyEntry, by Issuer, addedBy string) (UserKey, error) {
 	us, err := s.loadUsers()
 	if err != nil {
 		return UserKey{}, err
@@ -324,7 +326,7 @@ func (s *Store) addKeyLocked(user string, k SSHKey, by Issuer, addedBy string) (
 			return UserKey{}, err
 		}
 		for _, e := range us[i].Keys {
-			if e.Fingerprint == k.Fingerprint() {
+			if e.Fingerprint == k.Fingerprint {
 				return UserKey{}, ErrKeyExists
 			}
 		}
@@ -335,7 +337,10 @@ func (s *Store) addKeyLocked(user string, k SSHKey, by Issuer, addedBy string) (
 		if len(c) > maxCommentLen {
 			c = c[:maxCommentLen]
 		}
-		uk := UserKey{Fingerprint: k.Fingerprint(), Type: k.Type, Blob: base64.StdEncoding.EncodeToString(k.Blob),
+		if c == "" && k.Type == KeyTypeDevice {
+			c = "device-" + k.Fingerprint[:4]
+		}
+		uk := UserKey{Fingerprint: k.Fingerprint, Type: k.Type, Blob: base64.StdEncoding.EncodeToString(k.Blob),
 			Comment: strings.ToValidUTF8(c, "?"), AddedAt: s.now().UnixMilli(), AddedBy: addedBy}
 		us[i].Keys = append(us[i].Keys, uk)
 		if err := s.saveUsers(us); err != nil {

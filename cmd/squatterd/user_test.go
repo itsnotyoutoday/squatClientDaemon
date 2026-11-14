@@ -40,6 +40,14 @@ func TestUserCommands(t *testing.T) {
 		t.Fatalf("authorize: %d %q %s", code, out, e)
 	}
 	rsaBlob := base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 7, 's', 's', 'h', '-', 'r', 's', 'a', 0, 0, 0, 1, 3, 0, 0, 0, 1, 5})
+	// a device key (base64 raw public key plus a label) is added the same way
+	dpub, _, _ := ed25519.GenerateKey(rand.Reader)
+	if code, out, e := userCmd(t, dir, base64.StdEncoding.EncodeToString(dpub)+" phone\n", "authorize", "nereus"); code != 0 || !strings.Contains(out, "phone") {
+		t.Fatalf("device key: %d %q %s", code, out, e)
+	}
+	if code, out, _ := userCmd(t, dir, "", "keys", "nereus"); code != 0 || !strings.Contains(out, "ed25519-device") || !strings.Contains(out, "ssh-ed25519") {
+		t.Fatalf("both kinds not listed: %q", out)
+	}
 	if code, _, e := userCmd(t, dir, "ssh-rsa "+rsaBlob+" x\n", "authorize", "nereus"); code == 0 || !strings.Contains(e, "not supported") {
 		t.Fatalf("rsa accepted: %d %s", code, e)
 	}

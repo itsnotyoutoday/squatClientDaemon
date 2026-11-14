@@ -36,7 +36,7 @@ squatterd is a persistent session holder (think `screen` / `tinyfugue` for MUDs)
 
 ```
 devices.json          paired devices (0600): deviceId, name, publicKey, createdAt, lastSeen
-users.json            named users (0600): name, role, disabled, keys[] (ssh public keys with fingerprint, addedBy, lastSeen)
+users.json            named users (0600): name, role, disabled, keys[] (ssh keys and device keys: type, fingerprint, addedBy, lastSeen)
 user-pairing.json     one-time codes bound to a user (0600)
 audit.log             append-only JSON lines: every user/key/pairing change (who, what, which user)
 pairing.json          outstanding pairing codes (0600), read fresh at every hello

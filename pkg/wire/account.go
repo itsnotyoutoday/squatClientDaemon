@@ -13,6 +13,7 @@ import (
 // Account and administration requests of named users (docs/SQUATTER-HUB.md).
 //
 //	user.pair                     a named user asks for a one-time code to enrol another device of their own
+//	user.authorize {key}          a named user adds a public key of their own (ssh key or device key), no code
 //	admin.users                   list users (names, roles, key fingerprints: never session content)
 //	admin.user.add|remove|disable|role|reset|pair, admin.audit
 //
@@ -22,6 +23,8 @@ import (
 // in reqId; errors are the usual error message.
 const (
 	TUserPair        = "user.pair"
+	TUserAuthorize   = "user.authorize"
+	TAdminUserAuth   = "admin.user.authorize"
 	TAdminUsers      = "admin.users"
 	TAdminUserAdd    = "admin.user.add"
 	TAdminUserRemove = "admin.user.remove"
@@ -65,12 +68,13 @@ type accountReq struct {
 	Disabled   bool   `json:"disabled"`
 	TTLSeconds int    `json:"ttlSeconds"`
 	N          int    `json:"n"`
+	Key        string `json:"key"`
 }
 
 // handleAccount handles the account and admin requests; it reports whether t was one of them.
 func (s *Server) handleAccount(c *client, cf ClientFrame, raw []byte) bool {
 	switch cf.T {
-	case TUserPair, TAdminUsers, TAdminUserAdd, TAdminUserRemove, TAdminUserDisab, TAdminUserRole, TAdminUserReset, TAdminUserPair, TAdminAudit:
+	case TUserPair, TUserAuthorize, TAdminUserAuth, TAdminUsers, TAdminUserAdd, TAdminUserRemove, TAdminUserDisab, TAdminUserRole, TAdminUserReset, TAdminUserPair, TAdminAudit:
 	default:
 		return false
 	}
@@ -104,6 +108,16 @@ func (s *Server) handleAccount(c *client, cf ClientFrame, raw []byte) bool {
 		reply(t, map[string]any{"user": user, "code": code, "expiresAt": exp.UnixMilli(), "fingerprint": string(s.cfg.TLSBinding)})
 	}
 
+	if cf.T == TUserAuthorize {
+		// a public key is not a secret: the user adds the key of another device of theirs from this one
+		k, err := st.AuthorizeKey(c.user, rq.Key, auth.Issuer{Kind: "device", Name: c.user})
+		if err != nil {
+			bad(err)
+			return true
+		}
+		reply(cf.T, map[string]any{"user": c.user, "fingerprint": k.Fingerprint, "type": k.Type})
+		return true
+	}
 	if cf.T == TUserPair {
 		// any named user: a code to enrol another device of their own, approved by this device
 		code, exp, err := st.NewUserPairing(c.user, ttl, auth.Issuer{Kind: "device", Name: c.user})
@@ -160,6 +174,14 @@ func (s *Server) handleAccount(c *client, cf ClientFrame, raw []byte) bool {
 			return true
 		}
 		reply(cf.T, nil)
+	case TAdminUserAuth:
+		// the first key of a user who has none (the store refuses an admin for a user with keys)
+		k, err := st.AuthorizeKey(rq.Name, rq.Key, by)
+		if err != nil {
+			bad(err)
+			return true
+		}
+		reply(cf.T, map[string]any{"user": rq.Name, "fingerprint": k.Fingerprint, "type": k.Type})
 	case TAdminUserPair:
 		code, exp, err := st.NewUserPairing(rq.Name, ttl, by)
 		if err != nil {

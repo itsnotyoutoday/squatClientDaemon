@@ -52,8 +52,9 @@ type Hello struct {
 	Sig        string      `json:"sig"`
 	PairCode   string      `json:"pairCode,omitempty"`
 	Caps       *proto.Caps `json:"caps,omitempty"`
-	// SSH-key login (docs/SQUATTER-HUB.md): the user name, the public key (ssh wire encoding, base64)
-	// and the ssh signature (base64) over auth.SSHChallengeMessage. PublicKey and Sig are unused then.
+	// Named-user login (docs/SQUATTER-HUB.md): User plus EITHER an ssh key (SSHKey: the public key in ssh
+	// wire encoding, base64; SSHSig: the ssh signature, base64, over auth.SSHChallengeMessage) OR a device
+	// key (PublicKey and Sig as for a paired device, but Sig is over auth.UserChallengeMessage).
 	User   string `json:"user,omitempty"`
 	SSHKey string `json:"sshKey,omitempty"`
 	SSHSig string `json:"sshSig,omitempty"`

@@ -20,15 +20,18 @@ const userUsage = `squatterd user - manage named users (run on the host; see doc
   squatterd user remove <name>                 delete a user and all their keys
   squatterd user disable <name> | enable <name>
   squatterd user role <name> <role>
-  squatterd user authorize <name> [FILE|-]     add an ssh public key (an authorized_keys line; default stdin)
+  squatterd user authorize <name> [FILE|-]     add a public key, no code needed: an ssh public key (an
+                                               authorized_keys line) or a device key (base64 [label]); default stdin
   squatterd user keys <name>                   the user's keys (fingerprints)
   squatterd user revoke-key <name> <fingerprint>
-  squatterd user pair <name> [--valid 24h]     one-time code for the user to enrol their first key
+  squatterd user pair <name> [--valid 24h]     one-time code to enrol an app-generated device key (not needed
+                                               for ssh keys, which are added by their public key)
   squatterd user reset <name>                  void all of the user's keys (the account starts over)
   squatterd user audit [-n 50]                 the audit log
 
-Every change is recorded in the audit log as made by "host". Users log in with the ssh key pair they
-already use for ssh; the private key never leaves their machine.
+Every change is recorded in the audit log as made by "host". A user logs in with a key pair: the ssh key
+pair they already use for ssh (add its public key, nothing else to hand out), or an app-generated device
+key enrolled with a pairing code. The private key never leaves their machine.
 `
 
 // cmdUser runs "squatterd user ...". Flags may come before or after the positional words.
@@ -211,7 +214,7 @@ func userAction(as *auth.Store, o *options, pos []string, role string, last int,
 		fmt.Fprintf(w, "Valid until:     %s (%s, single use)\n", exp.Format(time.RFC1123), time.Until(exp).Round(time.Minute))
 		fmt.Fprintf(w, "TLS fingerprint: %s\n", tlsutil.CertFingerprint(cert))
 		fmt.Fprintf(w, "Connect to:      wss://%s:%d/swp\n", host, o.port)
-		fmt.Fprintln(w, "The user enters their name and this code once, with the ssh key they want to use; later logins need only the key.")
+		fmt.Fprintln(w, "The user enters their name and this code once in SquatClient (the app generates a device key); later logins need only that key. Users with an ssh key do not need a code: use 'user authorize'.")
 		return nil
 	case "reset":
 		if err := need(1, "squatterd user reset <name>"); err != nil {
