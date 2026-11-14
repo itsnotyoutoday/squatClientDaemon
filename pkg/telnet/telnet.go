@@ -48,7 +48,7 @@ const maxSubneg = 1 << 20 // a subnegotiation longer than this is discarded
 
 // Config configures a Machine.
 type Config struct {
-	ClientName string // TTYPE first answer and GMCP client name; default "SquatClient"
+	ClientName string // GMCP client name; the first TTYPE answer is its upper-case form; default "SquatClient"
 	Version    string // GMCP client version; default "0.1.0"
 	Caps       proto.Caps
 	UTF8       bool // the world's encoding is utf-8 (MTTS UTF-8 bit, CHARSET)
@@ -444,7 +444,9 @@ func (m *Machine) ttypeAnswer() []byte {
 	}
 	switch idx {
 	case 0:
-		return []byte(m.cfg.ClientName)
+		// upper case: games match the first TTYPE name exactly and case-sensitively (e.g. CobraMUSH's
+		// prompt-capable table); GMCP Core.Hello keeps ClientName as configured
+		return []byte(strings.ToUpper(m.cfg.ClientName))
 	case 1:
 		if m.cfg.Caps.Truecolor {
 			return []byte("XTERM-TRUECOLOR")
