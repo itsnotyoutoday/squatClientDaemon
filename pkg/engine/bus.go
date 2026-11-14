@@ -55,7 +55,9 @@ type Event struct {
 	Info    *SessionInfo
 	Fields  []StatusField
 	Level   string // EvNotice
-	Text    string // EvNotice, EvWindow
+	Text    string // EvNotice, EvWindow; the squatter id for EvTFWorlds
+	// EvTFWorlds: set when a world was renamed (OldName -> NewName); both empty = the list changed some other way
+	OldName, NewName string
 
 	Squatter  *SquatterInfo // EvSquatter
 	Suspended bool          // EvSuspend

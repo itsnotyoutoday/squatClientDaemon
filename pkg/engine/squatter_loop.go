@@ -31,6 +31,7 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 			} else {
 				s.markAckFrom(v.Info)
 				s.applyRemoteInfo(v.Info)
+				q.followRename(s, v.Info)
 			}
 			q.publish()
 		case wire.Removed:
@@ -89,7 +90,7 @@ func (q *squatter) loop(c *wire.Client, done chan struct{}) {
 				q.e.bus.publish(Event{Kind: EvControlPending, Session: s.id, Pending: &ControlPending{Session: s.id, Axis: v.Axis, Mode: v.Mode, DeviceName: v.DeviceName}})
 			}
 		case wire.WorldChanged:
-			q.e.bus.publish(Event{Kind: EvTFWorlds, Text: q.id})
+			q.e.bus.publish(Event{Kind: EvTFWorlds, Text: q.id, OldName: v.OldName, NewName: renamedTo(v.OldName, v.Name)})
 		case wire.Error:
 			q.e.bus.publish(Event{Kind: EvNotice, Level: LevelWarn, Text: fmt.Sprintf("squatter %s: %s: %s", q.name(), v.Code, v.Message)})
 			q.attachDoneIfPending()
@@ -234,7 +235,7 @@ func (e *Engine) dialVia(w World, password string) (SessionInfo, error) {
 	if s == nil {
 		return SessionInfo{}, ErrClosed
 	}
-	if !tfq || w.Ref == "" { // a TinyFugue world record logs in by itself; a plain host:port gets the client's login line
+	if !tfq || w.Ref == "" || w.Login != nil { // a TinyFugue record without a Login here logs in by itself; otherwise this client sends the login line
 		if tfq {
 			// a connection this client opened must be typeable by it, or even the login would be refused
 			if err := e.SetControl(s.id, "input", "both"); err != nil {
@@ -298,4 +299,37 @@ func describeLoss(name string, err error, auto bool) (msg, hint string) {
 		return fmt.Sprintf("The link between this computer and squatter %q dropped (%v). Your game connections are held by the squatter and are not affected.", name, err),
 			"Reconnect to the squatter to catch up on everything that happened meanwhile."
 	}
+}
+
+func renamedTo(old, name string) string {
+	if old == "" {
+		return ""
+	}
+	return name
+}
+
+// followRename keeps a TinyFugue session's name equal to its world's name: when the world
+// is renamed (from SquatClient or from TinyFugue's side) the tab follows, and the UI is told
+// so it can keep its own world list in agreement.
+func (q *squatter) followRename(s *session, in proto.SessionInfo) {
+	if in.TF == nil || in.Name == "" {
+		return
+	}
+	s.mu.Lock()
+	old := s.info.Name
+	s.mu.Unlock()
+	if old == in.Name {
+		return
+	}
+	e := q.e
+	e.mu.Lock()
+	tfName := e.uniqueName(in.Name)
+	e.mu.Unlock()
+	s.mu.Lock()
+	s.tfName = tfName
+	s.info.Name = in.Name
+	s.world.Name = in.Name
+	s.publishInfoLocked()
+	s.mu.Unlock()
+	e.bus.publish(Event{Kind: EvTFWorlds, Text: q.id, OldName: old, NewName: in.Name})
 }

@@ -57,6 +57,10 @@ type session struct {
 	msdpLatest          map[string]any             // variable -> latest value
 	parser              *ansi.Parser
 	closed              bool
+	// a partial line TinyFugue reported as a prompt, held back briefly: if the finished
+	// line follows, the prompt was only the start of it and is dropped (see holdPrompt)
+	pend      *proto.Line
+	pendTimer *time.Timer
 }
 
 func newSession(b *Bridge, id string) (*session, error) {
@@ -96,7 +100,55 @@ func (s *session) broadcastLocked() {
 	}
 }
 
+// promptHold is how long a reported prompt waits for the line it may be the start of.
+// A real prompt ("Login: ") shows this much later; a straggling line shows once.
+const promptHold = 400 * time.Millisecond
+
+// flushPromptLocked records the held prompt, if any.
+func (s *session) flushPromptLocked() {
+	if s.pend == nil {
+		return
+	}
+	l := *s.pend
+	s.pend = nil
+	if s.pendTimer != nil {
+		s.pendTimer.Stop()
+		s.pendTimer = nil
+	}
+	s.appendRawLocked(scrollback.LineEntry(l))
+}
+
+// holdPromptLocked keeps a prompt back. A longer prompt that extends the held one replaces it.
+func (s *session) holdPromptLocked(l proto.Line) {
+	if s.pend != nil {
+		if strings.HasPrefix(promptText(l), promptText(*s.pend)) {
+			s.pend = nil // the same prompt grew: only the longer one matters
+		} else {
+			s.flushPromptLocked()
+		}
+	}
+	held := l
+	s.pend = &held
+	if s.pendTimer != nil {
+		s.pendTimer.Stop()
+	}
+	s.pendTimer = time.AfterFunc(promptHold, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.pend == &held && !s.closed {
+			s.flushPromptLocked()
+		}
+	})
+}
+
+func promptText(l proto.Line) string { return strings.TrimRight(ansi.PlainText(l.Spans), " \r\n") }
+
 func (s *session) appendLocked(e scrollback.Entry) {
+	s.flushPromptLocked() // keep the order of everything else
+	s.appendRawLocked(e)
+}
+
+func (s *session) appendRawLocked(e scrollback.Entry) {
 	seq, err := s.store.Append(e)
 	if err != nil {
 		s.b.log.Error("tfbridge: scrollback append", "id", s.id, "err", err)
@@ -165,6 +217,21 @@ func (s *session) addLine(kind, flags, origin string, ts int64, text, disp strin
 		if p := strings.TrimSpace(ansi.PlainText(spans)); p != "" {
 			s.lastText = p
 		}
+		// the finished line a held prompt was the start of: keep the line (it carries
+		// TinyFugue's gag and highlight), drop the prompt
+		if s.pend != nil {
+			if pt := promptText(*s.pend); pt != "" && strings.HasPrefix(promptText(l), pt) {
+				s.pend = nil
+				if s.pendTimer != nil {
+					s.pendTimer.Stop()
+					s.pendTimer = nil
+				}
+			}
+		}
+	}
+	if k == proto.KindGame && prompt {
+		s.holdPromptLocked(l)
+		return
 	}
 	s.appendLocked(scrollback.LineEntry(l))
 }
@@ -392,6 +459,9 @@ func (s *session) close() {
 		return
 	}
 	s.closed = true
+	if s.pendTimer != nil {
+		s.pendTimer.Stop()
+	}
 	s.mu.Unlock()
 	_ = s.store.Close()
 	_ = os.RemoveAll(s.dir)

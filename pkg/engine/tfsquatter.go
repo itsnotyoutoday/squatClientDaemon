@@ -249,6 +249,22 @@ func (e *Engine) TFExec(squatterID, line string) (wire.ExecResultMsg, error) {
 	return c.Exec(ctx, line)
 }
 
+// RenameTFWorld gives one of TinyFugue's world records a new name (also while it is connected).
+func (e *Engine) RenameTFWorld(squatterID, name, newName string, save bool) error {
+	_, c, err := e.tfSquatter(squatterID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, 15*time.Second)
+	defer cancel()
+	if _, err = c.RenameWorld(ctx, name, newName, save); err != nil {
+		return err
+	}
+	// the requester gets the reply, not the broadcast: tell this app's own listeners too
+	e.bus.publish(Event{Kind: EvTFWorlds, Text: squatterID, OldName: name, NewName: newName})
+	return nil
+}
+
 // PutTFScript stores a script in TinyFugue's scripts directory and, with load, runs it
 // (admin devices; TinyFugue's squat_scripts decides whether and how: "safe" is sandboxed).
 func (e *Engine) PutTFScript(squatterID, name, content string, load bool) (wire.ScriptResultMsg, error) {

@@ -233,6 +233,9 @@ func (b *Bridge) handle(m []string) {
 				}
 			}
 		}
+	case "WCHG":
+		// the world list changed in TinyFugue (its keyboard, a macro file, any client): clients re-list
+		b.broadcastWorldChanged(wire.WorldChangedMsg{V: proto.Version, T: wire.TWorldChanged})
 	case "WORLD":
 		b.onWorld(m)
 	case "OK", "ERR":

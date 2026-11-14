@@ -72,6 +72,7 @@ type WorldListMsg struct {
 const (
 	TWorldPut       = "world.put"
 	TWorldDelete    = "world.delete"
+	TWorldRename    = "world.rename"
 	TWorldChanged   = "world.changed"
 	TGmcpSend       = "gmcp.send"
 	TExec           = "tf.exec"
@@ -113,6 +114,15 @@ type WorldDeleteReq struct {
 	Name string `json:"name"`
 }
 
+// WorldRenameReq is world.rename: give a world record a new name (its other fields,
+// password and macros stay). It works while the world is connected.
+type WorldRenameReq struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	NewName string `json:"newName"`
+	Save    bool   `json:"save,omitempty"` // also run /saveworld in TinyFugue
+}
+
 // WorldChangedMsg is sent to every client after a world was created, edited or
 // deleted through the bridge. Clients re-list to see the record.
 type WorldChangedMsg struct {
@@ -122,6 +132,8 @@ type WorldChangedMsg struct {
 	Name    string `json:"name"`
 	Deleted bool   `json:"deleted,omitempty"`
 	Created bool   `json:"created,omitempty"`
+	// OldName is set when the world was renamed (Name is the new name).
+	OldName string `json:"oldName,omitempty"`
 }
 
 // GmcpSendReq is gmcp.send: Package plus optional JSON Data, sent to the game.

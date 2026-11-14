@@ -172,7 +172,7 @@ func run(tfBin, tfLib, bridgeBin, cobraGame, evenniaDir string, evenniaPort int,
 		name string
 		fn   func()
 	}{
-		{"handshake", e.handshake}, {"worlds", e.worlds}, {"cobra", e.cobraScenario}, {"evennia", e.evenniaScenario}, {"msdp", e.msdpScenario}, {"state", e.stateScenario}, {"mtts", e.mttsScenario},
+		{"handshake", e.handshake}, {"worlds", e.worlds}, {"cobra", e.cobraScenario}, {"rename", e.renameScenario}, {"evennia", e.evenniaScenario}, {"msdp", e.msdpScenario}, {"state", e.stateScenario}, {"mtts", e.mttsScenario},
 		{"ask", e.askScenario}, {"exec", e.execScenario}, {"scripts", e.scriptsScenario}, {"restart", e.restartScenario},
 	}
 	for _, s := range steps {
