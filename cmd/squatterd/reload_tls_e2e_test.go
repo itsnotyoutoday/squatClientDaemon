@@ -71,6 +71,7 @@ func (f *reloadFixture) registerCurrent() { stopPID(f.t, control(f.t, f.dir, "st
 func (f *reloadFixture) reloadOK() {
 	f.t.Helper()
 	rc, out := f.reload()
+	f.lastReload = out
 	if rc != 0 || !strings.Contains(out, "reloaded") {
 		f.t.Fatalf("reload: %d\n%s\nlog:\n%s", rc, out, f.p.logText())
 	}
@@ -402,6 +403,14 @@ func TestReloadWithOpenSSLServer(t *testing.T) {
 			t.Run(strings.TrimSpace(string(out))+"/"+c.name, func(t *testing.T) {
 				s := startSServer(t, bin, c.tls13, c.ciphers)
 				f := newReloadFixtureBase(t)
+				t.Cleanup(func() { // what GitHub's runners need to see when this fails there
+					if t.Failed() {
+						t.Logf("last reload output:\n%s\nstatus: %s\nlog:\n%s", f.lastReload, control(t, f.dir, "status"), f.p.logText())
+						for len(s.lines) > 0 {
+							t.Logf("s_server said: %q", <-s.lines)
+						}
+					}
+				})
 				w := proto.World{Host: "127.0.0.1", Port: s.port}
 				tlsWorld(&w)
 				f.openSession(w)

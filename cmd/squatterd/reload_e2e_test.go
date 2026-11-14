@@ -339,18 +339,19 @@ func atoi(s string) int {
 
 // reloadFixture starts a squatterd, one session and an attached client.
 type reloadFixture struct {
-	t    *testing.T
-	bin  string
-	dir  string
-	p    *proc
-	addr string
-	key  ed25519.PrivateKey
-	c    *wire.Client
-	game *fakemush.Server
-	info proto.SessionInfo
-	ctx  context.Context
-	from string // the squatterd's side of the TCP connection to the game
-	peer *fakemush.Peer
+	t          *testing.T
+	lastReload string // output of the last reload, for failure diagnostics
+	bin        string
+	dir        string
+	p          *proc
+	addr       string
+	key        ed25519.PrivateKey
+	c          *wire.Client
+	game       *fakemush.Server
+	info       proto.SessionInfo
+	ctx        context.Context
+	from       string // the squatterd's side of the TCP connection to the game
+	peer       *fakemush.Peer
 }
 
 func newReloadFixture(t *testing.T) *reloadFixture {
