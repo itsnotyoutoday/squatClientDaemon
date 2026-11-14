@@ -437,23 +437,33 @@ func (m *Machine) subneg(sb []byte) {
 	}
 }
 
+// ttypeName is the first TERMINAL-TYPE answer. Games key their client handling on a few well-known names
+// (CobraMUSH's prompt-capable table, Evennia's 256-colour list, ...): we are a TinyFugue-compatible
+// client, so we answer as TinyFugue first and only name ourselves at the end of the cycle.
+const ttypeName = "TINYFUGUE"
+
+// ttypeAnswer is the next answer of the TERMINAL-TYPE cycle (RFC 1091 + MTTS): 1st the client name
+// (TINYFUGUE), 2nd the terminal type, 3rd "MTTS <bits>", then our own name in upper case (SQUATCLIENT,
+// from cfg.ClientName) for servers that read the whole cycle and want to enable squat-specific features.
+// The last answer repeats, which tells the server the list is over. GMCP Core.Hello keeps ClientName as
+// configured.
 func (m *Machine) ttypeAnswer() []byte {
 	idx := m.ttypeIdx
-	if idx < 2 {
+	if idx < 3 {
 		m.ttypeIdx++
 	}
 	switch idx {
 	case 0:
-		// upper case: games match the first TTYPE name exactly and case-sensitively (e.g. CobraMUSH's
-		// prompt-capable table); GMCP Core.Hello keeps ClientName as configured
-		return []byte(strings.ToUpper(m.cfg.ClientName))
+		return []byte(ttypeName)
 	case 1:
 		if m.cfg.Caps.Truecolor {
 			return []byte("XTERM-TRUECOLOR")
 		}
 		return []byte("XTERM-256COLOR")
-	default:
+	case 2:
 		return []byte(fmt.Sprintf("MTTS %d", m.MTTS()))
+	default:
+		return []byte(strings.ToUpper(m.cfg.ClientName))
 	}
 }
 

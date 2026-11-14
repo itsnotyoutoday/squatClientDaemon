@@ -410,7 +410,7 @@ func TestResizeAndCapsUnion(t *testing.T) {
 		m.Sub(fakemush.OptTType, ask)
 		names = append(names, string(m.WaitSub(fakemush.OptTType, i)[1:]))
 	}
-	if names[0] != "SQUATCLIENT" || names[1] != "XTERM-TRUECOLOR" {
+	if names[0] != "TINYFUGUE" || names[1] != "XTERM-TRUECOLOR" {
 		t.Fatalf("ttype %v", names)
 	}
 	// a(utf8)+b(truecolor): ANSI1 + UTF8 4 + 256col 8 + PROXY 128 + TRUECOLOR 256

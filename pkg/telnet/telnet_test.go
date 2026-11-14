@@ -93,7 +93,7 @@ func TestTTYPECycleAndMTTS(t *testing.T) {
 		_, r, _ := m.Feed(ask)
 		got = append(got, string(r[4:len(r)-2]))
 	}
-	want := []string{"SQUATCLIENT", "XTERM-TRUECOLOR", "MTTS 269", "MTTS 269", "MTTS 269"}
+	want := []string{"TINYFUGUE", "XTERM-TRUECOLOR", "MTTS 269", "SQUATCLIENT", "SQUATCLIENT"}
 	// 1 ANSI + 4 UTF8 + 8 256 + 256 truecolor = 269
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
