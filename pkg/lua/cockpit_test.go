@@ -214,3 +214,37 @@ func toS(v any) string {
 	}
 	return s
 }
+
+// a game that pages long output: the capture asks for every page and leaves the pager
+func TestCockpitFollowsPager(t *testing.T) {
+	r, h := newRT(t, Options{})
+	if err := r.LoadString("layout:cockpit", cockpitLua(t)); err != nil {
+		t.Fatal(err)
+	}
+	r.FireEventFor("w", "gmcp", map[string]any{"package": "Room.Info", "data": map[string]any{"name": "A"}, "world": "w"}, true)
+	r.OnInput("w", "/helpbrowser")
+	for _, l := range []string{"-- Admin ----------", "ban  boot", "(Page [1/2] next | previous | top | end | quit)"} {
+		r.OnLine("w", line(l), true)
+	}
+	h.advance(600 * time.Millisecond)
+	if last := h.sends[len(h.sends)-1].text; last != "next" {
+		t.Fatalf("did not ask for page 2: %v", h.sends)
+	}
+	for _, l := range []string{"-- General ----------", "look  who", "(Page [2/2] next | previous | top | end | quit)"} {
+		r.OnLine("w", line(l), true)
+	}
+	h.advance(900 * time.Millisecond)
+	if last := h.sends[len(h.sends)-1].text; last != "quit" {
+		t.Fatalf("did not leave the pager: %v", h.sends)
+	}
+	r.OnLine("w", line("Exited pager."), true)
+	h.advance(900 * time.Millisecond)
+	v, _ := r.GetVar("ui.windows")
+	hw, _ := v.(map[string]any)["help"].(map[string]any)
+	if hw == nil {
+		t.Fatal("no help window")
+	}
+	if n := len(hw["body"].(map[string]any)["children"].([]any)); n != 3 { // filter + Admin + General
+		t.Fatalf("categories: %d children", n)
+	}
+}

@@ -15,8 +15,9 @@ import (
 //
 //   - "/lua <code>": run in the Lua console;
 //   - "/load file.lua" and "/reload": Lua plugin loading / reloading
-//     (everything else beginning with "/" goes to the TF interpreter, which
+//     (other "/" commands try Lua aliases, then go to the TF interpreter, which
 //     reports unknown commands itself as "% /x: no such command. Type /help for help.");
+//   - any other "/command": Lua aliases and input handlers first (so a script can define /who), then TF
 //   - anything else: Lua input handlers/aliases first, then TF (SEND hook,
 //     then the world). Typed text is echoed (kind echo) unless the server has
 //     asked for no echo.
@@ -87,6 +88,11 @@ func (e *Engine) Input(id, text string) error {
 			} else {
 				s.systemLine("*** Suspended: no squatter sessions to detach (direct connections stay live); the window was minimised.")
 			}
+			return nil
+		}
+		// a Lua alias (or input handler) may claim a slash command of its own: /who, /helpbrowser, ... Scripts
+		// and layouts use this for commands that open windows. Built-ins above are never overridden.
+		if e.lua.OnInput(s.id, text) {
 			return nil
 		}
 		_ = e.tf.Exec(s.tfName, text)

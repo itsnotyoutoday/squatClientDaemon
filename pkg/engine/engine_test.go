@@ -180,6 +180,12 @@ func TestInputCommands(t *testing.T) {
 	_ = e.Input(si.ID, `/lua squat.alias{match="k *", fn=function(m) squat.send("kill "..m[1]) end}`)
 	_ = e.Input(si.ID, "k orc")
 	srv.ExpectLine("kill orc")
+	// a Lua alias can claim a slash command of its own; TF still answers the ones nobody claimed
+	_ = e.Input(si.ID, `/lua squat.alias{match="/who", fn=function() squat.send("WHO") end}`)
+	_ = e.Input(si.ID, "/who")
+	srv.ExpectLine("WHO")
+	_ = e.Input(si.ID, "/stillnosuchcmd")
+	r.waitLine(t, si.ID, "no such command")
 	if err := e.Input("nope", "x"); err != engine.ErrNoSession {
 		t.Fatalf("want ErrNoSession, got %v", err)
 	}
