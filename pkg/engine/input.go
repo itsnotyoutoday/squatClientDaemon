@@ -80,6 +80,28 @@ func (e *Engine) Input(id, text string) error {
 				s.systemLine("% " + friendlySendErr(err).Error())
 			}
 			return nil
+		case "tf":
+			// /tf <command>: FORCE the command to the REMOTE real TinyFugue that carries this session
+			// (tf.exec: admin device, squat_exec on). Output comes back as system lines.
+			e.forwardTF(s, arg)
+			return nil
+		case "local":
+			// /local <command>: FORCE the command to this client's own script engine, past Lua aliases
+			// (which otherwise claim slash commands first), even on a session carried by a remote TinyFugue.
+			if arg == "" {
+				s.systemLine("% usage: /local <command>   (run it in this client, never forwarded)")
+				return nil
+			}
+			if !strings.HasPrefix(arg, "/") {
+				arg = "/" + arg
+			}
+			_ = e.tf.Exec(s.tfName, arg)
+			return nil
+		case "stop":
+			// /stop: interrupt a runaway script (the TF engine's Ctrl-C)
+			e.StopScripts()
+			s.systemLine("% script interrupted (if one was running)")
+			return nil
 		case "suspend", "detach":
 			// owner decision 17: detach squatter sessions, minimise the window.
 			// Handled here, before TF (which only accepts /suspend as a no-op).
@@ -107,6 +129,36 @@ func (e *Engine) Input(id, text string) error {
 	s.userSend.Add(-1)
 	return nil
 }
+
+// forwardTF implements /tf: run line in the real TinyFugue behind the session.
+func (e *Engine) forwardTF(s *session, line string) {
+	if line == "" {
+		s.systemLine("% usage: /tf <command>   (run it in the remote TinyFugue behind this session)")
+		return
+	}
+	if s.remote == nil || !s.remote.sq.isTF() {
+		s.systemLine("% /tf: this session does not run through a remote TinyFugue (use /local to be explicit about this client)")
+		return
+	}
+	if !strings.HasPrefix(line, "/") {
+		line = "/" + line
+	}
+	res, err := e.TFExec(s.remote.sq.id, line)
+	if err != nil {
+		s.systemLine("% /tf: " + err.Error())
+		return
+	}
+	for _, l := range res.Out {
+		s.systemLine(l)
+	}
+	if !res.OK && len(res.Out) == 0 {
+		s.systemLine("% /tf: TinyFugue reported an error")
+	}
+}
+
+// StopScripts interrupts the script the TF engine is running, if any (a
+// runaway loop). Safe from any goroutine.
+func (e *Engine) StopScripts() { e.tf.Interrupt() }
 
 func splitCmd(t string) (name, arg string) {
 	t = strings.TrimSpace(t)
