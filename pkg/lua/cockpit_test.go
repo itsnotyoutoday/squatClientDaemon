@@ -73,3 +73,144 @@ func TestCockpitLayoutLua(t *testing.T) {
 		t.Fatalf("timer kept running: %v", vars("uptime"))
 	}
 }
+
+func cockpitLua(t *testing.T) string {
+	b, err := os.ReadFile("../../../squatClient-layouts/internal/layouts/starters/evennia-cockpit.layout")
+	if err != nil {
+		t.Skip("layout file not next to this repo")
+	}
+	return string(regexp.MustCompile(`(?s)<lua>\n(.*?)</lua>`).FindSubmatch(b)[1])
+}
+
+// the real output of an Evennia game's WHO and HELP, captured and turned into windows
+func TestCockpitWhoAndHelp(t *testing.T) {
+	r, h := newRT(t, Options{})
+	if err := r.LoadString("layout:cockpit", cockpitLua(t)); err != nil {
+		t.Fatal(err)
+	}
+	r.FireEventFor("w", "gmcp", map[string]any{"package": "Room.Info", "data": map[string]any{"name": "Limbo"}, "world": "w"}, true)
+	win := func(id string) map[string]any {
+		v, _ := r.GetVar("ui.windows")
+		m, _ := v.(map[string]any)
+		w, _ := m[id].(map[string]any)
+		return w
+	}
+	if win("trail") == nil {
+		t.Fatal("no trail panel")
+	}
+	feed := func(lines ...string) (gagged int) {
+		for _, l := range lines {
+			if r.OnLine("w", line(l), true).Gag {
+				gagged++
+			}
+		}
+		h.advance(600 * time.Millisecond)
+		return
+	}
+
+	// WHO
+	if !r.OnInput("w", "/who") || len(h.sends) == 0 || h.sends[len(h.sends)-1].text != "who" {
+		t.Fatalf("who not requested: %v", h.sends)
+	}
+	n := feed("Accounts:",
+		"+--------------+--------+------+",
+		"| Account Name | On for | Idle |",
+		"+--------------+--------+------+",
+		"| god          | 00:00  | 1s   |",
+		"| ann          | 02:10  | 5m   |",
+		"+--------------+--------+------+",
+		"2 unique accounts logged in.")
+	if n != 8 {
+		t.Fatalf("who output not hidden: %d gagged", n)
+	}
+	if v, _ := r.GetVar("who_count"); v != 2.0 {
+		t.Fatalf("who_count %v", v)
+	}
+	w := win("who")
+	if w == nil {
+		t.Fatal("no who window")
+	}
+	body := w["body"].(map[string]any)["children"].([]any)
+	tbl := body[0].(map[string]any)
+	rows := tbl["rows"].([]any)
+	if tbl["type"] != "table" || len(rows) != 2 || rows[1].(map[string]any)["account_name"] != "ann" {
+		t.Fatalf("who table: %v", tbl)
+	}
+	// text after the capture is not hidden any more
+	if r.OnLine("w", line("You hear a bell."), true).Gag {
+		t.Fatal("still gagging")
+	}
+
+	// HELP index
+	r.OnInput("w", "/helpbrowser")
+	feed("-----------------------------------Commands-----------------------------------",
+		"                                                                              ",
+		"-- Admin ---------------------------------------------------------------------",
+		"ban          boot         emit         perm         unban                     ",
+		"-- Building ------------------------------------------------------------------",
+		"alias        batchcode    desc         dig          examine                   ",
+		"-- General -------------------------------------------------------------------",
+		"get          help         look         who                                    ",
+		"---------------------------------Game & World---------------------------------",
+		"evennia")
+	hw := win("help")
+	if hw == nil {
+		t.Fatal("no help window")
+	}
+	kids := hw["body"].(map[string]any)["children"].([]any)
+	if len(kids) != 5 { // the filter box and four categories
+		t.Fatalf("help window: %d children: %v", len(kids), kids)
+	}
+	// filter
+	r.OnInput("w", "/hfind di")
+	kids = win("help")["body"].(map[string]any)["children"].([]any)
+	if len(kids) != 2 {
+		t.Fatalf("filtered: %d", len(kids))
+	}
+
+	// one topic
+	r.OnInput("w", "/htopic dig")
+	feed("------------------------------------------------------------------------------",
+		"Help for dig",
+		"",
+		"build new rooms and connect them to the current location",
+		"",
+		"Usage:",
+		"  dig[/switches] <roomname>[;alias] = <exit_to_there>",
+		"",
+		"Switches:",
+		"   tel or teleport - move yourself to the new room",
+		"",
+		"This command is a convenient way to build rooms quickly; use look and examine to check them.",
+		"------------------------------------------------------------------------------")
+	tw := win("helptopic")
+	if tw == nil {
+		t.Fatal("no topic window")
+	}
+	var types []string
+	var seeAlso []string
+	for _, k := range tw["body"].(map[string]any)["children"].([]any) {
+		km := k.(map[string]any)
+		types = append(types, km["type"].(string)+":"+toS(km["value"]))
+		if km["type"] == "grid" {
+			for _, b := range km["children"].([]any) {
+				seeAlso = append(seeAlso, b.(map[string]any)["text"].(string))
+			}
+		}
+	}
+	// "alias" appears in the usage line, then look and examine in the text; the topic itself is not listed
+	if len(seeAlso) != 3 || seeAlso[0] != "alias" || seeAlso[1] != "look" || seeAlso[2] != "examine" {
+		t.Fatalf("see also %v (%v)", seeAlso, types)
+	}
+	if types[0] != "heading:dig" {
+		t.Fatalf("types %v", types)
+	}
+}
+
+func toS(v any) string {
+	s, _ := v.(string)
+	if len(s) > 20 {
+		s = s[:20]
+	}
+	return s
+}
