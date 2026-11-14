@@ -137,6 +137,36 @@ Values are strings, numbers, booleans, or tables of those (JSON-compatible; func
 `set(name, nil)` deletes. The store is shared by all plugins (prefix your names) and survives
 `/reload`.
 
+## 7b. Windows and panels: `squat.ui`
+
+A script can open its own windows and docked panels in the SquatClient window. The runtime only keeps them as
+data (the variable `ui.windows`); the client draws them, so they cost nothing in a client that has no window.
+They belong to the script that opened them and disappear when it is unloaded (for a layout, when another
+layout is chosen).
+
+```lua
+squat.ui.window{id = "who", title = "Who is online", x = 140, y = 90, w = 420,
+  body = {type = "column", gap = 8, children = {
+    {type = "table", columns = {{key = "name", title = "Name"}}, rows = {{name = "ann"}}},
+    {type = "button", text = "Refresh", send = "/who"},
+  }}}
+squat.ui.panel{id = "trail", title = "Trail", dock = "right", body = {type = "text", value = "Limbo"}}
+squat.ui.update("who", {title = "Who (3)"})     -- shallow merge into the spec
+squat.ui.close("who");  squat.ui.list();  squat.ui.get("who")
+```
+
+`window` floats (the user drags it by the title bar and closes it with the ×; `open` is the same); `panel` docks
+where a layout puts `<LuaPanels dock="right" />`. At most 32 at a time.
+
+A `body` is a tree of nodes `{type = ..., children = {...}, ...props}`:
+`column`, `row`, `grid` (`columns`), `panel` (`title`, `collapsible`, `open`), `tabs` (children with `title`),
+`separator`, `heading` (`value`), `text` (`value`, `dim`, `bold`, `mono`, or `bind = "gmcp:Char.Vitals.hp"`),
+`code` (`value`), `badge` (`value`, `tone` = ok|warn|danger), `button` (`text`, `send`, `tip`, `disabled`),
+`table` (`columns`, `rows`, `empty`), `list` (`items`, `text`, `send` with `{name}`, `title`),
+`gauge` (`value`, `max`, `label`, `color`), `input` (`placeholder`, `send` with `{value}`; Enter sends).
+Unknown types draw nothing. Nothing in a spec is code: a button's `send` is text that goes through the normal
+input pipeline, so a Lua alias can answer it (`send = "/who"` + `squat.alias{match = "/who", ...}`).
+
 ## 8. Regular expressions
 
 `squat.regex.match(pattern, text)` returns `nil` or a table `m[0]`, `m[1..n]`, `m.named`;
