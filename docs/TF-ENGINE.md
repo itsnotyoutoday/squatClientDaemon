@@ -145,3 +145,24 @@ Routing: none (docs/TF-ROUTING.md). Language and library:
 * Files: relative `/load` names are searched in the current directory first,
   then the config directory (was: config directory only).
 * Regular expressions are PCRE2-compatible (were RE2), integers are 64-bit.
+
+## Merging
+
+Two branches, both named `gtf-engine`: this repository (daemon) and the SquatClient repository (client).
+Merge the daemon first, then the client.
+
+1. **Engine release.** Both branches build against engine `gtfparser` main (v0.0.5 plus the engine's
+   unreleased commits, among them `core: LimitFilter`) through a local-development `replace` in `go.mod`.
+   Wait for the engine release that contains them (v0.0.6 or later) and its tag on GitHub.
+2. **Daemon.** In `go.mod`: delete the `replace github.com/itsnotyoutoday/gtfparser => ...` line and its
+   comment, set `require github.com/itsnotyoutoday/gtfparser vX.Y.Z` to the release, then
+   `GOWORK=off go mod tidy` (this fills `go.sum`) and `GOWORK=off go test ./...`. Merge `gtf-engine`
+   into main and push.
+3. **Client.** In `go.mod`: delete both local `replace` lines (the one for `squatClientDaemon` that points
+   at `../squatClientDaemon-gtf`, and the gtfparser one), `go get github.com/itsnotyoutoday/squatClientDaemon@<the merged daemon commit>`
+   (or its tag), keep `require ... gtfparser vX.Y.Z` (an indirect requirement is fine), then
+   `GOWORK=off go mod tidy`, `GOWORK=off go test ./...`, `cd frontend && npx vitest run`, `wails build`.
+   Merge `gtf-engine` into main.
+4. **No other steps:** the frontend generated help files are already committed; real tf's library is not
+   bundled (optional `SQUATCLIENT_TFLIB`); `docs/TF-LANGUAGE.md` and `docs/TF-COMPAT.md` stay as
+   historical files because the client's in-app help imports copies of them.
