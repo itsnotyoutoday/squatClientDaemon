@@ -10,13 +10,16 @@ You need a Linux or FreeBSD machine that stays on (a shell account, a VPS, a hom
 curl -fsSL https://raw.githubusercontent.com/itsnotyoutoday/squatClientDaemon/squatterbridge/install.sh | sh
 ```
 
-(`wget -qO- <same url> | sh` works too.) It picks the right download for your CPU, checks its checksum and asks four questions (answers come from your terminal, even when piped from curl). Press Enter to accept a default:
+(`wget -qO- <same url> | sh` works too.) It picks the right download for your CPU, checks its checksum and asks five questions (answers come from your terminal, even when piped from curl). Press Enter to accept a default:
 
 ```
-Set up standalone squatterd? [y/n]                 (default y)
-Set up TinyFugue support (tf-squatterd)? [y/n]     (default n)
-Enable automatic updates? [y/n]                    (default n)
-Install the programs into which folder?            (default ~/.local/bin)
+Set up standalone squatterd? [y/n]                                  (default y)
+Install the SquatClient-ready TinyFugue (builds it from source
+  into your home directory)? [y/n]                                  (default n)
+Install the TinyFugue bridge (tf-squatterd)? [y/n]                  (default y if you
+                                                                     said yes above, else n)
+Enable automatic updates? [y/n]                                     (default n)
+Install the programs into which folder?                             (default ~/.local/bin)
 ```
 
 **2. Start it** and leave it running (a `tmux` or `screen` window is fine):
@@ -35,7 +38,7 @@ squatterd pair
 
 It prints a one-time code, the TLS fingerprint and a `host:port`. In SquatClient add a squatter with that `host:port` and code, and check that the fingerprint matches (it is pinned on first use). The code is needed once per device.
 
-Done: your game connections now stay up when SquatClient is closed. **TinyFugue users:** answer yes to the second question; TinyFugue starts `tf-squatterd` itself (`/squat on`, then `/squat pair`).
+Done: your game connections now stay up when SquatClient is closed. **TinyFugue users:** see [TinyFugue](#tinyfugue) below.
 
 ### Keeping it up to date
 
@@ -46,6 +49,33 @@ Done: your game connections now stay up when SquatClient is closed. **TinyFugue 
 
 Run the installer again at any time to upgrade or add the other program; your data in `~/.squatterd` is never touched.
 
+### TinyFugue
+
+Two separate questions, because they are separate things:
+
+* **The SquatClient-ready TinyFugue** (`--tinyfugue`) is our modified TinyFugue ([fork](https://github.com/itsnotyoutoday/tinyfugue), branch `squatterbridge`) that can be paired with SquatClient. The installer downloads its source, builds it in a temporary folder and installs `tf` into the install folder you chose and its library into `~/.local/share/tf-lib`. Nothing outside your home directory is touched and nothing needs root. It takes a minute or so; the build log is kept in `~/.squatterd/tinyfugue-build.log`. Run the installer again to rebuild or update it.
+* **The bridge** (`--tf`) is `tf-squatterd`, the helper TinyFugue starts when you type `/squat on`. You need it for the first one to be useful, so it defaults to yes when you chose the first. You can also install it alone to use with a TinyFugue you built yourself.
+
+Start it with `tf` (or `~/.local/bin/tf`), then inside TinyFugue:
+
+```
+/squat on        start the bridge (TinyFugue finds tf-squatterd on your PATH, or: /set squat_bin=~/.local/bin/tf-squatterd)
+/squat pair      print a one-time pairing code and the TLS fingerprint for SquatClient
+```
+
+TinyFugue keeps the bridge's keys and paired devices in `~/.tf-squatter` (override with `/set squat_dir=...`), so pair from inside TinyFugue with `/squat pair`. (A standalone `tf-squatterd pair` run from a shell defaults to `~/.squatterd/tf`, or to `~/.tf-squatter` when that exists; pass the same `--data-dir` to be sure.)
+
+**Build requirements.** A C compiler, `make`, and the development headers for OpenSSL, zlib, PCRE2 (not the old PCRE), ncurses and ICU. The installer checks first; if something is missing it lists it and offers to carry on without TinyFugue instead of failing the whole install. Install them with:
+
+| System | Command |
+|---|---|
+| Debian / Ubuntu | `sudo apt install build-essential libssl-dev zlib1g-dev libpcre2-dev libncurses-dev libicu-dev` |
+| Fedora / RHEL | `sudo dnf install gcc make openssl-devel zlib-devel pcre2-devel ncurses-devel libicu-devel` |
+| Arch | `sudo pacman -S base-devel openssl zlib pcre2 ncurses icu` |
+| FreeBSD | `sudo pkg install gmake pcre2 icu` (OpenSSL, zlib and ncurses are in the base system) |
+
+No root on the machine? Ask the administrator for those packages. MSDP support is included when `flex` is installed (GMCP always is).
+
 ### Installer switches
 
 Every question has a switch, so it also runs unattended (with no terminal and no switches it uses the defaults):
@@ -53,7 +83,9 @@ Every question has a switch, so it also runs unattended (with no terminal and no
 | Switch | Meaning |
 |---|---|
 | `--standalone` / `--no-standalone` | install squatterd or not |
-| `--tf` / `--no-tf` | install tf-squatterd or not |
+| `--tinyfugue` / `--no-tinyfugue` | build and install the SquatClient-ready TinyFugue (`tf`) from source, or not |
+| `--tf` / `--no-tf` | install the bridge tf-squatterd or not (default: yes when TinyFugue is being installed, else no) |
+| `--tf-ref REF` | TinyFugue branch or tag to build (default `squatterbridge`) |
 | `--auto-update` / `--no-auto-update` | write `auto_update` into the config file |
 | `--dir PATH` | install folder (default `~/.local/bin`) |
 | `--version v0.0.1` | a specific release (default: the newest, pre-releases included) |

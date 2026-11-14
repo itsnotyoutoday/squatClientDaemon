@@ -217,6 +217,20 @@ func TestRemoteFreshEngineReplaysWithoutFiring(t *testing.T) {
 	game.SendLine("hello")
 	r1.waitLine(t, si.ID, "hello")
 	_ = e1.Ack(si.ID, 1<<40)
+	// The ack travels to the daemon asynchronously: wait until it has been recorded for this device, or
+	// closing the app right away can drop it on a slow machine and "hello" is replayed as unread.
+	if st1, _ := e1.SquatterStatus("sq"); st1.DeviceID != "" {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if ss := env.d.Sessions(st1.DeviceID); len(ss) == 1 && ss[0].Unread == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the daemon never recorded the ack for hello")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	e1.Close() // the app closes: the session survives in the daemon
 	game.SendLine("PING")
 	game.SendLine("tells you late")

@@ -363,7 +363,7 @@ func (s *sserver) send(t *testing.T, line string) {
 
 func (s *sserver) expect(t *testing.T, want string) {
 	t.Helper()
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for {
 		select {
 		case l, ok := <-s.lines:

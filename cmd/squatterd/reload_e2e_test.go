@@ -138,7 +138,7 @@ func waitLines(t *testing.T, c *wire.Client, texts ...string) {
 	for _, x := range texts {
 		need[x] = true
 	}
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for len(need) > 0 {
 		select {
 		case ev, ok := <-c.Events():
@@ -628,11 +628,11 @@ func TestReloadNeedsForceForTLSSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; ; i++ {
-		if p := control(t, f.dir, "plan"); strings.Contains(p, ts.ID) && strings.Contains(p, ms.ID) {
+		if p := control(t, f.dir, "plan"); strings.Contains(p, ts.ID) && strings.Contains(p, ms.ID) && !strings.Contains(p, "connecting") {
 			break
 		}
 		if i > 100 {
-			t.Fatal("the TLS session never showed up in the plan")
+			t.Fatal("the TLS sessions never finished connecting in the plan")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

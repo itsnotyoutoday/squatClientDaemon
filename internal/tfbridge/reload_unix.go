@@ -373,6 +373,14 @@ func (s *service) startControl(context.Context) func() {
 	}()
 	return func() {
 		_ = ln.Close()
+		// Let the command that is being answered (a successful reload answers "ok" only after this process
+		// has handed over and is about to exit) finish its reply before the process goes away.
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
 		select {
 		case <-s.handedOver: // the new process owns the path now
 		default:
