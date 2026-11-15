@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/itsnotyoutoday/cmcp/msg"
 	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
 	"github.com/itsnotyoutoday/cmcp/textport"
@@ -587,4 +589,80 @@ func viewItems(props map[string]any, scr *pack.Screen) ([]map[string]any, map[st
 // cmcpWidgets is what this client draws: every core widget and the optional joystick, scope (as a radar) and lights.
 func cmcpWidgets(w string) bool {
 	return pack.IsCoreWidget(w) || w == "joystick" || w == "scope" || w == "lights"
+}
+
+var pkgRefRE = regexp.MustCompile(`@([A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)*):`)
+
+// screenPackages lists the data packages a screen reads (the `@Package:path` references of its bindings).
+func screenPackages(scr *pack.Screen) []string {
+	seen := map[string]bool{}
+	var out []string
+	var walk func(n *pack.Node)
+	walk = func(n *pack.Node) {
+		srcs := []string{}
+		for _, v := range n.BindSrc {
+			srcs = append(srcs, v)
+		}
+		for _, src := range srcs {
+			for _, m := range pkgRefRE.FindAllStringSubmatch(src, -1) {
+				if !seen[m[1]] {
+					seen[m[1]] = true
+					out = append(out, m[1])
+				}
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(scr.Root)
+	sort.Strings(out)
+	return out
+}
+
+// CmcpShowScreen switches the LOCALLY displayed screen of the current console (the console-switch column of the themes): the screen is
+// one of the built-in std.* screens (or a screen of the console's pack); the packages it needs are subscribed explicitly (ref counted
+// under the owner "nav", released when switching to a screen that needs fewer). The choice lasts until the console changes.
+func (e *Engine) CmcpShowScreen(id, screen string) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	ui := cm.c.UI()
+	if ui.Console == nil {
+		return fmt.Errorf("engine: no console is manned")
+	}
+	var scr *pack.Screen
+	if strings.HasPrefix(screen, "std.") {
+		scr = pack.Builtin(screen)
+	} else if pid, sid, ok := strings.Cut(screen, "/"); ok {
+		ss := cm.screens()
+		ss.mu.Lock()
+		if p := ss.packs[pid]; p != nil {
+			scr = p.Screens[sid]
+		}
+		ss.mu.Unlock()
+	}
+	if scr == nil {
+		return fmt.Errorf("engine: no screen %q", screen)
+	}
+	implicit := map[string]bool{}
+	for _, sb := range ui.Subs {
+		if sb.Source == "console" || sb.Source == "always" {
+			implicit[sb.Pkg] = true
+		}
+	}
+	var subs []msg.SubSpec
+	for _, p := range screenPackages(scr) {
+		if !implicit[p] {
+			subs = append(subs, msg.SubSpec{Pkg: p})
+		}
+	}
+	ss := cm.screens()
+	ss.mu.Lock()
+	ss.override, ss.overFor = screen, consoleID(ui)
+	ss.mu.Unlock()
+	err = e.CmcpAcquire(id, "nav", subs)
+	cm.schedule()
+	return err
 }

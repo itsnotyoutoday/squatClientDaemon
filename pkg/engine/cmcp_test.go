@@ -691,3 +691,45 @@ func TestCmcpViewStateAndTheme(t *testing.T) {
 	})
 	g.waitUI("data flows", func(u *engine.CmcpUI) bool { return u.Seqs["Space.Damage.Stat"] >= 2 })
 }
+
+// The console-switch column: a click shows another screen of the same console locally, subscribes what it needs (ref counted under
+// "nav") and the choice ends with the console.
+func TestCmcpShowScreen(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Ops.Stat"}}, Commands: []string{"dmg.assign"}})
+	})
+	g.waitUI("operations", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.operations" })
+	if err := g.e.CmcpShowScreen(g.sid, "std.damage"); err != nil {
+		t.Fatal(err)
+	}
+	ui := g.waitUI("damage shown", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.damage" })
+	has := func(u *engine.CmcpUI, pkg string) bool {
+		for _, sb := range u.Subs {
+			if sb.Pkg == pkg {
+				return true
+			}
+		}
+		return false
+	}
+	g.waitUI("nav subscriptions", func(u *engine.CmcpUI) bool { return has(u, "Space.Damage.Stat") && has(u, "Space.Damage.Teams") })
+	_ = ui
+	if err := g.e.CmcpShowScreen(g.sid, "std.nope"); err == nil {
+		t.Fatal("an unknown screen was accepted")
+	}
+	// back to operations: what damage needed is released
+	if err := g.e.CmcpShowScreen(g.sid, "std.operations"); err != nil {
+		t.Fatal(err)
+	}
+	g.waitUI("released", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && u.Tree.Screen == "std.operations" && !has(u, "Space.Damage.Teams")
+	})
+	// a different console resets the choice
+	_ = g.e.CmcpShowScreen(g.sid, "std.tactical")
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "science", Name: "Sci"}, Screen: "std.sensors", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}}, Commands: []string{"scan.srs"}})
+	})
+	g.waitUI("console change resets", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.sensors" })
+}
