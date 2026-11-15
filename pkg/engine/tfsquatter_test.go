@@ -716,3 +716,37 @@ func linesOf(r *rec, id string) []string {
 	}
 	return out
 }
+
+// TinyFugue scripts expect `/def -hCONNECT = /localecho off` to work on every world. A squatter session is attached to a connection somebody else
+// opened, so the client runs the CONNECT hooks when it first sees the session, with everything they send to the game discarded (a login macro
+// cannot log in twice). (Fall-through macros: with several non-fall-through macros of equal priority TinyFugue runs only one, chosen at random.)
+func TestTFConnectHookRunsOnAttachWithoutSending(t *testing.T) {
+	v := newTFEnv(t)
+	dir := t.TempDir()
+	mustWrite(t, dir+"/startup.tf", "/def -F -hCONNECT localecho_off = /localecho off\n/def -F -hCONNECT login_again = say i-must-not-be-sent\n")
+	e, r := newEngine(t, func(o *engine.Options) { o.ConfigDir = dir })
+	_ = e.LoadScripts()
+	if err := e.AddSquatter(v.cfg("tf", "admin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ConnectSquatter(ctxT(t), "tf"); err != nil {
+		t.Fatal(err)
+	}
+	id := v.session(t, e, r)
+	st, _ := e.SquatterStatus("tf")
+	v.fake.Line(tsid, "e", "", st.DeviceID, "own typing after attach")
+	v.fake.Line(tsid, "e", "", "someone-else", "other device after attach")
+	v.fake.Line(tsid, "g", "", "game", "marker")
+	r.until(t, "marker", func() bool { return r.has(id, "marker") })
+	if r.has(id, "own typing after attach") {
+		t.Fatalf("the CONNECT hook's /localecho off did not take effect on the attached session: %v", linesOf(r, id))
+	}
+	if !r.has(id, "other device after attach") {
+		t.Fatalf("another device's echo is still shown: %v", linesOf(r, id))
+	}
+	for _, s := range v.fake.SendTexts() {
+		if strings.Contains(s, "i-must-not-be-sent") {
+			t.Fatalf("a CONNECT macro sent text to the game on attach: %q", v.fake.SendTexts())
+		}
+	}
+}

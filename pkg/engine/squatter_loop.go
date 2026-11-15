@@ -199,6 +199,12 @@ func (e *Engine) newRemoteSession(q *squatter, in proto.SessionInfo, link string
 	if first {
 		e.bus.publish(Event{Kind: EvForeground, Session: id})
 	}
+	if in.State == proto.StateConnected {
+		// This client attaches to a game connection somebody else opened (a squatter holds it), so no connecting-to-connected change will ever be
+		// seen. TinyFugue scripts expect CONNECT hooks to run when a world is connected (/def -hCONNECT = /localecho off): run them now, before the
+		// UI hears of the session, with whatever they send to the game discarded so a login macro cannot log in twice.
+		e.tf.FireHookWorldNoSend(tfName, "CONNECT", w.Name)
+	}
 	s.mu.Lock()
 	s.publishInfoLocked()
 	s.mu.Unlock()

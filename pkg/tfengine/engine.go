@@ -128,6 +128,7 @@ type Engine struct {
 	statusDirty bool
 	keySig      string // the bindings the host was last told about
 	muted       bool   // world sync is running: its chatter is not shown
+	noSend      bool   // a hook is running whose sends to games are discarded (FireHookWorldNoSend)
 	inKey       bool
 }
 
@@ -287,6 +288,17 @@ func (a *Engine) LoadString(name, src string) error {
 // callback (use Post).
 func (a *Engine) FireHookWorld(world, event string, args ...string) {
 	a.do(world, func(in *gtfparser.Interp) { in.Hook(strings.ToUpper(event), strings.Join(args, " ")) })
+}
+
+// FireHookWorldNoSend fires a hook like FireHookWorld, but whatever the hooked macros try to send to a game is discarded: for a session this client
+// attaches to after its connection was opened by someone else (a squatter session), so CONNECT macros that set up this client (/localecho, /wrap,
+// highlights, ...) run, and a macro that logs in or sends commands cannot send them a second time.
+func (a *Engine) FireHookWorldNoSend(world, event string, args ...string) {
+	a.do(world, func(in *gtfparser.Interp) {
+		a.noSend = true
+		defer func() { a.noSend = false }()
+		in.Hook(strings.ToUpper(event), strings.Join(args, " "))
+	})
 }
 
 // GetVar returns a TF variable's value as text.

@@ -99,6 +99,9 @@ func (h *coreHost) DisplayLine(world, text string) {
 // first. A failure is shown to the user the TF way.
 func (h *coreHost) Send(world, text string) bool {
 	a := h.a
+	if a.noSend {
+		return true // discarded without a word: see FireHookWorldNoSend
+	}
 	if world == "" {
 		world = a.cur
 	}
