@@ -87,7 +87,8 @@ type CmcpUI struct {
 	Screens           []CmcpScreenOption         `json:"screens"` // the screen menu (console-switch column)
 	LocalScreen       string                     `json:"localScreen,omitempty"`
 	Pinned            bool                       `json:"pinned,omitempty"`
-	Tree              *CmcpTree                  `json:"tree"` // the bound screen, nil = no console screen
+	Status            map[string]any             `json:"status,omitempty"` // Space.Ship.Status (name, alert, hull, core, lock) for the frame
+	Tree              *CmcpTree                  `json:"tree"`             // the bound screen, nil = no console screen
 }
 
 // CmcpStackEntry is one held context (a console, a room, an away team, an event, a dock).
@@ -342,6 +343,9 @@ func (cm *cmcpSess) publish() {
 	ui := cm.c.UI()
 	cm.lastRev.Store(ui.Rev)
 	d := cmcpDTO(cm.s.id, ui)
+	if st, ok := ui.Docs[msg.PkgShipStatus].(map[string]any); ok {
+		d.Status = st
+	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
 	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
@@ -448,6 +452,9 @@ func (e *Engine) CmcpUI(id string) (*CmcpUI, error) {
 	}
 	ui := cm.c.UI()
 	d := cmcpDTO(id, ui)
+	if st, ok := ui.Docs[msg.PkgShipStatus].(map[string]any); ok {
+		d.Status = st
+	}
 	d.Tree = cm.tree(ui)
 	return d, nil
 }
