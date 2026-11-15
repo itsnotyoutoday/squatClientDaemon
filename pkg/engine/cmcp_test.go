@@ -75,64 +75,87 @@ func (f *fakeTr) Close() {
 }
 func (f *fakeTr) SendFrame(b []byte) error { f.onTx(b); return nil }
 
-func TestCmcpEndToEnd(t *testing.T) {
-	game := &cmcpGame{}
-	one := false
-	srv := cs.NewServer(cs.ServerConfig{Server: "test", Backend: game,
-		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status"},
+type cmcpRig struct {
+	t    *testing.T
+	e    *engine.Engine
+	r    *rec
+	srv  *cs.Server
+	game *cmcpGame
+	smu  sync.Mutex
+	trp  atomic.Pointer[fakeTr]
+	sid  string
+}
+
+func (g *cmcpRig) push() { // server output -> client (caller holds smu)
+	for _, o := range g.srv.Drain().Frames {
+		b, _ := json.Marshal(o.Payload)
+		g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: o.Package, Data: b})
+	}
+}
+
+// do runs f against the server endpoint and delivers what it produced.
+func (g *cmcpRig) do(f func(*cs.Server)) {
+	g.smu.Lock()
+	defer g.smu.Unlock()
+	f(g.srv)
+	g.push()
+}
+
+func (g *cmcpRig) waitUI(what string, pred func(*engine.CmcpUI) bool) *engine.CmcpUI {
+	g.t.Helper()
+	var ui *engine.CmcpUI
+	g.r.until(g.t, what, func() bool {
+		u, err := g.e.CmcpUI(g.sid)
+		ui = u
+		return err == nil && pred(u)
+	})
+	return ui
+}
+
+func newCmcpRig(t *testing.T) *cmcpRig {
+	g := &cmcpRig{t: t, game: &cmcpGame{}}
+	g.srv = cs.NewServer(cs.ServerConfig{Server: "test", Backend: g.game,
+		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"},
 		Commands: []msg.CommandSpec{{Name: "dmg.assign", Consoles: []string{"operations"}, Mutating: true, Text: "dmg assign {team}={system}",
 			Args: map[string]msg.ArgSpec{"team": {Type: "int"}, "system": {Type: "string"}}}}})
-	var trp atomic.Pointer[fakeTr]
-	var smu sync.Mutex
-	push := func() { // server output -> client
-		for _, o := range srv.Drain().Frames {
-			b, _ := json.Marshal(o.Payload)
-			trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: o.Package, Data: b})
-		}
-	}
-	e, r := newEngine(t, func(o *engine.Options) {
+	g.e, g.r = newEngine(t, func(o *engine.Options) {
 		o.Dialer = func(ctx context.Context, cfg conn.Config) (engine.Transport, error) {
 			tr := &fakeTr{ev: make(chan conn.Event, 64)}
-			trp.Store(tr)
+			g.trp.Store(tr)
 			tr.onTx = func(raw []byte) {
-				smu.Lock()
-				defer smu.Unlock()
+				g.smu.Lock()
+				defer g.smu.Unlock()
 				for _, res := range frame.Split(raw, 65536) {
 					if res.OK() {
-						srv.Receive(time.Now(), res.Frame)
+						g.srv.Receive(time.Now(), res.Frame)
 					}
 				}
-				push()
+				g.push()
 			}
 			return tr, nil
 		}
 	})
-	e.SetCmcp(func() cs.Config {
-		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}}
+	g.e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536}
 	})
-	si, err := e.Dial(engine.World{ID: "w", Name: "w", Host: "127.0.0.1", Port: 1}, "")
+	si, err := g.e.Dial(engine.World{ID: "w", Name: "w", Host: "127.0.0.1", Port: 1}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the server offers: DO GMCP, then Cobra.Server
-	smu.Lock()
-	srv.TelnetEvent(cs.DoGMCP)
-	srv.Receive(time.Now(), frame.Frame{Package: "Core.Supports.Set", Payload: json.RawMessage(`["Cobra 1"]`)})
-	push()
-	smu.Unlock()
-	_ = one
+	g.sid = si.ID
+	g.do(func(s *cs.Server) {
+		s.TelnetEvent(cs.DoGMCP)
+		s.Receive(time.Now(), frame.Frame{Package: "Core.Supports.Set", Payload: json.RawMessage(`["Cobra 1"]`)})
+	})
+	g.waitUI("ready", func(u *engine.CmcpUI) bool { return u.State == "ready" })
+	return g
+}
 
-	waitUI := func(what string, pred func(*engine.CmcpUI) bool) *engine.CmcpUI {
-		t.Helper()
-		var ui *engine.CmcpUI
-		r.until(t, what, func() bool {
-			u, err := e.CmcpUI(si.ID)
-			ui = u
-			return err == nil && pred(u)
-		})
-		return ui
-	}
-	waitUI("ready", func(u *engine.CmcpUI) bool { return u.State == "ready" })
+func TestCmcpEndToEnd(t *testing.T) {
+	g := newCmcpRig(t)
+	e, r, srv, game, si := g.e, g.r, g.srv, g.game, struct{ ID string }{g.sid}
+	waitUI := g.waitUI
+	smu, push := &g.smu, g.push
 
 	smu.Lock()
 	srv.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Test"}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"},
@@ -201,5 +224,69 @@ func TestCmcpEndToEnd(t *testing.T) {
 	// a session that never spoke CMCP reports it
 	if _, err := e.CmcpUI("nope"); err == nil {
 		t.Fatal("expected an error for an unknown session")
+	}
+}
+
+func findNode(n *engine.CmcpNode, pred func(*engine.CmcpNode) bool) *engine.CmcpNode {
+	if n == nil {
+		return nil
+	}
+	if pred(n) {
+		return n
+	}
+	for _, c := range n.Children {
+		if f := findNode(c, pred); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+// A built-in screen is bound from the protocol data (no text parsing), and a widget event goes out as Cobra.Cmd.
+func TestCmcpScreenFromData(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Test", Theme: "klingon"}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"},
+			Screen: "std.damage", Reason: "manned", Commands: []string{"dmg.assign"},
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Damage.Teams"}, {Pkg: "Space.Damage.Stat"}}})
+		s.Push("Space.Damage.Teams", true, map[string]any{"teams": map[string]any{"3": map[string]any{"crew": 10, "target": "Hull"}}, "assignable": []string{"Hull", "Port_Nacelle"}})
+		s.Push("Space.Damage.Stat", true, map[string]any{"hull": map[string]any{"cur": 800.0, "max": 1000.0}, "systems": map[string]any{"Port_Nacelle": map[string]any{"cur": 50.0, "max": 100.0}}})
+	})
+	ui := g.waitUI("tree", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" }) != nil
+	})
+	if ui.Tree.Screen != "std.damage" {
+		t.Fatalf("screen %q", ui.Tree.Screen)
+	}
+	if findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "textport" }) == nil {
+		t.Fatal("no textport in the screen")
+	}
+	lab := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool {
+		s, _ := n.Props["text"].(string)
+		return n.Widget == "label" && len(s) > 10 && s[:6] == "DAMAGE"
+	})
+	if lab == nil || lab.Props["text"] != "DAMAGE CONTROL  -  hull 800.00 / 1000.00" {
+		t.Fatalf("title binding not evaluated from data: %+v", lab)
+	}
+	ta := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" })
+	res, err := g.e.CmcpEvent(g.sid, ta.Path, "assign", map[string]any{"team": 3.0, "system": "Port_Nacelle"})
+	if err != nil || len(res.Tickets) != 1 || res.Tickets[0].Echo != "dmg assign 3=Port_Nacelle" {
+		t.Fatalf("event: %+v %v", res, err)
+	}
+	g.r.waitLine(t, g.sid, "cmcp> dmg assign 3=Port_Nacelle")
+	if ui.Tree.Theme != "tng" {
+		t.Fatalf("theme %q: the ship's suggestion must not apply while 'use the ship's theme' is off", ui.Tree.Theme)
+	}
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.waitUI("ship theme", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Theme == "klingon" })
+	// read-only (AI takeover): the screen stays, nothing is offered
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, AI: true}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"},
+			Screen: "std.damage", Readonly: true, Reason: "ai_on", Subscribe: []msg.SubSpec{{Pkg: "Space.Damage.Teams"}}})
+	})
+	ro := g.waitUI("readonly", func(u *engine.CmcpUI) bool { return u.Readonly && u.Tree != nil })
+	ta = findNode(ro.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" })
+	if ta == nil || ta.Enabled {
+		t.Fatalf("team-assigner must stay but be disabled while read-only: %+v", ta)
 	}
 }

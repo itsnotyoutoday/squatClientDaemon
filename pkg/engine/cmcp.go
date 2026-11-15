@@ -78,6 +78,7 @@ type CmcpUI struct {
 	Seqs       map[string]int64           `json:"seqs"`
 	Alert      string                     `json:"alert,omitempty"`
 	Pending    int                        `json:"pending"`
+	Tree       *CmcpTree                  `json:"tree"` // the bound screen, nil = no console screen
 }
 
 // CmcpScreen is session.ScreenRef for the UI.
@@ -107,6 +108,7 @@ type CmcpNote struct {
 	Scan    *msg.ScanReport `json:"scan,omitempty"`
 	Reply   *CmcpReply      `json:"reply,omitempty"`
 	Pack    *msg.PackRef    `json:"pack,omitempty"`
+	Params  map[string]any  `json:"params,omitempty"`
 	Sound   *msg.SoundPlay  `json:"sound,omitempty"`
 	Stop    *msg.SoundStop  `json:"stop,omitempty"`
 	StopAll bool            `json:"stopAll,omitempty"`
@@ -144,6 +146,7 @@ type cmcpSess struct {
 	tick    *time.Timer
 	stopped bool
 	lastRev uint64
+	ss      *screenState
 	started time.Time
 }
 
@@ -285,7 +288,10 @@ func (cm *cmcpSess) schedule() {
 func (cm *cmcpSess) publish() {
 	ui := cm.c.UI()
 	cm.lastRev = ui.Rev
-	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: cmcpDTO(cm.s.id, ui)})
+	d := cmcpDTO(cm.s.id, ui)
+	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
+	d.Tree = cm.tree(ui)
+	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
 }
 
 func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
@@ -369,7 +375,10 @@ func (e *Engine) CmcpUI(id string) (*CmcpUI, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cmcpDTO(id, cm.c.UI()), nil
+	ui := cm.c.UI()
+	d := cmcpDTO(id, ui)
+	d.Tree = cm.tree(ui)
+	return d, nil
 }
 
 // CmcpCommand sends a verb of the server's catalogue (spec 4). The equivalent typed command is shown in the
