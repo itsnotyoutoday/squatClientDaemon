@@ -99,6 +99,7 @@ type CmcpUI struct {
 	Pinned            bool                       `json:"pinned,omitempty"`
 	Status            map[string]any             `json:"status,omitempty"` // Space.Ship.Status (name, alert, hull, core, lock) for the frame
 	Tree              *CmcpTree                  `json:"tree"`             // the bound screen, nil = no console screen
+	Panes             []CmcpPane                 `json:"panes,omitempty"`  // CMCP 2: contexts presented on a panel, dock or float, in addition to the screen
 
 	// ---- protocol 2 (spec chapter 20); V2 is false and the rest empty for a v1 session ----
 	V2         bool                 `json:"v2,omitempty"`
@@ -551,6 +552,7 @@ func (cm *cmcpSess) publish() {
 	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
+	d.Panes = cm.paneTrees(ui)
 	cm.logContext(ui, d)
 	cm.aboardChanged(ui.Aboard())
 	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
@@ -718,10 +720,9 @@ func (e *Engine) CmcpUI(id string) (*CmcpUI, error) {
 	}
 	ui := cm.c.UI()
 	d := cmcpDTO(id, ui)
-	if st, ok := ui.Docs[msg.PkgShipStatus].(map[string]any); ok {
-		d.Status = st
-	}
+	d.Status = statusDoc(ui)
 	d.Tree = cm.tree(ui)
+	d.Panes = cm.paneTrees(ui)
 	return d, nil
 }
 

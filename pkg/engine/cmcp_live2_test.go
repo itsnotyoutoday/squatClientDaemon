@@ -121,3 +121,62 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 		t.Logf("sound pack loaded")
 	}
 }
+
+// TestCmcp2LivePanes: on the concourse the game also pushes world.briefing (a dock): the client gets the main screen AND a pane with its own bound tree,
+// without a text port. SQUAT_LIVE_CMCP2=1.
+func TestCmcp2LivePanes(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
+	}
+	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
+	e, r := newEngine(t)
+	ps, err := engine.OpenPackStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
+			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
+			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
+	})
+	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	var ui *engine.CmcpUI
+	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
+	r.until(t, "the main screen and a dock pane with a tree", func() bool {
+		u := get()
+		return u != nil && u.Tree != nil && len(u.Panes) > 0 && u.Panes[0].Tree != nil
+	})
+	p := ui.Panes[0]
+	t.Logf("main screen %q; pane %s on %s (%s) layout %q title %q dock %q size %v readonly %v commands %v", ui.Tree.Screen, p.Key, p.Surface, p.Type, p.Layout, p.Title, p.Dock, p.Size, p.Readonly, p.Commands)
+	var walk func(n *engine.CmcpNode, f func(*engine.CmcpNode))
+	walk = func(n *engine.CmcpNode, f func(*engine.CmcpNode)) {
+		if n == nil {
+			return
+		}
+		f(n)
+		for _, c := range n.Children {
+			walk(c, f)
+		}
+	}
+	buttons := 0
+	walk(p.Tree.Root, func(n *engine.CmcpNode) {
+		if n.Widget == "textport" {
+			t.Errorf("a pane draws no second text port")
+		}
+		if n.Widget == "button" {
+			buttons++
+		}
+	})
+	t.Logf("pane widgets: %d buttons", buttons)
+	if p.Surface == "screen" {
+		t.Fatalf("an off-screen context is not presented on screen: %+v", p)
+	}
+}

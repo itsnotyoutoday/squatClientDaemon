@@ -130,6 +130,7 @@ type screenState struct {
 	lastEnv  *pack.Env
 	lastTree *CmcpTree
 	lastScr  *pack.Screen
+	panes    map[string]*paneState // the screens of the off-screen contexts (panel, dock, float), by context key
 }
 
 func (cm *cmcpSess) screens() *screenState {
@@ -399,7 +400,13 @@ func copyMap(m map[string]any) map[string]any {
 }
 
 func dtoNode(b *pack.BoundNode, scr *pack.Screen, ui *cs.UI) *CmcpNode {
-	if b == nil || !b.Visible {
+	return dtoNodeX(b, scr, ui, false)
+}
+
+// dtoNodeX is dtoNode with the option to drop the `textport` nodes: a layout shown off the main screen draws no second copy of the main text pane
+// (spec 20.14.1a); the pack itself is not edited.
+func dtoNodeX(b *pack.BoundNode, scr *pack.Screen, ui *cs.UI, omitTextport bool) *CmcpNode {
+	if b == nil || !b.Visible || (omitTextport && b.Widget == "textport") {
 		return nil
 	}
 	l := b.Layout
@@ -427,7 +434,7 @@ func dtoNode(b *pack.BoundNode, scr *pack.Screen, ui *cs.UI) *CmcpNode {
 		n.Props["items"], n.Props["effects"], n.Props["backdrop"] = items, effects, backdrop
 	}
 	for _, c := range b.Children {
-		if d := dtoNode(c, scr, ui); d != nil {
+		if d := dtoNodeX(c, scr, ui, omitTextport); d != nil {
 			n.Children = append(n.Children, d)
 		}
 	}
@@ -505,6 +512,12 @@ func (e *Engine) CmcpEvent(id, path, event string, value any) (CmcpEventResult, 
 	ss.mu.Lock()
 	res := node.Node.Perform(event, value, env, uiState, cm.c, e.now())
 	ss.mu.Unlock()
+	return cm.eventResult(res), nil
+}
+
+// eventResult turns what a widget event did into the reply, and carries out its side effects (echo of mutating commands, show, UI sounds).
+func (cm *cmcpSess) eventResult(res pack.Result) CmcpEventResult {
+	e, id := cm.s.e, cm.s.id
 	out := CmcpEventResult{Show: res.Show}
 	for _, t := range res.Tickets {
 		if t.Mutating && t.Echo != "" {
@@ -527,7 +540,7 @@ func (e *Engine) CmcpEvent(id, path, event string, value any) (CmcpEventResult, 
 	}
 	cm.flush()
 	cm.schedule() // $ui or the screen changed even if the model did not
-	return out, nil
+	return out
 }
 
 // CmcpSetUI writes a key of the screen's $ui state on behalf of a widget (the team a team-assigner has picked is
