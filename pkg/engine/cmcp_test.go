@@ -627,7 +627,7 @@ func TestCmcpViewscreenContactArt(t *testing.T) {
 			"19": map[string]any{"cid": 19, "name": "Behind", "rel": map[string]any{"az": 170.0, "mark": 0.0}, "bearing": map[string]any{"az": 170.0, "mark": 0.0}, "distance_m": 1000.0, "type": "Ship"}}})
 	})
 	ui := g.waitUI("viewscreen", func(u *engine.CmcpUI) bool {
-		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" && n.Props["items"] != nil }) != nil
+		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" && len(n.Props["items"].([]map[string]any)) > 0 }) != nil
 	})
 	vs := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" })
 	items, _ := vs.Props["items"].([]map[string]any)
