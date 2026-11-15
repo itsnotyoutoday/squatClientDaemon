@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/itsnotyoutoday/cmcp/audio"
 	"github.com/itsnotyoutoday/cmcp/fetch"
 	"github.com/itsnotyoutoday/cmcp/msg"
 )
@@ -95,12 +96,13 @@ func major(v string) string { m, _, _ := strings.Cut(v, "."); return m }
 
 // cmcpPackState holds one session's transfers and pending consent prompts.
 type cmcpPackState struct {
-	mu      sync.Mutex
-	inline  *fetch.Inline
-	inlineC chan inlineResult
-	prompts map[string]chan bool // pack id -> answer
-	busy    map[string]bool      // sha256 in flight
-	inlMu   sync.Mutex           // one inline transfer at a time per connection (spec 8.3)
+	mu       sync.Mutex
+	inline   *fetch.Inline
+	inlineC  chan inlineResult
+	prompts  map[string]chan bool   // pack id -> answer
+	busy     map[string]bool        // sha256 in flight
+	deferred map[string]msg.PackRef // announced layout packs nothing uses yet
+	inlMu    sync.Mutex             // one inline transfer at a time per connection (spec 8.3)
 }
 
 type inlineResult struct {
@@ -112,7 +114,7 @@ func (cm *cmcpSess) packs() *cmcpPackState {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	if cm.ps == nil {
-		cm.ps = &cmcpPackState{prompts: map[string]chan bool{}, busy: map[string]bool{}}
+		cm.ps = &cmcpPackState{prompts: map[string]chan bool{}, busy: map[string]bool{}, deferred: map[string]msg.PackRef{}}
 	}
 	return cm.ps
 }
@@ -181,7 +183,14 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 		return
 	}
 	ps := cm.packs()
+	if ref.Kind == "layout" && !cm.needsPack(ref) {
+		ps.mu.Lock()
+		ps.deferred[ref.SHA256] = ref // a pack the ship or console does not use is not downloaded until it is
+		ps.mu.Unlock()
+		return
+	}
 	ps.mu.Lock()
+	delete(ps.deferred, ref.SHA256)
 	if ps.busy[ref.SHA256] {
 		ps.mu.Unlock()
 		return
@@ -202,6 +211,9 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 			fail(err)
 			return
 		}
+	}
+	if ref.Kind == "sounds" {
+		cm.loadSoundPack(raw)
 	}
 	if ref.Kind != "layout" {
 		// sound packs and art: cached for the audio side (spec 9); nothing to consent to for layouts' sake
@@ -339,6 +351,7 @@ func (cm *cmcpSess) cacheEntries() []msg.CacheEntry {
 
 // loadCached makes the layout packs the game announced and the cache holds available again (second launch: no fetching, no prompt).
 func (cm *cmcpSess) loadCached() {
+	cm.retryDeferred()
 	st := cm.s.e.packStore()
 	if st == nil {
 		return
@@ -352,6 +365,15 @@ func (cm *cmcpSess) loadCached() {
 	refs = append(refs, ui.Ship.Packs...)
 	ss := cm.screens()
 	for _, r := range refs {
+		if r.Kind == "sounds" {
+			cm.mu.Lock()
+			have := cm.soundPack != nil
+			cm.mu.Unlock()
+			if raw, _, ok := st.cache.Get(host, r.SHA256); ok && !have {
+				cm.loadSoundPack(raw)
+			}
+			continue
+		}
 		if r.Kind != "layout" {
 			continue
 		}
@@ -374,6 +396,102 @@ func (cm *cmcpSess) loadCached() {
 		if err := cm.loadPack(raw); err != nil {
 			cm.s.systemLine(fmt.Sprintf("cmcp: cached pack %s is invalid and was removed: %v", r.ID, err))
 			st.cache.Remove(host, r.SHA256)
+		}
+	}
+}
+
+// ---- sounds (spec 9): the pack's manifest is parsed here, samples are fetched here and served to the web view by the app
+
+// CmcpSoundPack returns the parsed sound pack of the game (nil until one was announced, fetched and verified).
+func (e *Engine) CmcpSoundPack(id string) *audio.Pack {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return nil
+	}
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return cm.soundPack
+}
+
+func (cm *cmcpSess) loadSoundPack(raw []byte) {
+	p, err := audio.ParsePack(raw)
+	if err != nil {
+		cm.s.systemLine("cmcp: the sound pack is invalid and was dropped: " + err.Error())
+		return
+	}
+	cm.mu.Lock()
+	cm.soundPack = p
+	cm.mu.Unlock()
+}
+
+// CmcpSample returns the bytes of one sample file of the session's sound pack (fetching and caching it on first use).
+func (e *Engine) CmcpSample(id, name string) ([]byte, string, error) {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return nil, "", err
+	}
+	cm.mu.Lock()
+	sp := cm.soundPack
+	cm.mu.Unlock()
+	if sp == nil {
+		return nil, "", fmt.Errorf("engine: no sound pack")
+	}
+	fi, ok := sp.Files[name]
+	if !ok {
+		return nil, "", fmt.Errorf("engine: no sample %q", name)
+	}
+	ct := "audio/ogg"
+	if fi.Format == "wav" {
+		ct = "audio/wav"
+	}
+	st := e.packStore()
+	host := cm.s.world.Host
+	if st != nil {
+		if b, _, hit := st.cache.Get(host, fi.SHA256); hit {
+			return b, ct, nil
+		}
+	}
+	ui := cm.c.UI()
+	if ui.Welcome == nil || ui.Welcome.Assets == nil {
+		return nil, "", fmt.Errorf("engine: the game announced no asset origin")
+	}
+	f := fetch.NewFetcher(fetch.Policy{GameHost: host, DevTrustLoopbackTLS: true})
+	ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+	defer cancel()
+	b, err := f.Fetch(ctx, fetch.Blob{Origin: fetch.Origin{Origin: ui.Welcome.Assets.Origin, Base: ui.Welcome.Assets.Base}, SHA256: fi.SHA256, Size: fi.Size, Kind: fetch.KindSample})
+	if err != nil {
+		return nil, "", err
+	}
+	if st != nil {
+		_ = st.cache.Put(host, fetch.Meta{ID: name, Kind: fetch.KindSample, SHA256: fi.SHA256, Size: len(b), Host: host}, b)
+	}
+	return b, ct, nil
+}
+
+// needsPack reports whether the ship's pack or the screen being shown is this pack.
+func (cm *cmcpSess) needsPack(ref msg.PackRef) bool {
+	ui := cm.c.UI()
+	if ui.Screen.PackID == ref.ID {
+		return true
+	}
+	if ui.Ship.Pack != nil && ui.Ship.Pack.ID == ref.ID {
+		return true
+	}
+	return false
+}
+
+// retryDeferred starts the downloads that became needed (the console now names a pack screen).
+func (cm *cmcpSess) retryDeferred() {
+	ps := cm.packs()
+	ps.mu.Lock()
+	var refs []msg.PackRef
+	for _, r := range ps.deferred {
+		refs = append(refs, r)
+	}
+	ps.mu.Unlock()
+	for _, r := range refs {
+		if cm.needsPack(r) {
+			go cm.wantPack(r)
 		}
 	}
 }

@@ -227,7 +227,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		ss.ui, ss.uiFor, ss.uiGen = map[string]any{}, id, ui.Generation
 	}
 	env := pack.EnvFromUI(ui, ss.ui)
-	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets})
+	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets, Class: "gpu"})
 	theme := cm.theme(ui, scr)
 	cm.s.e.cmcpMu.Lock()
 	tf := cm.s.e.cmcpRender.Tokens

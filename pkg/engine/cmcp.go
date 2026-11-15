@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/itsnotyoutoday/cmcp/audio"
 	"github.com/itsnotyoutoday/cmcp/frame"
 	"github.com/itsnotyoutoday/cmcp/msg"
 	"github.com/itsnotyoutoday/cmcp/pack"
@@ -158,16 +159,17 @@ type cmcpSess struct {
 	c  *cs.Client
 	tx frameSender
 
-	mu      sync.Mutex
-	refs    map[string]map[string]int // package -> owner -> rate_ms
-	dirty   bool
-	pubTmr  *time.Timer
-	tick    *time.Timer
-	stopped bool
-	lastRev atomic.Uint64
-	ss      *screenState
-	ps      *cmcpPackState
-	started time.Time
+	mu        sync.Mutex
+	refs      map[string]map[string]int // package -> owner -> rate_ms
+	dirty     bool
+	pubTmr    *time.Timer
+	tick      *time.Timer
+	stopped   bool
+	lastRev   atomic.Uint64
+	ss        *screenState
+	ps        *cmcpPackState
+	soundPack *audio.Pack // guarded by mu
+	started   time.Time
 }
 
 func (s *session) cmcpGmcp(pkg string, data json.RawMessage) {
