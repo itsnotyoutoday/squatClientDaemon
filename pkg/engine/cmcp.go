@@ -54,31 +54,48 @@ func (e *Engine) cmcpOn() bool {
 // CmcpUI is the UI model of one session as the front end receives it (snake_case inside the nested
 // protocol messages, camelCase for the fields the client adds).
 type CmcpUI struct {
-	Session    string                     `json:"session"`
-	Rev        uint64                     `json:"rev"`
-	Generation int                        `json:"generation"`
-	State      string                     `json:"state"`
-	Proto      int                        `json:"proto"`
-	Server     *msg.Server                `json:"server,omitempty"`
-	Welcome    *msg.Welcome               `json:"welcome,omitempty"`
-	Ship       *msg.ShipInfo              `json:"ship,omitempty"`
-	Console    *msg.ConsoleRef            `json:"console,omitempty"`
-	ConsoleRev int                        `json:"consoleRev"`
-	Reason     string                     `json:"reason,omitempty"`
-	Readonly   bool                       `json:"readonly"`
-	AI         bool                       `json:"ai"`
-	Title      string                     `json:"title,omitempty"`
-	ShipTheme  string                     `json:"shipTheme,omitempty"`
-	ConTheme   string                     `json:"consoleTheme,omitempty"`
-	Screen     CmcpScreen                 `json:"screen"`
-	Commands   []string                   `json:"commands"`
-	Catalogue  map[string]msg.CommandSpec `json:"catalogue,omitempty"`
-	Subs       []CmcpSub                  `json:"subs"`
-	Docs       map[string]any             `json:"docs"`
-	Seqs       map[string]int64           `json:"seqs"`
-	Alert      string                     `json:"alert,omitempty"`
-	Pending    int                        `json:"pending"`
-	Tree       *CmcpTree                  `json:"tree"` // the bound screen, nil = no console screen
+	Session           string                     `json:"session"`
+	Rev               uint64                     `json:"rev"`
+	Generation        int                        `json:"generation"`
+	State             string                     `json:"state"`
+	Proto             int                        `json:"proto"`
+	Server            *msg.Server                `json:"server,omitempty"`
+	Welcome           *msg.Welcome               `json:"welcome,omitempty"`
+	Ship              *msg.ShipInfo              `json:"ship,omitempty"`
+	Console           *msg.ConsoleRef            `json:"console,omitempty"`
+	ConsoleRev        int                        `json:"consoleRev"`
+	Reason            string                     `json:"reason,omitempty"`
+	Readonly          bool                       `json:"readonly"`
+	AI                bool                       `json:"ai"`
+	Title             string                     `json:"title,omitempty"`
+	ShipTheme         string                     `json:"shipTheme,omitempty"`
+	ConTheme          string                     `json:"consoleTheme,omitempty"`
+	Screen            CmcpScreen                 `json:"screen"`
+	Commands          []string                   `json:"commands"`
+	Catalogue         map[string]msg.CommandSpec `json:"catalogue,omitempty"`
+	Subs              []CmcpSub                  `json:"subs"`
+	Docs              map[string]any             `json:"docs"`
+	Seqs              map[string]int64           `json:"seqs"`
+	Alert             string                     `json:"alert,omitempty"`
+	Pending           int                        `json:"pending"`
+	Stack             []CmcpStackEntry           `json:"stack"` // held contexts, lowest priority first; the last is active (spec 3.3)
+	CatalogueComplete bool                       `json:"catalogueComplete"`
+	Tree              *CmcpTree                  `json:"tree"` // the bound screen, nil = no console screen
+}
+
+// CmcpStackEntry is one held context (a console, a room, an away team, an event, a dock).
+type CmcpStackEntry struct {
+	Key      string `json:"key"`
+	Kind     string `json:"kind"`
+	ID       string `json:"id"`
+	Name     string `json:"name,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Screen   string `json:"screen"`
+	Priority int    `json:"priority"`
+	Active   bool   `json:"active"`
+	Readonly bool   `json:"readonly,omitempty"`
+	MannedBy string `json:"mannedBy,omitempty"`
+	Expires  int64  `json:"expiresMs,omitempty"` // unix ms, 0 = no ttl
 }
 
 // CmcpScreen is session.ScreenRef for the UI.
@@ -347,6 +364,15 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 	}
 	if d.Docs == nil {
 		d.Docs = map[string]any{}
+	}
+	d.CatalogueComplete = u.CatalogueComplete
+	d.Stack = []CmcpStackEntry{}
+	for _, e := range u.Stack {
+		x := CmcpStackEntry{Key: e.Key, Kind: e.Kind, ID: e.ID, Name: e.Name, Title: e.Title, Screen: e.Screen, Priority: e.Priority, Active: e.Active, Readonly: e.Readonly, MannedBy: e.MannedBy}
+		if !e.Expires.IsZero() {
+			x.Expires = e.Expires.UnixMilli()
+		}
+		d.Stack = append(d.Stack, x)
 	}
 	d.Subs = []CmcpSub{}
 	for _, s := range u.Subs {

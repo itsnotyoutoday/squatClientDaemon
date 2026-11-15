@@ -366,3 +366,25 @@ func TestCmcpDumpFixtures(t *testing.T) {
 		}
 	}
 }
+
+// The context stack (spec 3.3): a pushed context becomes the active one and decides the screen; popping it returns to the console.
+func TestCmcpContextStack(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"dmg.assign"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.operations" })
+	inject := func(c msg.Context) {
+		b, _ := json.Marshal(c)
+		g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	}
+	prio := 120
+	inject(msg.Context{Rev: 2, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "boarded",
+		Context: &msg.ContextEntry{Key: "event:boarding", Ctx: 1, Kind: "event", ID: "boarding", Screen: "std.damage", Title: "Boarders", Priority: &prio}})
+	ui := g.waitUI("event on top", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.damage" })
+	if len(ui.Stack) != 2 || !ui.Stack[1].Active || ui.Stack[1].Kind != "event" {
+		t.Fatalf("stack %+v", ui.Stack)
+	}
+	inject(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "pop", Key: "event:boarding", Ctx: 1})
+	g.waitUI("back to the console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.operations" && len(u.Stack) == 1 })
+}
