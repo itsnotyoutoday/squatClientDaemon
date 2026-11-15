@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -233,4 +234,58 @@ func TestCmcpLiveSound(t *testing.T) {
 			t.Logf("sample %-22s %6d bytes %s err=%v", name, len(b), ct, err)
 		}
 	}
+}
+
+// TestCmcpLiveShake watches a live session for `hit` events on the own ship and the shake samples the engine publishes for them
+// (SQUAT_LIVE_CMCP_SHAKE=<seconds>, SQUATCLIENT_DEV_LOOPBACK_HTTP=1; Evennia PoC on 127.0.0.1:4101 only).
+func TestCmcpLiveShake(t *testing.T) {
+	secs := os.Getenv("SQUAT_LIVE_CMCP_SHAKE")
+	if secs == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_SHAKE=60 with the Evennia PoC on 127.0.0.1:4101")
+	}
+	n, _ := strconv.Atoi(secs)
+	e, r := newEngine(t)
+	ps, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect bob cobalt-fern-52")
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "resolute"))
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "man opera")
+	time.Sleep(2 * time.Second)
+	hits, shakes := 0, 0
+	for i := 0; i < n*4; i++ {
+		time.Sleep(250 * time.Millisecond)
+	}
+	for _, ev := range r.snapshot() {
+		for _, note := range ev.CmcpNotes {
+			if note.Kind == "event" && note.Event != nil {
+				t.Logf("event %s %v", note.Event.Type, note.Event.Data)
+				if note.Event.Type == "hit" {
+					hits++
+				}
+			}
+		}
+		if ev.CmcpPulse != nil && ev.CmcpPulse.Shake != nil {
+			shakes++
+		}
+	}
+	t.Logf("%d hit events, %d shake samples", hits, shakes)
+}
+
+func envOr(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
 }

@@ -1171,3 +1171,78 @@ func TestCmcpScanTabSendsTextNone(t *testing.T) {
 		t.Fatalf("the scan tab must send text none: %v", sent)
 	}
 }
+
+// Hit shake (6.18) and the ship-wide alert ambience (6.17.1), sampled by the engine from the core with a fake clock: a `hit` on the own ship
+// shakes the frame and widgets for the core's duration and then rests; the player's off and reduced motion keep it still; the ambience
+// (edge and the alert roles) shows on a red alert on any screen and follows the player's setting.
+func TestCmcpHitShakeAndAmbient(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1_700_000_000, 0)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	adv := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	setup := func(r engine.CmcpRender) *cmcpRig {
+		g := newCmcpRigWith(t, func(c *cmcpRigCfg) { c.clock = clock })
+		r.Theme, r.UseShipTheme = "tng", false
+		g.e.SetCmcpRender(r)
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"alert.set"},
+				Subscribe: []msg.SubSpec{{Pkg: "Space.Ship.Status"}}})
+			s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+		})
+		g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Alert == "red" })
+		return g
+	}
+	hit := func(g *cmcpRig, strength float64, facing string) {
+		b, _ := json.Marshal(msg.Event{Type: "hit", Data: map[string]any{"cid": "self", "strength": strength, "facing": facing}})
+		g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Event", Data: b})
+	}
+	samples := func(g *cmcpRig) []engine.CmcpPulse {
+		var out []engine.CmcpPulse
+		for _, ev := range g.r.snapshot() {
+			if ev.CmcpPulse != nil {
+				out = append(out, *ev.CmcpPulse)
+			}
+		}
+		return out
+	}
+	shaking := func(g *cmcpRig) *engine.CmcpShake {
+		s := samples(g)
+		for i := len(s) - 1; i >= 0; i-- {
+			if s[i].Shake != nil {
+				return s[i].Shake
+			}
+			return nil
+		}
+		return nil
+	}
+
+	g := setup(engine.CmcpRender{})
+	g.r.until(t, "ambient on a red alert", func() bool {
+		s := samples(g)
+		return len(s) > 0 && s[len(s)-1].Ambient != nil && s[len(s)-1].Ambient.Edge != "" && len(s[len(s)-1].Ambient.Roles) > 0
+	})
+	hit(g, 0.9, "port")
+	adv(100 * time.Millisecond) // inside the shake's duration (150..500 ms)
+	g.r.until(t, "shake", func() bool { s := shaking(g); return s != nil && s.Active && (s.X != 0 || s.Y != 0) })
+	adv(2 * time.Second) // well past it: at rest
+	g.r.until(t, "rest", func() bool { return shaking(g) == nil })
+
+	for name, r := range map[string]engine.CmcpRender{"the player's off": {HitShake: "off"}, "reduced motion": {Reduced: true}} {
+		g2 := setup(r)
+		hit(g2, 0.9, "port")
+		adv(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
+		for _, s := range samples(g2) {
+			if s.Shake != nil {
+				t.Fatalf("%s: no shake expected: %+v", name, s)
+			}
+		}
+	}
+	g3 := setup(engine.CmcpRender{AlertAmbient: "off"})
+	time.Sleep(600 * time.Millisecond)
+	for _, s := range samples(g3) {
+		if s.Ambient != nil {
+			t.Fatalf("the player's ambience off: %+v", s)
+		}
+	}
+}

@@ -207,6 +207,9 @@ type cmcpSess struct {
 	pulsePack                   *theme.Pack
 	pulseCfg                    cs.PulseConfig
 	pulseSet                    bool
+	fxSet                       bool
+	ambCfg                      cs.AmbientConfig
+	shkCfg                      cs.ShakeConfig
 	pulseLast                   CmcpPulse
 	pulseTmr                    *time.Timer
 	vp                          cmcpViewport // the web view's viewport (guarded by mu)

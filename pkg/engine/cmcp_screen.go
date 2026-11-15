@@ -29,6 +29,8 @@ type CmcpRender struct {
 	AlertPulse     string                            // theme (default) | on | off: whether a red alert pulses
 	AlertRecolour  string                            // theme (default) | full | edge | off: what a red alert recolours
 	TextLayout     string                            // auto (default) | left | stacked: textport_layout (the core's ResolveLayout)
+	AlertAmbient   string                            // theme (default) | on | off: the ship-wide alert ambience
+	HitShake       string                            // theme (default) | on | off: the display shakes when your ship is hit
 	Reduced        bool                              // reduced motion: steady alert, no fades
 	Tokens         func(theme string) map[string]any // design tokens of a theme (nil: client defaults)
 }
