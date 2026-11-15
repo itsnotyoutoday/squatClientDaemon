@@ -1252,7 +1252,7 @@ func TestCmcpHitShakeAndAmbient(t *testing.T) {
 // the ship: the game sends nothing about it, the ship's status just stays) NO screen and no ambience remain, only the plain text UI.
 func TestCmcpAmbientInTheRoomAndNothingOffTheShip(t *testing.T) {
 	g := newCmcpRig(t)
-	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, RoomScreens: true})
 	g.do(func(s *cs.Server) {
 		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
 		s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
@@ -1297,7 +1297,7 @@ func TestCmcpAmbientInTheRoomAndNothingOffTheShip(t *testing.T) {
 // reaches the web view in a room (no console) as well as at a console.
 func TestCmcpShieldHitStrengthZeroShakesInARoom(t *testing.T) {
 	g := newCmcpRig(t)
-	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, RoomScreens: true})
 	g.do(func(s *cs.Server) { // aboard, no console: a room
 		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
 		s.Push("Space.Ship.Status", true, map[string]any{"alert": "yellow", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
@@ -1446,7 +1446,7 @@ func TestCmcpShiproomScreen(t *testing.T) {
 			}
 		}
 	})
-	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, RoomScreens: true})
 	g.do(func(s *cs.Server) {
 		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none", Subscribe: []msg.SubSpec{{Pkg: "Space.Ship.Status"}}})
 		s.Push("Space.Ship.Status", true, map[string]any{"name": "ACS Resolute", "class": "Constitution", "alert": "yellow", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
@@ -1524,7 +1524,7 @@ func TestCmcpCloseRefusalShowsTheHint(t *testing.T) {
 // only until the stack changes, so after the console is unmanned the ship room wins, never the console's or the player's last screen.
 func TestCmcpActiveContextWinsAfterUnman(t *testing.T) {
 	g := newCmcpRig(t)
-	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, RoomScreens: true})
 	g.do(func(s *cs.Server) {
 		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Pathfinder"}, Console: &msg.ConsoleRef{ID: "science", Name: "Sci"}, Screen: "std.sensors", Reason: "manned",
 			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}, {Pkg: "Space.Nav"}}, Commands: []string{"scan.srs"}})
@@ -1592,4 +1592,54 @@ func TestCmcpEndedConnectionDrawsNothing(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// By default only a console (manned or watched) gets a screen: a ship room, the turbolift or an away team stays the plain text UI.
+func TestCmcpNoRoomScreenByDefault(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none", Subscribe: []msg.SubSpec{{Pkg: "Space.Ship.Status"}}})
+		s.Push("Space.Ship.Status", true, map[string]any{"name": "ACS Resolute", "class": "Constitution", "alert": "green", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+	})
+	prio := 35
+	b, _ := json.Marshal(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Mess Hall", Screen: "std.shiproom", Priority: &prio}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	time.Sleep(1200 * time.Millisecond)
+	if u, err := g.e.CmcpUI(g.sid); err == nil && u != nil && u.Tree != nil {
+		t.Fatalf("a ship room drew the screen %q with room screens off", u.Tree.Screen)
+	}
+}
+
+// The player closes the screen (the X): the game pops the context with reason "closed" and the stack is empty, but the ship is still the player's, so the
+// ship-wide alert look (drawn by the plain web view, not a scene) stays.
+func TestCmcpAlertHueStaysAfterTheXCloses(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
+		s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+	})
+	prio := 35
+	b, _ := json.Marshal(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Bridge", Screen: "std.shiproom", Priority: &prio}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	hue := func() bool {
+		s := g.r.snapshot()
+		for i := len(s) - 1; i >= 0; i-- {
+			if p := s[i].CmcpPulse; p != nil {
+				return p.Ambient != nil && p.Ambient.Edge != ""
+			}
+		}
+		return false
+	}
+	g.r.until(t, "the alert hue in the room", hue)
+	_ = g.e.CmcpClose(g.sid, "user")
+	pop, _ := json.Marshal(msg.Context{Rev: 4, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "pop", Key: "room:shiproom", Ctx: 1, Reason: "closed"})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: pop})
+	time.Sleep(1500 * time.Millisecond)
+	if !hue() {
+		t.Fatal("the alert hue went away when the player closed the screen")
+	}
 }

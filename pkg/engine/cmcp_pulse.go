@@ -122,7 +122,12 @@ func (cm *cmcpSess) pulseStep() time.Duration {
 	// model after the player leaves it, so it is no evidence.
 	// the core's own aboard state (the latest Cobra.Console or Cobra.Context names a real ship) AND a live context: a game that never sends the "No ship"
 	// sentinel on leaving (older servers) still leaves the stale ship behind, but its contexts are gone
-	if u := cm.c.UI(); !u.Aboard() || (len(u.Stack) == 0 && u.Console == nil) {
+	u := cm.c.UI()
+	if len(u.Stack) > 0 || u.Console != nil || !u.Aboard() {
+		cm.userClosed = false // a live context again, or the ship was really left: the exception is over
+	}
+	// (the exception: the player closed the last screen himself; the game popped it but the ship is still the player's, so the alert look stays)
+	if !u.Aboard() || (len(u.Stack) == 0 && u.Console == nil && !cm.userClosed) {
 		if cm.pulseLast.Active || cm.pulseLast.Ambient != nil || cm.pulseLast.Shake != nil {
 			cm.pulseLast = CmcpPulse{}
 			cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})

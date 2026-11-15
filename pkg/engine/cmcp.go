@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -201,6 +203,7 @@ type cmcpSess struct {
 	ps                          *cmcpPackState
 	soundPack                   *audio.Pack    // guarded by mu
 	tv                          *textport.View // guarded by mu
+	userClosed                  bool           // the player closed the last screen: an empty context stack then does not mean the ship was left (guarded by mu)
 	themeKey, themeID, themeSrc string         // the sticky per-ship theme (guarded by mu)
 	themeShip                   bool
 	alertMode                   string // the effective alert_recolour (full|edge|off) of the theme in effect
@@ -216,6 +219,7 @@ type cmcpSess struct {
 	aboard                      bool         // the last Aboard() seen (guarded by mu)
 	ctxLast                     string       // the last context line logged (guarded by mu)
 	ctxLines                    int
+	dbgLines                    int         // wire/action debug lines written (guarded by mu), capped
 	themeSeen                   string      // id|source|version last announced on the notice line
 	th                          *themeState // downloaded themes (guarded by mu)
 	started                     time.Time
@@ -327,7 +331,55 @@ func (s *session) cmcpStop() {
 	}
 }
 
+// dbgMax caps the wire/action debug lines per session; dbgPayload truncates one payload.
+const (
+	dbgMax     = 4000
+	dbgPayload = 700
+)
+
+// dbg writes one debug line to the client diagnostics sink (client.log): what the game sent, what the client sent back and what the player did to
+// the view, so a report shows both sides of the conversation. Capped per session.
+func (cm *cmcpSess) dbg(format string, args ...any) {
+	if !dbgOn {
+		return
+	}
+	cm.s.e.cmcpMu.Lock()
+	f := cm.s.e.cmcpLogFn
+	cm.s.e.cmcpMu.Unlock()
+	if f == nil {
+		return
+	}
+	cm.mu.Lock()
+	n := cm.dbgLines
+	cm.dbgLines++
+	cm.mu.Unlock()
+	if n < dbgMax {
+		f(fmt.Sprintf("dbg %s: ", cm.s.id) + fmt.Sprintf(format, args...))
+	} else if n == dbgMax {
+		f(fmt.Sprintf("dbg %s: debug line limit reached, no more wire lines this session", cm.s.id))
+	}
+}
+
+// dbgOn turns the wire/action debug trail on (SQUAT_DEBUG=1 in the environment of the client); off by default.
+var dbgOn = os.Getenv("SQUAT_DEBUG") == "1"
+
+func dbgPayloadText(b []byte) string {
+	t := strings.Join(strings.Fields(string(b)), " ")
+	if len(t) > dbgPayload {
+		t = t[:dbgPayload] + "...(" + strconv.Itoa(len(b)) + " bytes)"
+	}
+	return t
+}
+
+// dbgQuiet names the packages that arrive many times a second; they are not logged on the wire.
+func dbgQuiet(pkg string) bool {
+	return strings.HasPrefix(pkg, "Cobra.Ship.Status") || strings.HasPrefix(pkg, "Cobra.Sound") || strings.HasPrefix(pkg, "Cobra.Pulse") || strings.HasPrefix(pkg, "Cobra.Ping")
+}
+
 func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
+	if !dbgQuiet(pkg) {
+		cm.dbg("<- %s %s", pkg, dbgPayloadText(data))
+	}
 	if cm.packFrame(pkg, data) {
 		return
 	}
@@ -347,6 +399,9 @@ func (cm *cmcpSess) flush() {
 		if err != nil {
 			cm.s.systemLine(fmt.Sprintf("cmcp: cannot encode %s: %v", o.Package, err))
 			continue
+		}
+		if !dbgQuiet(o.Package) {
+			cm.dbg("-> %s %s", o.Package, dbgPayloadText(b))
 		}
 		if err := cm.tx.SendFrame(b); err != nil {
 			break
@@ -648,7 +703,12 @@ func (e *Engine) CmcpClose(id, reason string) error {
 		return err
 	}
 	now := e.now()
+	cm.mu.Lock()
+	cm.userClosed = true
+	cm.mu.Unlock()
+	cm.dbg("player: close requested (reason %q)", reason)
 	_, err = cm.c.CloseContext(now, reason)
+	cm.dbg("player: close result err=%v", err)
 	switch {
 	case err == nil:
 	case errors.Is(err, cs.ErrContextlessClient):

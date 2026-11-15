@@ -23,6 +23,7 @@ type CmcpRender struct {
 	PortDefault    string                            // compact | balanced (default) | large: the text view's default size (spec 6.13.1)
 	Calm           bool                              // slower eased motion
 	PackConsent    string                            // always (default) | ask | never: whether announced interface packs and themes load automatically
+	RoomScreens    bool                              // draw screens for rooms / away teams / docks too (default: only a console, manned or watched)
 	StartCollapsed bool                              // the console screen starts switched off
 	Theme          string                            // the player's theme (tng, soft, ...)
 	UseShipTheme   bool                              // follow the console/ship/screen suggestion (spec 6.6)
@@ -284,7 +285,9 @@ func (e *Engine) CmcpViewEvent(id, ev string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	before := cm.view().State()
 	st := cm.view().Event(ev)
+	cm.dbg("player: view event %q: %s -> %s", ev, before, st)
 	cm.schedule()
 	return string(st), nil
 }
@@ -298,6 +301,22 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		}
 	}()
 	if ui.State != cs.StateReady {
+		return nil
+	}
+	cm.s.e.cmcpMu.Lock()
+	roomScreens := cm.s.e.cmcpRender.RoomScreens
+	cm.s.e.cmcpMu.Unlock()
+	if ui.Console == nil && !ui.Readonly && !roomScreens {
+		// Not at a console (manned or watched): no screen, only the plain text UI. The game pushes a generic ship room (std.shiproom) for anyone aboard
+		// and special rooms (turbolift, sickbay...) with screens of their own; those are drawn only when the player asks (Settings: room screens).
+		// The ship-wide alert look (a plain web-view edge and glow, no scene) still needs the theme's pulse and ambience, so that is configured here.
+		scr, _ := cm.pickScreen(ui)
+		if scr == nil {
+			scr = pack.Builtin("std.shiproom")
+		}
+		if scr != nil {
+			cm.theme(ui, scr)
+		}
 		return nil
 	}
 	if ui.Console == nil && !ui.Readonly && ui.Screen.Resolved == "" {
