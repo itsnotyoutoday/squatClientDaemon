@@ -546,7 +546,7 @@ func (cm *cmcpSess) publish() {
 	ui := cm.c.UI()
 	cm.lastRev.Store(ui.Rev)
 	d := cmcpDTO(cm.s.id, ui)
-	if st, ok := ui.Docs[msg.PkgShipStatus].(map[string]any); ok {
+	if st := statusDoc(ui); st != nil {
 		d.Status = st
 	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents

@@ -164,3 +164,38 @@ func (e *Engine) cmcpConfigFor(mk func() cs.Config, world string) cs.Config {
 	}
 	return cfg
 }
+
+// statusDoc is the document the frame's status strip shows (name, alert, hull, core, lock). v1 names it (Space.Ship.Status); in v2 it is the
+// always-subscribed package of a scope that has an owner, as the definition says (spec 20.10), so a game with another name for it, or no ship
+// at all, needs no client change. Nil when there is none.
+func statusDoc(ui *cs.UI) map[string]any {
+	if !ui.V2 {
+		st, _ := ui.Docs[msg.PkgShipStatus].(map[string]any)
+		return st
+	}
+	if ui.Definition == nil {
+		return nil
+	}
+	var others []string
+	for n := range ui.Scopes {
+		if n != ui.CtxScope {
+			others = append(others, n)
+		}
+	}
+	sort.Strings(others)
+	scopes := others
+	if ui.CtxScope != "" { // the active context's own scope first
+		scopes = append([]string{ui.CtxScope}, others...)
+	}
+	for _, n := range scopes {
+		if !ui.HasOwner(n) {
+			continue
+		}
+		for _, pkg := range ui.Definition.AlwaysPackages(n) {
+			if st, ok := ui.Docs[pkg].(map[string]any); ok {
+				return st
+			}
+		}
+	}
+	return nil
+}

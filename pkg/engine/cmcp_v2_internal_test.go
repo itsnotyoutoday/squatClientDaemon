@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/itsnotyoutoday/cmcp/go/defs"
 	"github.com/itsnotyoutoday/cmcp/go/msg"
 	cs "github.com/itsnotyoutoday/cmcp/go/session"
 )
@@ -65,5 +66,33 @@ func TestCmcpGatePerWorld(t *testing.T) {
 	}
 	if got := e.cmcpGate("junk"); got != `["Cobra 2"]` {
 		t.Errorf("an invalid version is ignored: %q", got)
+	}
+}
+
+// The status strip reads the always-subscribed package of a scope with an owner as the definition names it, not a hard-coded document.
+func TestStatusDocFromTheDefinition(t *testing.T) {
+	doc, err := defs.Parse([]byte(`{"format":1,"id":"g","version":"1.0.0","scopes":{"ship":{"owner":{"id":"id","epoch":true}},"world":{"owner":{"fixed":"w"}}},
+	 "packages":{"Hull.State":{"scope":"ship","always":true},"Town.Weather":{"scope":"world","always":true},"Ship.Other":{"scope":"ship"}},
+	 "context_types":{"world.place":{"scope":"world","layout":"std.frame"}}}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &cs.UI{V2: true, Definition: doc, CtxScope: "world",
+		Scopes: map[string]cs.ScopeView{"world": {Name: "world", Owner: &msg.ScopeOwner{ID: "w", Epoch: 1}}, "ship": {Name: "ship"}},
+		Docs:   map[string]any{"Hull.State": map[string]any{"alert": "red"}, "Town.Weather": map[string]any{"sky": "clear"}, "Ship.Other": map[string]any{"x": 1}}}
+	if st := statusDoc(u); st["sky"] != "clear" {
+		t.Fatalf("no ship owner: the world scope's always package: %v", st)
+	}
+	u.Scopes["ship"] = cs.ScopeView{Name: "ship", Owner: &msg.ScopeOwner{ID: "s", Epoch: 1}}
+	u.CtxScope = "ship"
+	if st := statusDoc(u); st["alert"] != "red" {
+		t.Fatalf("the active context's scope wins: %v", st)
+	}
+	u.Docs["Space.Ship.Status"] = map[string]any{"alert": "no"}
+	if st := statusDoc(u); st["alert"] != "red" {
+		t.Fatalf("v2 does not read the v1 document name: %v", st)
+	}
+	if st := statusDoc(&cs.UI{Docs: map[string]any{msg.PkgShipStatus: map[string]any{"alert": "green"}}}); st["alert"] != "green" {
+		t.Fatalf("v1 keeps its own document: %v", st)
 	}
 }
