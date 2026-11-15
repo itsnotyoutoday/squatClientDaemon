@@ -381,6 +381,19 @@ func (c *Conn) Send(text string) error {
 	return c.write(out)
 }
 
+// SendFrame writes bytes that are already telnet-framed (a GMCP subnegotiation from package frame).
+func (c *Conn) SendFrame(b []byte) error {
+	if c.closing.Load() {
+		return ErrClosed
+	}
+	select {
+	case <-c.done:
+		return ErrClosed
+	default:
+	}
+	return c.write(b)
+}
+
 func (c *Conn) encode(s string) []byte {
 	if c.utf8 {
 		return []byte(s)

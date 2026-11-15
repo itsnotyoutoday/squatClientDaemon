@@ -77,7 +77,8 @@ type session struct {
 	probeStrict bool // the probe was armed by taking the keyboard: only a clear MU* answer counts
 	armedProbe  bool
 	bannerSeen  int
-	noUnread    bool // appendLocked: do not count the next game line as unread
+	noUnread    bool      // appendLocked: do not count the next game line as unread
+	cm          *cmcpSess // CMCP endpoint (cmcp.go); nil until the game speaks it
 }
 
 func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login string) (*session, error) {
@@ -133,6 +134,7 @@ func (s *session) shutdown() {
 		s.tr.Close()
 		<-s.done
 	}
+	s.cmcpStop()
 	s.mu.Lock()
 	if s.logw != nil {
 		_ = s.logw.Close()
@@ -239,6 +241,7 @@ func (s *session) onGmcp(pkg string, data json.RawMessage) {
 	msg := proto.GmcpMsg{V: proto.Version, T: proto.TGmcp, Session: s.id, Ts: s.e.now().UnixMilli(), Package: pkg, Data: data}
 	var dec any
 	_ = json.Unmarshal(data, &dec)
+	s.cmcpGmcp(pkg, data)
 	s.e.lua.FireEventFor(s.id, "gmcp", map[string]any{"package": pkg, "data": dec, "raw": string(data), "world": s.id}, true)
 	s.e.bus.publish(Event{Kind: EvGmcp, Session: s.id, Gmcp: &msg})
 }

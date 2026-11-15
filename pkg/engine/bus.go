@@ -31,6 +31,8 @@ const (
 	EvMsdp                                // Session, Msdp (tf-squatterd)
 	EvData                                // Session, Data: latest GMCP/MSDP values after an attach (tf-squatterd)
 	EvTFKeys                              // Text: the key sequences scripts have bound, one per line (changes only)
+	EvCmcp                                // Session, Cmcp: the CMCP UI model changed (throttled by the engine)
+	EvCmcpNote                            // Session, CmcpNotes: sounds, events, replies (never coalesced)
 )
 
 // Notice levels.
@@ -67,6 +69,9 @@ type Event struct {
 	Msdp    *proto.MsdpMsg  // EvMsdp
 	Pending *ControlPending // EvControlPending
 	Data    *SessionData    // EvData
+
+	Cmcp      *CmcpUI    // EvCmcp
+	CmcpNotes []CmcpNote // EvCmcpNote
 }
 
 // ControlPending says a device asked for control of a session and TinyFugue's user

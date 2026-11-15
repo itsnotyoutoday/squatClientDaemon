@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	cs "github.com/itsnotyoutoday/cmcp/session"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -134,7 +135,9 @@ type Engine struct {
 	noAutoReconnect atomic.Bool
 
 	extMu      sync.Mutex
-	extensions []Extension // protocol extensions offered to squatters (extension.go)
+	cmcpMu     sync.Mutex
+	cmcpCfg    func() cs.Config // nil: CMCP is off (see cmcp.go)
+	extensions []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
 	log        *slog.Logger
