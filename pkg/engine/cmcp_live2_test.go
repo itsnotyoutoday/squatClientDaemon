@@ -187,3 +187,67 @@ func TestCmcp2LivePanes(t *testing.T) {
 		t.Fatalf("an off-screen context is not presented on screen: %+v", p)
 	}
 }
+
+// TestCmcp2LiveEveryConsole mans each console of a ship in turn and reports what SquatClient draws for it. SQUAT_LIVE_CMCP2=1.
+func TestCmcp2LiveEveryConsole(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
+	}
+	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
+	e, r := newEngine(t)
+	ps, err := engine.OpenPackStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
+			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng", "klingon", "romulan", "tos", "ferengi", "soft", "ops"}, Theme: "tng",
+			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
+	})
+	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home")
+	var ui *engine.CmcpUI
+	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
+	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Tree != nil })
+	_ = e.Input(si.ID, "board resolute")
+	r.until(t, "aboard", func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
+	defer func() { _ = e.Input(si.ID, "home"); time.Sleep(500 * time.Millisecond) }()
+	for _, c := range []string{"helm", "ops", "tac", "sci", "engineering", "damage", "command", "comms", "medical", "security"} {
+		_ = e.Input(si.ID, "man "+c)
+		ok := false
+		deadline := time.Now().Add(4 * time.Second)
+		for time.Now().Before(deadline) {
+			u := get()
+			if u != nil && u.Ctx != nil && u.Ctx.Type == "ship.console" && u.Tree != nil && u.Tree.Root != nil {
+				ok = true
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if !ok {
+			ctx := "none"
+			if u := get(); u != nil && u.Ctx != nil {
+				ctx = u.Ctx.Type + " " + u.Ctx.Layout
+			}
+			ls := r.lines(si.ID)
+			tail := ""
+			for i := max(0, len(ls)-6); i < len(ls); i++ {
+				tail += " | " + ls[i].Plain()
+			}
+			t.Errorf("man %s: no console screen (active context: %s); the game said:%s", c, ctx, tail)
+			continue
+		}
+		t.Logf("man %-8s -> ctx %s layout %s screen %q title %q alternates %d readonly %v", c, ui.Ctx.ID, ui.Ctx.Layout, ui.Tree.Screen, ui.Tree.Title, len(ui.Screens), ui.Readonly)
+		_ = e.Input(si.ID, "unman")
+		time.Sleep(400 * time.Millisecond)
+	}
+}
