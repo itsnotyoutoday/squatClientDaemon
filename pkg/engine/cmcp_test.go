@@ -674,10 +674,10 @@ func TestCmcpViewStateAndTheme(t *testing.T) {
 		s.Push("Space.Damage.Stat", true, map[string]any{"hull": map[string]any{"cur": 800.0, "max": 1000.0}})
 	})
 	ui := g.waitUI("tree", func(u *engine.CmcpUI) bool { return u.Tree != nil })
-	if ui.Tree.Theme != "klingon" || ui.Tree.ThemeSource != "builtin" || ui.Tree.View.State != "default" || ui.Tree.View.PortDefault != "large" || ui.Tree.View.Fraction != 0.45 {
+	if ui.Tree.Theme != "klingon" || ui.Tree.ThemeSource != "builtin" || ui.Tree.View.State != "balanced" || ui.Tree.View.PortDefault != "large" || ui.Tree.View.Fraction != 0.35 {
 		t.Fatalf("tree %+v", ui.Tree.View)
 	}
-	for _, step := range [][2]string{{"log_toggle", "expanded"}, {"log_toggle", "default"}, {"screen_toggle", "off"}, {"log_toggle", "default"}} { // LOG while off brings the screen back
+	for _, step := range [][2]string{{"log_toggle", "expanded"}, {"log_toggle", "balanced"}, {"screen_toggle", "off"}, {"log_toggle", "balanced"}} { // LOG while off brings the screen back
 		st, err := g.e.CmcpViewEvent(g.sid, step[0])
 		if err != nil || st != step[1] {
 			t.Fatalf("%s -> %q (%v), want %q", step[0], st, err, step[1])
@@ -713,7 +713,15 @@ func TestCmcpShowScreen(t *testing.T) {
 		}
 		return false
 	}
-	g.waitUI("nav subscriptions", func(u *engine.CmcpUI) bool { return has(u, "Space.Damage.Stat") && has(u, "Space.Damage.Teams") })
+	g.waitUI("menu marks the local screen", func(u *engine.CmcpUI) bool {
+		for _, o := range u.Screens {
+			if o.ID == "std.damage" && o.Active {
+				return u.LocalScreen == "std.damage"
+			}
+		}
+		return false
+	})
+	_ = has
 	_ = ui
 	if err := g.e.CmcpShowScreen(g.sid, "std.nope"); err == nil {
 		t.Fatal("an unknown screen was accepted")

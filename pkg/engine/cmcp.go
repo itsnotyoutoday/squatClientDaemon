@@ -84,6 +84,9 @@ type CmcpUI struct {
 	Pending           int                        `json:"pending"`
 	Stack             []CmcpStackEntry           `json:"stack"` // held contexts, lowest priority first; the last is active (spec 3.3)
 	CatalogueComplete bool                       `json:"catalogueComplete"`
+	Screens           []CmcpScreenOption         `json:"screens"` // the screen menu (console-switch column)
+	LocalScreen       string                     `json:"localScreen,omitempty"`
+	Pinned            bool                       `json:"pinned,omitempty"`
 	Tree              *CmcpTree                  `json:"tree"` // the bound screen, nil = no console screen
 }
 
@@ -100,6 +103,16 @@ type CmcpStackEntry struct {
 	Readonly bool   `json:"readonly,omitempty"`
 	MannedBy string `json:"mannedBy,omitempty"`
 	Expires  int64  `json:"expiresMs,omitempty"` // unix ms, 0 = no ttl
+}
+
+// CmcpScreenOption is session.ScreenOption: one entry of the screen menu.
+type CmcpScreenOption struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	HintCmd   string `json:"hintCmd,omitempty"`
+	Active    bool   `json:"active"`
 }
 
 // CmcpScreen is session.ScreenRef for the UI.
@@ -203,6 +216,9 @@ func (s *session) cmcp(create bool) *cmcpSess {
 		return nil
 	}
 	cfg := mk()
+	if cfg.ScreenCatalog == nil {
+		cfg.ScreenCatalog = pack.SessionCatalog
+	}
 	cfg.LayerSendsGate = true // the telnet layer sends Core.Hello and Core.Supports.Set ["Cobra 1"] when GMCP turns on
 	cm = &cmcpSess{s: s, c: cs.NewClient(cfg), tx: tx, refs: map[string]map[string]int{}, started: s.e.now(), ss: &screenState{packs: map[string]*pack.Pack{}}}
 	if ents := cm.cacheEntries(); len(ents) > 0 {
@@ -391,6 +407,10 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		d.Docs = map[string]any{}
 	}
 	d.CatalogueComplete = u.CatalogueComplete
+	d.Screens, d.LocalScreen, d.Pinned = []CmcpScreenOption{}, u.LocalScreen, u.Pinned
+	for _, o := range u.Screens {
+		d.Screens = append(d.Screens, CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active})
+	}
 	d.Stack = []CmcpStackEntry{}
 	for _, e := range u.Stack {
 		x := CmcpStackEntry{Key: e.Key, Kind: e.Kind, ID: e.ID, Name: e.Name, Title: e.Title, Screen: e.Screen, Priority: e.Priority, Active: e.Active, Readonly: e.Readonly, MannedBy: e.MannedBy}

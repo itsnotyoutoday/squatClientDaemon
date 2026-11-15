@@ -27,6 +27,7 @@ func TestCmcpLiveEvennia(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true}) // the app's default: follow the ship
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
 	})
@@ -36,7 +37,11 @@ func TestCmcpLiveEvennia(t *testing.T) {
 	}
 	r.waitState(t, e, si.ID, proto.StateConnected)
 	time.Sleep(1500 * time.Millisecond)
-	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	login := "connect alice ember-tide-91"
+	if a := os.Getenv("SQUAT_LIVE_CMCP_ACCOUNT"); a != "" { // e.g. "bob cobalt-fern-52"
+		login = "connect " + a
+	}
+	_ = e.Input(si.ID, login)
 	var ui *engine.CmcpUI
 	r.until(t, "CMCP ready", func() bool {
 		u, err := e.CmcpUI(si.ID)
@@ -61,6 +66,10 @@ func TestCmcpLiveEvennia(t *testing.T) {
 			time.Sleep(25 * time.Millisecond)
 		}
 	}()
+	if b := os.Getenv("SQUAT_LIVE_CMCP_BOARD"); b != "" { // e.g. "ship.board drakhar"
+		_ = e.Input(si.ID, b)
+		time.Sleep(1500 * time.Millisecond)
+	}
 	_ = e.Input(si.ID, "man opera")
 	r.until(t, "console + screen", func() bool {
 		u, _ := e.CmcpUI(si.ID)
@@ -76,6 +85,9 @@ func TestCmcpLiveEvennia(t *testing.T) {
 		if sp, err := e.CmcpSprite(si.ID, "marauder"); err == nil {
 			_ = os.WriteFile(filepath.Join(dir, "live.sprite.json"), sp, 0o644)
 		}
+	}
+	if u2, _ := e.CmcpUI(si.ID); u2 != nil && u2.Ship != nil {
+		t.Logf("ship %s empire %q theme %q pack %+v; tree theme %q (%s) screen %s fallback %v", u2.Ship.ID, u2.Ship.Empire, u2.Ship.Theme, u2.Ship.Pack, u2.Tree.Theme, u2.Tree.ThemeSource, u2.Tree.Screen, u2.Screen.Fallback)
 	}
 	t.Logf("after 2s seqs %v pending %d fallback %v", u.Seqs, u.Pending, u.Screen.Fallback)
 	for _, l := range r.lines(si.ID) {

@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/itsnotyoutoday/cmcp/msg"
 	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
 	"github.com/itsnotyoutoday/cmcp/textport"
@@ -173,11 +171,6 @@ func (cm *cmcpSess) loadPack(raw []byte) error {
 func (cm *cmcpSess) pickScreen(ui *cs.UI) (*pack.Screen, string) {
 	ss := cm.screens()
 	id := ui.Screen.Resolved
-	ss.mu.Lock()
-	if ss.override != "" && ss.overFor == consoleID(ui) {
-		id = ss.override
-	}
-	ss.mu.Unlock()
 	if strings.HasPrefix(id, "std.") {
 		if s := pack.Builtin(id); s != nil {
 			return s, id
@@ -433,10 +426,7 @@ func (e *Engine) CmcpEvent(id, path, event string, value any) (CmcpEventResult, 
 		out.Errors = append(out.Errors, er.Error())
 	}
 	if res.Show != "" {
-		ui := cm.c.UI()
-		ss.mu.Lock()
-		ss.override, ss.overFor = res.Show, consoleID(ui)
-		ss.mu.Unlock()
+		_ = cm.c.ShowScreen(e.now(), res.Show)
 	}
 	if len(res.Sounds) > 0 {
 		var ns []CmcpNote
@@ -591,78 +581,42 @@ func cmcpWidgets(w string) bool {
 	return pack.IsCoreWidget(w) || w == "joystick" || w == "scope" || w == "lights"
 }
 
-var pkgRefRE = regexp.MustCompile(`@([A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)*):`)
-
-// screenPackages lists the data packages a screen reads (the `@Package:path` references of its bindings).
-func screenPackages(scr *pack.Screen) []string {
-	seen := map[string]bool{}
-	var out []string
-	var walk func(n *pack.Node)
-	walk = func(n *pack.Node) {
-		srcs := []string{}
-		for _, v := range n.BindSrc {
-			srcs = append(srcs, v)
-		}
-		for _, src := range srcs {
-			for _, m := range pkgRefRE.FindAllStringSubmatch(src, -1) {
-				if !seen[m[1]] {
-					seen[m[1]] = true
-					out = append(out, m[1])
-				}
-			}
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(scr.Root)
-	sort.Strings(out)
-	return out
-}
-
-// CmcpShowScreen switches the LOCALLY displayed screen of the current console (the console-switch column of the themes): the screen is
-// one of the built-in std.* screens (or a screen of the console's pack); the packages it needs are subscribed explicitly (ref counted
-// under the owner "nav", released when switching to a screen that needs fewer). The choice lasts until the console changes.
+// CmcpShowScreen shows another screen of the current console locally (the console-switch column of the themes). The core's screen menu
+// does the work: the packages the screen needs are subscribed only if nobody holds them and released when switching away, a screen the
+// console cannot have returns its `man <console>` hint, and the choice ends with the console unless pinned.
 func (e *Engine) CmcpShowScreen(id, screen string) error {
 	cm, err := e.cmcpOf(id)
 	if err != nil {
 		return err
 	}
-	ui := cm.c.UI()
-	if ui.Console == nil {
-		return fmt.Errorf("engine: no console is manned")
-	}
-	var scr *pack.Screen
-	if strings.HasPrefix(screen, "std.") {
-		scr = pack.Builtin(screen)
-	} else if pid, sid, ok := strings.Cut(screen, "/"); ok {
-		ss := cm.screens()
-		ss.mu.Lock()
-		if p := ss.packs[pid]; p != nil {
-			scr = p.Screens[sid]
-		}
-		ss.mu.Unlock()
-	}
-	if scr == nil {
-		return fmt.Errorf("engine: no screen %q", screen)
-	}
-	implicit := map[string]bool{}
-	for _, sb := range ui.Subs {
-		if sb.Source == "console" || sb.Source == "always" {
-			implicit[sb.Pkg] = true
-		}
-	}
-	var subs []msg.SubSpec
-	for _, p := range screenPackages(scr) {
-		if !implicit[p] {
-			subs = append(subs, msg.SubSpec{Pkg: p})
-		}
-	}
-	ss := cm.screens()
-	ss.mu.Lock()
-	ss.override, ss.overFor = screen, consoleID(ui)
-	ss.mu.Unlock()
-	err = e.CmcpAcquire(id, "nav", subs)
-	cm.schedule()
+	err = cm.c.ShowScreen(e.now(), screen)
+	cm.flush()
 	return err
+}
+
+// CmcpCycleScreen moves to the next (dir > 0) or previous available screen, wrapping around; it returns the screen shown.
+func (e *Engine) CmcpCycleScreen(id string, dir int) (string, error) {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return "", err
+	}
+	var sc string
+	if dir >= 0 {
+		sc, err = cm.c.NextScreen(e.now())
+	} else {
+		sc, err = cm.c.PrevScreen(e.now())
+	}
+	cm.flush()
+	return sc, err
+}
+
+// CmcpPinScreen keeps (or stops keeping) the locally chosen screen across console changes.
+func (e *Engine) CmcpPinScreen(id string, pin bool) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	cm.c.PinScreen(e.now(), pin)
+	cm.flush()
+	return nil
 }
