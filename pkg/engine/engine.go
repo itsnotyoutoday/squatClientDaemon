@@ -413,6 +413,7 @@ func (e *Engine) Dial(w World, password string) (SessionInfo, error) {
 		World: proto.World{Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
 			TLSVerify: orDefault(w.TLSVerify, "strict"), Encoding: orDefault(w.Encoding, "utf-8")},
 		Caps: e.getCaps(), Version: e.opts.Version, DialTimeout: e.opts.DialTimeout, TLSConfig: e.opts.TLSConfig,
+		NoCobra: !e.cmcpOn(),
 	}
 	e.mu.Lock()
 	if e.closed {

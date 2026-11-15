@@ -46,6 +46,7 @@ type Config struct {
 	ClientName string // default "SquatClient"
 	Version    string // default "0.1.0"
 	Cols, Rows int    // initial NAWS size (default 80x24)
+	NoCobra    bool   // do not declare CMCP in GMCP Core.Supports.Set
 
 	DialTimeout      time.Duration // TCP connect (default 15s)
 	HandshakeTimeout time.Duration // TLS handshake (default 15s)
@@ -203,7 +204,7 @@ func (c *Conn) telnetConfig() telnet.Config {
 	cfg := c.cfg
 	return telnet.Config{
 		ClientName: cfg.ClientName, Version: cfg.Version, Caps: cfg.Caps, UTF8: c.utf8,
-		TLS: cfg.World.TLS, Proxied: cfg.Proxied, Cols: cfg.Cols, Rows: cfg.Rows,
+		TLS: cfg.World.TLS, Proxied: cfg.Proxied, Cols: cfg.Cols, Rows: cfg.Rows, NoCobra: cfg.NoCobra,
 	}
 }
 

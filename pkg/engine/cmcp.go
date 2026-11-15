@@ -44,6 +44,13 @@ func (e *Engine) SetCmcp(cfg func() cs.Config) {
 	e.cmcpMu.Unlock()
 }
 
+// cmcpOn reports whether CMCP is enabled (SetCmcp was given a config source).
+func (e *Engine) cmcpOn() bool {
+	e.cmcpMu.Lock()
+	defer e.cmcpMu.Unlock()
+	return e.cmcpCfg != nil
+}
+
 // CmcpUI is the UI model of one session as the front end receives it (snake_case inside the nested
 // protocol messages, camelCase for the fields the client adds).
 type CmcpUI struct {

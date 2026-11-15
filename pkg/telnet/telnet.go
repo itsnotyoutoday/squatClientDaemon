@@ -55,6 +55,7 @@ type Config struct {
 	TLS        bool // connection is TLS (MTTS SSL bit)
 	Proxied    bool // connection is relayed by squatterd (MTTS PROXY bit)
 	Cols, Rows int  // initial window size for NAWS; default 80x24
+	NoCobra    bool // do not declare CMCP (Core.Supports.Set ["Cobra 1"]); Core.Hello is still sent
 }
 
 // EventKind identifies an Event.
@@ -373,7 +374,9 @@ func (m *Machine) negotiate(cmd, opt byte) {
 					m.events = append(m.events, Event{Kind: EvRemoteEcho, Offset: len(m.data), Bool: true})
 				case OptGMCP:
 					m.send(GMCP("Core.Hello", fmt.Sprintf(`{"client":%q,"version":%q}`, m.cfg.ClientName, m.cfg.Version))...)
-					m.send(GMCP("Core.Supports.Set", `["Cobra 1"]`)...)
+					if !m.cfg.NoCobra {
+						m.send(GMCP("Core.Supports.Set", `["Cobra 1"]`)...)
+					}
 				}
 			}
 		default:
