@@ -125,6 +125,7 @@ func (g *cmcpRig) waitUI(what string, pred func(*engine.CmcpUI) bool) *engine.Cm
 }
 
 type cmcpRigCfg struct {
+	clock    func() time.Time // a fake engine clock (nil: the real one)
 	assets   *msg.Assets
 	packs    []msg.PackRef
 	storeDir string
@@ -143,6 +144,9 @@ func newCmcpRigWith(t *testing.T, mod func(*cmcpRigCfg)) *cmcpRig {
 		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"}, Packs: rc.packs, Assets: rc.assets,
 		Commands: rigCommands()})
 	g.e, g.r = newEngine(t, func(o *engine.Options) {
+		if rc.clock != nil {
+			o.Clock = rc.clock
+		}
 		o.Dialer = func(ctx context.Context, cfg conn.Config) (engine.Transport, error) {
 			tr := &fakeTr{ev: make(chan conn.Event, 64)}
 			g.trp.Store(tr)
@@ -951,6 +955,133 @@ func TestCmcpPackConsentModes(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 		if u, _ := g.e.CmcpUI(g.sid); gets != 0 || u.Tree == nil || u.Tree.Screen == "fspace-std/damage" {
 			t.Fatalf("never: gets %d screen %+v", gets, u.Tree)
+		}
+	}
+}
+
+// The notice line (core queue) through the engine with a fake clock: a done notice replaces its own downloading notice in place, lingers
+// 5.5 s; a failure 8 s; a second notice waits at least 1.2 s behind the first; a sticky (active) notice stays until its state changes.
+func TestCmcpNoticeTiming(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1_700_000_000, 0)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	adv := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) { c.clock = clock })
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"scan.srs"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	text := func(u *engine.CmcpUI) string {
+		if u.Notice == nil {
+			return ""
+		}
+		return u.Notice.Text
+	}
+	post := func(id, kind, state, txt string) {
+		if err := g.e.CmcpNotify(g.sid, id, kind, state, txt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := func(label string, f func(*engine.CmcpUI) bool) *engine.CmcpUI { return g.waitUI(label, f) }
+
+	post("pack:theme:romulan", "download", "active", "Downloading Romulan theme pack")
+	want("downloading shows", func(u *engine.CmcpUI) bool {
+		return text(u) == "Downloading Romulan theme pack" && u.Notice.State == "active"
+	})
+	adv(10 * time.Second) // a sticky notice stays however long it takes
+	time.Sleep(700 * time.Millisecond)
+	want("sticky", func(u *engine.CmcpUI) bool { return text(u) == "Downloading Romulan theme pack" })
+	post("pack:theme:romulan", "download", "done", "Downloaded Romulan theme pack")
+	want("done replaces in place", func(u *engine.CmcpUI) bool {
+		return text(u) == "Downloaded Romulan theme pack" && u.Notice.State == "done"
+	})
+	adv(5 * time.Second)
+	time.Sleep(700 * time.Millisecond)
+	want("still lingering at 5 s", func(u *engine.CmcpUI) bool { return text(u) == "Downloaded Romulan theme pack" })
+	adv(700 * time.Millisecond) // 5.7 s > 5.5 s
+	want("gone after 5.5 s", func(u *engine.CmcpUI) bool { return u.Notice == nil })
+
+	post("pack:theme:ferengi", "download", "failed", "Could not download Ferengi theme pack: hash mismatch, using built-in")
+	want("failure shows", func(u *engine.CmcpUI) bool { return u.Notice != nil && u.Notice.State == "failed" })
+	adv(6 * time.Second)
+	time.Sleep(700 * time.Millisecond)
+	want("failure lingers at 6 s", func(u *engine.CmcpUI) bool { return u.Notice != nil && u.Notice.State == "failed" })
+	adv(2200 * time.Millisecond) // 8.2 s
+	want("failure gone after 8 s", func(u *engine.CmcpUI) bool { return u.Notice == nil })
+
+	// a second notice waits for the first to have been visible 1.2 s, then replaces it
+	post("a", "info", "", "first")
+	want("first", func(u *engine.CmcpUI) bool { return text(u) == "first" })
+	post("b", "info", "", "second")
+	time.Sleep(700 * time.Millisecond)
+	if u, _ := g.e.CmcpUI(g.sid); text(u) != "first" {
+		t.Fatalf("the second notice replaced the first before it was visible 1.2 s: %q", text(u))
+	}
+	adv(1300 * time.Millisecond)
+	want("second after the minimum", func(u *engine.CmcpUI) bool { return text(u) == "second" })
+}
+
+// The red-alert pulse (core pulse package) sampled by the engine: a smooth cosine from the time since the alert started (fake clock), roles
+// r and x and the edge re-coloured by theme.PulseColour; steady for yellow-off, the player's off, reduced motion and recolour off.
+func TestCmcpAlertPulse(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1_700_000_000, 0)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	adv := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	setup := func(r engine.CmcpRender) *cmcpRig {
+		g := newCmcpRigWith(t, func(c *cmcpRigCfg) { c.clock = clock })
+		r.Theme, r.UseShipTheme = "klingon", false
+		g.e.SetCmcpRender(r)
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"alert.set"},
+				Subscribe: []msg.SubSpec{{Pkg: "Space.Ship.Status"}}})
+			s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+		})
+		g.waitUI("red alert", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Alert == "red" })
+		return g
+	}
+	samples := func(g *cmcpRig) []engine.CmcpPulse {
+		var out []engine.CmcpPulse
+		for _, ev := range g.r.snapshot() {
+			if ev.CmcpPulse != nil {
+				out = append(out, *ev.CmcpPulse)
+			}
+		}
+		return out
+	}
+	last := func(g *cmcpRig) *engine.CmcpPulse {
+		s := samples(g)
+		if len(s) == 0 {
+			return nil
+		}
+		return &s[len(s)-1]
+	}
+	g := setup(engine.CmcpRender{})
+	g.r.until(t, "first sample", func() bool { return last(g) != nil && last(g).Active })
+	if l := last(g); l.Level < 0.99 || l.Roles["r"] == "" || l.Edge == "" {
+		t.Fatalf("at the start of the alert the pulse is at full level: %+v", l)
+	}
+	period := time.Duration(last(g).Period) * time.Millisecond
+	adv(period / 2) // half of the period: the dimmest point
+	g.r.until(t, "dim sample", func() bool { l := last(g); return l != nil && l.Level < 0.8 })
+	dim := last(g)
+	if dim.Level < 0.1 || dim.Roles["r"] == "" {
+		t.Fatalf("dim level %+v", dim)
+	}
+	adv(period / 2)
+	g.r.until(t, "back to full", func() bool { l := last(g); return l != nil && l.Level > 0.99 })
+
+	for name, r := range map[string]engine.CmcpRender{
+		"the player's off": {AlertPulse: "off"}, "reduced motion": {Reduced: true}, "recolour off": {AlertRecolour: "off"},
+	} {
+		g := setup(r)
+		time.Sleep(400 * time.Millisecond)
+		adv(250 * time.Millisecond)
+		time.Sleep(400 * time.Millisecond)
+		for _, s := range samples(g) {
+			if s.Active {
+				t.Fatalf("%s: the pulse must be steady: %+v", name, s)
+			}
 		}
 	}
 }

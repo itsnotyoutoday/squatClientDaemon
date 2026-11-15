@@ -157,3 +157,63 @@ func TestCmcpLiveThemes(t *testing.T) {
 		_ = e.Input(si.ID, "unman")
 	}
 }
+
+// TestCmcpLiveSound: a live check of the sound chain against the Evennia PoC (SQUAT_LIVE_CMCP_SOUND=1, SQUATCLIENT_DEV_LOOPBACK_HTTP=1):
+// Hello declares audio, the sound pack is announced, fetched and parsed, a red alert makes the game send Sound.Play and the engine
+// publishes the sound notes. It logs every step so a break in the chain shows where.
+func TestCmcpLiveSound(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP_SOUND") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_SOUND=1 with the Evennia PoC on 127.0.0.1:4101")
+	}
+	e, r := newEngine(t)
+	ps, err := engine.OpenPackStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng",
+			Audio: &msg.Audio{Play: true, Formats: []string{"wav", "ogg", "mp3"}, Recipes: true, Voices: 16}, Logf: t.Logf}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	login := "connect alice ember-tide-91"
+	if a := os.Getenv("SQUAT_LIVE_CMCP_ACCOUNT"); a != "" {
+		login = "connect " + a
+	}
+	_ = e.Input(si.ID, login)
+	var ui *engine.CmcpUI
+	r.until(t, "CMCP ready", func() bool { u, err := e.CmcpUI(si.ID); ui = u; return err == nil && u.State == "ready" })
+	for _, p := range ui.Welcome.Packs {
+		t.Logf("announced pack %s kind %s version %s inline %v size %d", p.ID, p.Kind, p.Version, p.Inline, p.Size)
+	}
+	if b := os.Getenv("SQUAT_LIVE_CMCP_BOARD"); b != "" {
+		_ = e.Input(si.ID, b)
+		time.Sleep(1500 * time.Millisecond)
+	}
+	_ = e.Input(si.ID, "man opera")
+	r.until(t, "console", func() bool { u, _ := e.CmcpUI(si.ID); return u != nil && u.Tree != nil })
+	time.Sleep(3 * time.Second)
+	t.Logf("sound pack loaded: %v", e.CmcpSoundPack(si.ID) != nil)
+	_ = e.Input(si.ID, "alert red")
+	time.Sleep(3 * time.Second)
+	n := 0
+	for _, ev := range r.snapshot() {
+		for _, note := range ev.CmcpNotes {
+			if note.Kind == "sound" || note.Kind == "ui-sound" {
+				n++
+				if note.Sound != nil {
+					t.Logf("sound note: event %q sound %q loop %v key %q", note.Sound.Event, note.Sound.Sound, note.Sound.Loop, note.Sound.Key)
+				} else {
+					t.Logf("sound note: stop %+v stopAll %v", note.Stop, note.StopAll)
+				}
+			}
+		}
+	}
+	t.Logf("%d sound notes; pack loaded %v", n, e.CmcpSoundPack(si.ID) != nil)
+}

@@ -26,6 +26,9 @@ type CmcpRender struct {
 	StartCollapsed bool                              // the console screen starts switched off
 	Theme          string                            // the player's theme (tng, soft, ...)
 	UseShipTheme   bool                              // follow the console/ship/screen suggestion (spec 6.6)
+	AlertPulse     string                            // theme (default) | on | off: whether a red alert pulses
+	AlertRecolour  string                            // theme (default) | full | edge | off: what a red alert recolours
+	Reduced        bool                              // reduced motion: steady alert, no fades
 	Tokens         func(theme string) map[string]any // design tokens of a theme (nil: client defaults)
 }
 
@@ -101,6 +104,7 @@ type CmcpTree struct {
 	Console      string         `json:"console,omitempty"`
 	Theme        string         `json:"theme"`                  // the theme in force after the precedence rules of 6.6
 	ThemeSource  string         `json:"themeSource"`            // pack | builtin | plain (19.10)
+	AlertMode    string         `json:"alertMode"`              // the effective alert_recolour: full | edge | off
 	ThemeVersion string         `json:"themeVersion,omitempty"` // the downloaded pack's version when the source is "pack"
 	View         CmcpView       `json:"view"`
 	Tokens       map[string]any `json:"tokens"`  // resolved design tokens for that theme and pack
@@ -232,6 +236,26 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	}
 	cm.wantThemeLocked(want, refs)
 	id, src := th.reg.Resolve(want)
+	// the pulse and the recolour mode follow the theme in effect and the player's settings
+	if pk := th.packs[id]; src == theme.SourcePack && pk != nil {
+		cm.syncPulseLocked(pk, r)
+	} else {
+		cm.syncPulseLocked(theme.Builtin(id), r)
+	}
+	// a theme change is said once on the notice line (the first built-in theme of a connection is not news)
+	ver := theme.BuiltinVersions()[id]
+	if src == theme.SourcePack {
+		if p := th.packs[id]; p != nil {
+			ver = p.Version
+		}
+	}
+	if seen := id + "|" + src + "|" + ver; seen != cm.themeSeen {
+		first := cm.themeSeen == ""
+		cm.themeSeen = seen
+		if !first || src == theme.SourcePack {
+			go cm.c.ThemeInUse(cm.s.e.now(), id, ver, src == theme.SourcePack)
+		}
+	}
 	cm.themeKey, cm.themeID, cm.themeSrc, cm.themeShip = key, id, src, hasShip && r.UseShipTheme
 	return id, src
 }
@@ -318,7 +342,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		pd = "balanced"
 	}
 	viewDTO := CmcpView{State: string(vs), PortDefault: pd, Fraction: textport.Fraction(textport.Stacked, vs), Calm: rr.Calm}
-	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, ThemeVersion: tver, View: viewDTO, Tokens: toks,
+	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, AlertMode: cm.alertModeNow(), ThemeVersion: tver, View: viewDTO, Tokens: toks,
 		PackKey: scr.Pack.SHA256 + "/" + theme + "@" + themeSrc + tver, Exhausted: b.Exhausted, Root: dtoNode(b, scr, ui), UI: copyMap(ss.ui)}
 	if ui.Title != "" {
 		t.Title = ui.Title
@@ -646,4 +670,13 @@ func (e *Engine) CmcpPinScreen(id string, pin bool) error {
 	cm.c.PinScreen(e.now(), pin)
 	cm.flush()
 	return nil
+}
+
+func (cm *cmcpSess) alertModeNow() string {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.alertMode == "" {
+		return "full"
+	}
+	return cm.alertMode
 }

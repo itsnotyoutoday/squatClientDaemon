@@ -90,13 +90,15 @@ func (cm *cmcpSess) fetchTheme(id string, orig, one msg.PackRef) {
 		}
 	}
 	if !cm.c.WantTheme(id) {
-		cm.themeFailed(id, "the game announced no gpu rendition")
+		cm.themeFailed(one, "no gpu rendition announced")
 		return
 	}
 	cm.flush()
 }
 
-func (cm *cmcpSess) themeFailed(id, why string) {
+func (cm *cmcpSess) themeFailed(ref msg.PackRef, why string) {
+	id := ref.ID
+	cm.c.PackFailed(cm.s.e.now(), ref, why)
 	cm.mu.Lock()
 	th := cm.themesLocked()
 	th.reg.NoteFailed(id)
@@ -128,6 +130,7 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 
 	raw, _, hit := st.cache.Get(host, ref.SHA256)
 	if !hit {
+		cm.c.PackProgress(e.now(), ref, 0, int64(ref.Size))
 		var err error
 		if ref.Inline {
 			raw, err = cm.fetchInline(ref)
@@ -135,7 +138,7 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 			raw, err = cm.fetchHTTPS(ref)
 		}
 		if err != nil {
-			cm.themeFailed(ref.ID, err.Error())
+			cm.themeFailed(ref, err.Error())
 			return
 		}
 	}
@@ -151,31 +154,31 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 	}
 	ch := theme.ChooseRendition(orig, themeClass)
 	if ch == nil {
-		cm.themeFailed(ref.ID, "no gpu rendition announced")
+		cm.themeFailed(ref, "no gpu rendition announced")
 		return
 	}
 	sum := sha256.Sum256(raw)
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		cm.themeFailed(ref.ID, "not JSON")
+		cm.themeFailed(ref, "not JSON")
 		return
 	}
 	if v := theme.VerifyThemeFile(*ch, themeClass, hex.EncodeToString(sum[:]), len(raw), doc); v != theme.VerifyOK {
-		cm.themeFailed(ref.ID, v)
+		cm.themeFailed(ref, v)
 		return
 	}
 	p, err := theme.Parse(raw)
 	if err != nil {
-		cm.themeFailed(ref.ID, err.Error())
+		cm.themeFailed(ref, err.Error())
 		return
 	}
 	if p.ID != ref.ID {
-		cm.themeFailed(ref.ID, "the file is theme "+p.ID)
+		cm.themeFailed(ref, "the file is theme "+p.ID)
 		return
 	}
 	trust := st.keys.Check(host, ref)
 	if trust == fetch.TrustInvalid {
-		cm.themeFailed(ref.ID, "invalid signature")
+		cm.themeFailed(ref, "invalid signature")
 		return
 	}
 	ck := ckey(host, "theme:"+ref.ID)
@@ -192,7 +195,7 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 	case "always":
 		silent = true
 	case "never":
-		cm.themeFailed(ref.ID, "interface packs are set to Never")
+		cm.themeFailed(ref, "interface packs are set to Never")
 		return
 	}
 	if !silent {
@@ -203,7 +206,7 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 			st.consent[ck] = consentRec{SHA256: ref.SHA256, Version: ref.Version, SigKey: sigKey, Allowed: false}
 			st.save()
 			st.mu.Unlock()
-			cm.themeFailed(ref.ID, "you declined the theme")
+			cm.themeFailed(ref, "you declined the theme")
 			return
 		}
 	}
@@ -214,6 +217,9 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 	st.save()
 	st.mu.Unlock()
 
+	if !hit {
+		cm.c.PackDownloaded(e.now(), ref)
+	}
 	cm.mu.Lock()
 	th := cm.themesLocked()
 	th.reg.NoteVerified(p.ID, p.Version, p.Parts)

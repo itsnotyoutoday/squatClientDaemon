@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,9 +12,11 @@ import (
 	"github.com/itsnotyoutoday/cmcp/audio"
 	"github.com/itsnotyoutoday/cmcp/frame"
 	"github.com/itsnotyoutoday/cmcp/msg"
+	"github.com/itsnotyoutoday/cmcp/notice"
 	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
 	"github.com/itsnotyoutoday/cmcp/textport"
+	"github.com/itsnotyoutoday/cmcp/theme"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
@@ -84,7 +87,8 @@ type CmcpUI struct {
 	Pending           int                        `json:"pending"`
 	Stack             []CmcpStackEntry           `json:"stack"` // held contexts, lowest priority first; the last is active (spec 3.3)
 	CatalogueComplete bool                       `json:"catalogueComplete"`
-	Screens           []CmcpScreenOption         `json:"screens"` // the screen menu (console-switch column)
+	Notice            *CmcpNoticeLine            `json:"notice,omitempty"` // the one notice line (pack downloads, accepted packs, theme in use, warnings)
+	Screens           []CmcpScreenOption         `json:"screens"`          // the screen menu (console-switch column)
 	LocalScreen       string                     `json:"localScreen,omitempty"`
 	Pinned            bool                       `json:"pinned,omitempty"`
 	Status            map[string]any             `json:"status,omitempty"` // Space.Ship.Status (name, alert, hull, core, lock) for the frame
@@ -107,6 +111,14 @@ type CmcpStackEntry struct {
 }
 
 // CmcpScreenOption is session.ScreenOption: one entry of the screen menu.
+// CmcpNoticeLine is the core's notice queue head: one line, sticky while a transfer is active.
+type CmcpNoticeLine struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`  // download | accepted | using | warning | error | info
+	State string `json:"state"` // active | done | failed
+	Text  string `json:"text"`  // the line, with the progress
+}
+
 type CmcpScreenOption struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -189,6 +201,13 @@ type cmcpSess struct {
 	tv                          *textport.View // guarded by mu
 	themeKey, themeID, themeSrc string         // the sticky per-ship theme (guarded by mu)
 	themeShip                   bool
+	alertMode                   string // the effective alert_recolour (full|edge|off) of the theme in effect
+	pulsePack                   *theme.Pack
+	pulseCfg                    cs.PulseConfig
+	pulseSet                    bool
+	pulseLast                   CmcpPulse
+	pulseTmr                    *time.Timer
+	themeSeen                   string      // id|source|version last announced on the notice line
 	th                          *themeState // downloaded themes (guarded by mu)
 	started                     time.Time
 }
@@ -239,6 +258,7 @@ func (s *session) cmcp(create bool) *cmcpSess {
 	}
 	s.mu.Unlock()
 	cm.arm()
+	cm.armPulse()
 	return cm
 }
 
@@ -282,6 +302,9 @@ func (s *session) cmcpStop() {
 	}
 	if cm.pubTmr != nil {
 		cm.pubTmr.Stop()
+	}
+	if cm.pulseTmr != nil {
+		cm.pulseTmr.Stop()
 	}
 	cm.mu.Unlock()
 }
@@ -379,6 +402,7 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 					txt += " (" + r.Hint + ")"
 				}
 				cm.s.systemLine(txt)
+				cm.c.Notify(cm.s.e.now(), notice.Notice{ID: "cmd:" + r.Cmd, Kind: notice.Error, Text: strings.TrimPrefix(txt, "cmcp: ")})
 			}
 			ns = append(ns, CmcpNote{Kind: k, Reply: rep})
 		case cs.NotePackWanted:
@@ -402,6 +426,17 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 	return ns
 }
 
+// CmcpNotify posts a line on the notice queue (command errors with hints, warnings, info); state is active | done | failed.
+func (e *Engine) CmcpNotify(id, nid, kind, state, text string) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	cm.c.Notify(e.now(), notice.Notice{ID: nid, Kind: kind, State: state, Text: text})
+	cm.flush()
+	return nil
+}
+
 func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 	d := &CmcpUI{Session: id, Rev: u.Rev, Generation: u.Generation, State: string(u.State), Proto: u.Proto,
 		Server: u.Server, Welcome: u.Welcome, Console: u.Console, ConsoleRev: u.ConsoleRev, Reason: u.Reason,
@@ -416,6 +451,13 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		d.Docs = map[string]any{}
 	}
 	d.CatalogueComplete = u.CatalogueComplete
+	if n := u.Notice; n != nil {
+		st := n.State
+		if st == "" {
+			st = notice.Done
+		}
+		d.Notice = &CmcpNoticeLine{ID: n.ID, Kind: n.Kind, State: st, Text: n.Line()}
+	}
 	d.Screens, d.LocalScreen, d.Pinned = []CmcpScreenOption{}, u.LocalScreen, u.Pinned
 	for _, o := range u.Screens {
 		d.Screens = append(d.Screens, CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active, State: o.State, Hint: o.Hint})

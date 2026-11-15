@@ -33,6 +33,7 @@ const (
 	EvTFKeys                              // Text: the key sequences scripts have bound, one per line (changes only)
 	EvCmcp                                // Session, Cmcp: the CMCP UI model changed (throttled by the engine)
 	EvCmcpNote                            // Session, CmcpNotes: sounds, events, replies (never coalesced)
+	EvCmcpPulse                           // Session, CmcpPulse: one sample of the red-alert pulse (~20 Hz while it pulses)
 )
 
 // Notice levels.
@@ -72,6 +73,7 @@ type Event struct {
 
 	Cmcp      *CmcpUI    // EvCmcp
 	CmcpNotes []CmcpNote // EvCmcpNote
+	CmcpPulse *CmcpPulse // EvCmcpPulse
 }
 
 // ControlPending says a device asked for control of a session and TinyFugue's user

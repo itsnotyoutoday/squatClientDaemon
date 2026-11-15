@@ -13,6 +13,7 @@ import (
 	"github.com/itsnotyoutoday/cmcp/audio"
 	"github.com/itsnotyoutoday/cmcp/fetch"
 	"github.com/itsnotyoutoday/cmcp/msg"
+	"github.com/itsnotyoutoday/cmcp/notice"
 )
 
 // Pack delivery (cmcp spec 8): the Go side fetches (inline chunks over GMCP or origin-pinned HTTPS), verifies, keeps the
@@ -174,6 +175,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	logf := func(f string, a ...any) { cm.s.systemLine("cmcp: " + fmt.Sprintf(f, a...)) }
 	fail := func(err error) {
 		logf("pack %s %s dropped: %v", ref.ID, ref.Version, err)
+		cm.c.PackFailed(e.now(), ref, err.Error())
 		if ref.Kind == "layout" {
 			cm.c.PackAvailable(ref.ID, ref.SHA256, false)
 		}
@@ -210,6 +212,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 
 	raw, _, hit := st.cache.Get(host, ref.SHA256)
 	if !hit {
+		cm.c.PackProgress(e.now(), ref, 0, int64(ref.Size))
 		var err error
 		if ref.Inline {
 			raw, err = cm.fetchInline(ref)
@@ -220,6 +223,9 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 			fail(err)
 			return
 		}
+	}
+	if !hit {
+		cm.c.PackDownloaded(e.now(), ref)
 	}
 	if ref.Kind == "sounds" {
 		cm.loadSoundPack(raw)
@@ -545,6 +551,7 @@ func (cm *cmcpSess) consentMode() string {
 
 // accepted tells the player once about a newly accepted pack (a log line and a toast note).
 func (cm *cmcpSess) accepted(ref msg.PackRef) {
+	cm.c.Notify(cm.s.e.now(), notice.Notice{ID: "accepted:" + ref.ID, Kind: notice.Accepted, Text: fetch.ConsentNotice(ref.ID, ref.Version, cm.s.world.Host)})
 	cm.s.systemLine(fmt.Sprintf("cmcp: Accepted interface pack %s %s", ref.ID, ref.Version))
 	pr := ref
 	cm.s.e.bus.publish(Event{Kind: EvCmcpNote, Session: cm.s.id, CmcpNotes: []CmcpNote{{Kind: "pack-accepted", Pack: &pr, Text: fmt.Sprintf("Accepted interface pack %s %s", ref.ID, ref.Version)}}})
