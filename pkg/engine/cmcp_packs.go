@@ -559,7 +559,7 @@ func (cm *cmcpSess) fetchPolicy() fetch.Policy {
 	if ui := cm.c.UI(); ui.Welcome != nil && ui.Welcome.Assets != nil {
 		announced = ui.Welcome.Assets.Origin
 	}
-	return originPolicy(cm.s.world.Host, announced, cm.consentMode(), os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1", os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1", devForceThemes())
+	return originPolicy(cm.s.world.Host, announced, cm.consentMode(), os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1" || cm.s.e.devHTTPFor(cm.s.world.Name), os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1", devForceThemes())
 }
 
 // originPolicy is the origin rule of spec 8.4 for one connection. A game usually hosts its packs on a CDN, not on its own host (a game on a bare IP cannot

@@ -96,3 +96,12 @@ func TestStatusDocFromTheDefinition(t *testing.T) {
 		t.Fatalf("v1 keeps its own document: %v", st)
 	}
 }
+
+// A world marked as a local development game allows plain http for its own packs (the per-world form of SQUATCLIENT_DEV_LOOPBACK_HTTP); others do not.
+func TestWorldDevHTTP(t *testing.T) {
+	e := &Engine{}
+	e.SetWorldDevHTTP(map[string]bool{"Local Test": true, "off": false})
+	if !e.devHTTPFor("local test") || e.devHTTPFor("off") || e.devHTTPFor("other") {
+		t.Fatalf("only the marked world: %v %v %v", e.devHTTPFor("local test"), e.devHTTPFor("off"), e.devHTTPFor("other"))
+	}
+}

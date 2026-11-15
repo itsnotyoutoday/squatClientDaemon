@@ -142,6 +142,7 @@ type Engine struct {
 	cmcpRender           CmcpRender
 	cmcpPacks            *PackStore
 	cmcpCfg              func() cs.Config // nil: CMCP is off (see cmcp.go)
+	worldDevHTTP         map[string]bool  // world name (lower case) -> the world is a local development game: plain http from its own loopback origin is allowed; guarded by cmcpMu
 	worldCmcpProto       map[string]int   // world name (lower case) -> 1 or 2: the one CMCP version that world declares; guarded by cmcpMu
 	extensions           []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.

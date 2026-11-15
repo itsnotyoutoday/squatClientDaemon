@@ -229,3 +229,24 @@ func announcedPacks(ui *cs.UI) []msg.PackRef {
 	}
 	return out
 }
+
+// SetWorldDevHTTP marks the worlds that are local development games: for them (and only when their host is loopback, which the fetch policy checks)
+// the definition, packs and sounds the game announces may come over plain http from the origin of its own Welcome. It is the per-world form of
+// SQUATCLIENT_DEV_LOOPBACK_HTTP=1; every other check (hash, size, origin announced) is unchanged.
+func (e *Engine) SetWorldDevHTTP(m map[string]bool) {
+	c := make(map[string]bool, len(m))
+	for k, v := range m {
+		if v {
+			c[strings.ToLower(strings.TrimSpace(k))] = true
+		}
+	}
+	e.cmcpMu.Lock()
+	e.worldDevHTTP = c
+	e.cmcpMu.Unlock()
+}
+
+func (e *Engine) devHTTPFor(world string) bool {
+	e.cmcpMu.Lock()
+	defer e.cmcpMu.Unlock()
+	return e.worldDevHTTP[strings.ToLower(strings.TrimSpace(world))]
+}
