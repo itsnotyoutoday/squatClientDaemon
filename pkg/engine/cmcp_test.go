@@ -496,6 +496,7 @@ func TestCmcpPackInlineConsentAndCache(t *testing.T) {
 	}
 	yes := true
 	gets, prompted, ui, _ := run(t, &yes)
+	waitConsentSaved(t, store)
 	if gets != 1 || !prompted || ui.Tree.Screen != "fspace-std/damage" || ui.Screen.Fallback {
 		t.Fatalf("first launch: gets %d prompted %v screen %q fallback %v", gets, prompted, ui.Tree.Screen, ui.Screen.Fallback)
 	}
@@ -562,6 +563,7 @@ func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 	ref := msg.PackRef{ID: "fspace-std", Kind: "layout", Version: "1.0.0", SHA256: sha, Size: len(raw), URL: srv.URL + "/cmcp/v1/blob/" + sha}
+	dir := t.TempDir()
 	run := func(t *testing.T, flag bool) *cmcpRig {
 		if flag {
 			t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
@@ -571,7 +573,7 @@ func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
 		g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
 			c.packs = []msg.PackRef{ref}
 			c.assets = &msg.Assets{Origin: srv.URL, Base: "/cmcp/v1"}
-			c.storeDir = t.TempDir()
+			c.storeDir = dir
 		})
 		g.do(func(s *cs.Server) {
 			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: ref.ID, Version: ref.Version, SHA256: sha}, Packs: []msg.PackRef{ref}},
@@ -610,6 +612,19 @@ func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
 	if hits != 1 || ui.Tree == nil {
 		t.Fatalf("hits %d", hits)
 	}
+	waitConsentSaved(t, dir) // the fetcher writes the cache and the consent record after the screen switched
+}
+
+func waitConsentSaved(t *testing.T, dir string) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "consent.json")); err == nil {
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("consent record never saved")
 }
 
 // The viewscreen: contacts are projected, far to near, and a contact with art gets the view chosen for the angle it shows us
@@ -627,7 +642,9 @@ func TestCmcpViewscreenContactArt(t *testing.T) {
 			"19": map[string]any{"cid": 19, "name": "Behind", "rel": map[string]any{"az": 170.0, "mark": 0.0}, "bearing": map[string]any{"az": 170.0, "mark": 0.0}, "distance_m": 1000.0, "type": "Ship"}}})
 	})
 	ui := g.waitUI("viewscreen", func(u *engine.CmcpUI) bool {
-		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" && len(n.Props["items"].([]map[string]any)) > 0 }) != nil
+		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool {
+			return n.Widget == "viewscreen" && len(n.Props["items"].([]map[string]any)) > 0
+		}) != nil
 	})
 	vs := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" })
 	items, _ := vs.Props["items"].([]map[string]any)
