@@ -38,6 +38,8 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 	r.waitState(t, e, si.ID, proto.StateConnected)
 	time.Sleep(1500 * time.Millisecond)
 	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
 	r.until(t, "CMCP 2 ready with a definition", func() bool {
@@ -93,6 +95,8 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 	r.waitState(t, e, si.ID, proto.StateConnected)
 	time.Sleep(1500 * time.Millisecond)
 	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
 	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Tree != nil })
@@ -115,6 +119,7 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 	})
 	t.Logf("console ctx %+v screen %q tree %q title %q", ui.Ctx, ui.Screen.Resolved, ui.Tree.Screen, ui.Tree.Title)
 	time.Sleep(2 * time.Second)
+	defer func() { _ = e.Input(si.ID, "home"); time.Sleep(500 * time.Millisecond) }() // leave the account on the concourse for the next test
 	if sp := e.CmcpSoundPack(si.ID); sp == nil {
 		t.Logf("no sound pack loaded (the game may announce none)")
 	} else {
@@ -148,6 +153,8 @@ func TestCmcp2LivePanes(t *testing.T) {
 	r.waitState(t, e, si.ID, proto.StateConnected)
 	time.Sleep(1500 * time.Millisecond)
 	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
 	r.until(t, "the main screen and a dock pane with a tree", func() bool {
