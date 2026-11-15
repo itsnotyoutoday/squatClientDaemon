@@ -11,7 +11,7 @@ require (
 
 require github.com/itsnotyoutoday/gtfparser v0.0.10
 
-require github.com/itsnotyoutoday/cmcp v0.0.0-00010101000000-000000000000
+require github.com/itsnotyoutoday/cmcp/go v0.0.0-00010101000000-000000000000
 
 // cmcp is not on GitHub yet: resolve it from the sibling directory (CI needs it checked out next to this repo).
-replace github.com/itsnotyoutoday/cmcp => ../cmcp/go
+replace github.com/itsnotyoutoday/cmcp/go => ../cmcp/go
