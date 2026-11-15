@@ -88,6 +88,8 @@ type CmcpUI struct {
 	Stack             []CmcpStackEntry           `json:"stack"` // held contexts, lowest priority first; the last is active (spec 3.3)
 	CatalogueComplete bool                       `json:"catalogueComplete"`
 	Notice            *CmcpNoticeLine            `json:"notice,omitempty"` // the one notice line (pack downloads, accepted packs, theme in use, warnings)
+	AllScreens        []CmcpScreenOption         `json:"allScreens"`       // every screen with its state and `man <console> to use` hint (the "more..." list)
+	Directory         []string                   `json:"directory"`        // the core's DirectoryLines of those rows (the /cmcp screens listing)
 	Screens           []CmcpScreenOption         `json:"screens"`          // the screen menu (console-switch column)
 	LocalScreen       string                     `json:"localScreen,omitempty"`
 	Pinned            bool                       `json:"pinned,omitempty"`
@@ -207,8 +209,9 @@ type cmcpSess struct {
 	pulseSet                    bool
 	pulseLast                   CmcpPulse
 	pulseTmr                    *time.Timer
-	themeSeen                   string      // id|source|version last announced on the notice line
-	th                          *themeState // downloaded themes (guarded by mu)
+	vp                          cmcpViewport // the web view's viewport (guarded by mu)
+	themeSeen                   string       // id|source|version last announced on the notice line
+	th                          *themeState  // downloaded themes (guarded by mu)
 	started                     time.Time
 }
 
@@ -459,8 +462,23 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		d.Notice = &CmcpNoticeLine{ID: n.ID, Kind: n.Kind, State: st, Text: n.Line()}
 	}
 	d.Screens, d.LocalScreen, d.Pinned = []CmcpScreenOption{}, u.LocalScreen, u.Pinned
+	opt := func(o cs.ScreenOption) CmcpScreenOption {
+		return CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active, State: o.State, Hint: o.Hint}
+	}
+	d.AllScreens, d.Directory = []CmcpScreenOption{}, []string{}
+	var rows []cs.DirectoryRow
 	for _, o := range u.Screens {
-		d.Screens = append(d.Screens, CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active, State: o.State, Hint: o.Hint})
+		d.AllScreens = append(d.AllScreens, opt(o))
+		label := cs.ScreenLabels[o.ID]
+		if label == "" {
+			label = o.Title
+		}
+		rows = append(rows, cs.DirectoryRow{Screen: o.ID, Label: label, Available: o.Available, Hint: o.Hint})
+	}
+	d.Directory = cs.DirectoryLines(rows)
+	// the menu lists only the screens this console can show (the core's MenuScreens): nothing dim, never a locked one
+	for _, o := range u.MenuScreens() {
+		d.Screens = append(d.Screens, opt(o))
 	}
 	d.Stack = []CmcpStackEntry{}
 	for _, e := range u.Stack {

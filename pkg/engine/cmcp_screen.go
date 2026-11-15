@@ -28,6 +28,7 @@ type CmcpRender struct {
 	UseShipTheme   bool                              // follow the console/ship/screen suggestion (spec 6.6)
 	AlertPulse     string                            // theme (default) | on | off: whether a red alert pulses
 	AlertRecolour  string                            // theme (default) | full | edge | off: what a red alert recolours
+	TextLayout     string                            // auto (default) | left | stacked: textport_layout (the core's ResolveLayout)
 	Reduced        bool                              // reduced motion: steady alert, no fades
 	Tokens         func(theme string) map[string]any // design tokens of a theme (nil: client defaults)
 }
@@ -104,6 +105,8 @@ type CmcpTree struct {
 	Console      string         `json:"console,omitempty"`
 	Theme        string         `json:"theme"`                  // the theme in force after the precedence rules of 6.6
 	ThemeSource  string         `json:"themeSource"`            // pack | builtin | plain (19.10)
+	Layout       string         `json:"layout"`                 // side | stacked: the core's textport_layout decision for the viewport
+	PortCapPx    float64        `json:"portCapPx"`              // the side textport's width cap in device px (port.max_cols x 0.6 x mono x scale)
 	AlertMode    string         `json:"alertMode"`              // the effective alert_recolour: full | edge | off
 	ThemeVersion string         `json:"themeVersion,omitempty"` // the downloaded pack's version when the source is "pack"
 	View         CmcpView       `json:"view"`
@@ -308,6 +311,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 	env := pack.EnvFromUI(ui, ss.ui)
 	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets, Class: "gpu"})
 	theme, themeSrc := cm.theme(ui, scr)
+	lay, capPx := cm.layoutNow(theme)
 	tver := ""
 	if themeSrc == "pack" {
 		cm.mu.Lock()
@@ -342,7 +346,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		pd = "balanced"
 	}
 	viewDTO := CmcpView{State: string(vs), PortDefault: pd, Fraction: textport.Fraction(textport.Stacked, vs), Calm: rr.Calm}
-	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, AlertMode: cm.alertModeNow(), ThemeVersion: tver, View: viewDTO, Tokens: toks,
+	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, AlertMode: cm.alertModeNow(), Layout: lay, PortCapPx: capPx, ThemeVersion: tver, View: viewDTO, Tokens: toks,
 		PackKey: scr.Pack.SHA256 + "/" + theme + "@" + themeSrc + tver, Exhausted: b.Exhausted, Root: dtoNode(b, scr, ui), UI: copyMap(ss.ui)}
 	if ui.Title != "" {
 		t.Title = ui.Title
@@ -680,3 +684,53 @@ func (cm *cmcpSess) alertModeNow() string {
 	}
 	return cm.alertMode
 }
+
+// layoutNow is textport_layout for the web view's viewport (the core's ResolveLayout) and the side textport's width cap in device px (the
+// core's CapUnits with the theme's port.max_cols). Before the view reports a viewport the stacked layout is used.
+func (cm *cmcpSess) layoutNow(themeID string) (string, float64) {
+	cm.s.e.cmcpMu.Lock()
+	setting := cm.s.e.cmcpRender.TextLayout
+	cm.s.e.cmcpMu.Unlock()
+	cm.mu.Lock()
+	vp := cm.vp
+	var pk *theme.Pack
+	if cm.th != nil {
+		pk = cm.th.packs[themeID]
+	}
+	cm.mu.Unlock()
+	if pk == nil {
+		pk = theme.Builtin(themeID)
+	}
+	maxCols := 0
+	if pk != nil {
+		maxCols = pk.MaxCols
+	}
+	if vp.w <= 0 {
+		return "stacked", 0
+	}
+	choice := textport.ResolveLayout(setting, false, vp.w)
+	lay := "stacked"
+	if choice.Layout == textport.Side {
+		lay = "side"
+	}
+	return lay, textport.CapUnits(false, maxCols, vp.scale, vp.mono)
+}
+
+// CmcpViewport tells the engine the web view's logical width in px, the device px per scene unit and the monospace font size in px, which the
+// layout decision and the side textport's cap need.
+func (e *Engine) CmcpViewport(id string, widthPx, scale, monoPx float64) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	cm.mu.Lock()
+	changed := cm.vp.w != widthPx || cm.vp.scale != scale || cm.vp.mono != monoPx
+	cm.vp = cmcpViewport{w: widthPx, scale: scale, mono: monoPx}
+	cm.mu.Unlock()
+	if changed {
+		cm.schedule()
+	}
+	return nil
+}
+
+type cmcpViewport struct{ w, scale, mono float64 }

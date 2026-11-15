@@ -9,6 +9,7 @@ import (
 	"github.com/itsnotyoutoday/cmcp/fetch"
 	"github.com/itsnotyoutoday/cmcp/pack"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1083,5 +1084,90 @@ func TestCmcpAlertPulse(t *testing.T) {
 				t.Fatalf("%s: the pulse must be steady: %+v", name, s)
 			}
 		}
+	}
+}
+
+// textport_layout is the core's decision for the viewport the web view reports: auto gives the side layout from 1100 px and stacked below,
+// the settings force one; the side textport's cap is port.max_cols x 0.6 x mono x scale (80 columns by default).
+func TestCmcpTextLayout(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"scan.srs"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree.Layout != "stacked" {
+		t.Fatalf("before a viewport is reported the layout is stacked: %q", u.Tree.Layout)
+	}
+	for _, c := range []struct {
+		setting string
+		width   float64
+		want    string
+	}{{"", 1000, "stacked"}, {"", 1100, "side"}, {"", 1920, "side"}, {"stacked", 1920, "stacked"}, {"left", 900, "side"}} {
+		g.e.SetCmcpRender(engine.CmcpRender{TextLayout: c.setting})
+		if err := g.e.CmcpViewport(g.sid, c.width, c.width/1600, 16); err != nil {
+			t.Fatal(err)
+		}
+		u := g.waitUI("layout", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Layout == c.want })
+		if c.want == "side" {
+			// 80 columns x 0.6 x 16 px x scale, rounded up
+			want := math.Ceil(80 * 0.6 * 16 * (c.width / 1600))
+			if math.Abs(u.Tree.PortCapPx-want) > 1 {
+				t.Fatalf("cap %v, want %v (width %v)", u.Tree.PortCapPx, want, c.width)
+			}
+		}
+	}
+}
+
+// A scan tab (std.sensors) sends its command with text "none" through Client.CommandWith (the typed text is not printed into the game output),
+// sets the tab's $ui state, and echoes its typed form to the log line.
+func TestCmcpScanTabSendsTextNone(t *testing.T) {
+	var mu sync.Mutex
+	var cmds []map[string]any
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+		c.onFrame = func(r *cmcpRig, f frame.Frame) {
+			if f.Package == msg.PkgCmd {
+				var m map[string]any
+				if json.Unmarshal(f.Payload, &m) == nil {
+					mu.Lock()
+					cmds = append(cmds, m)
+					mu.Unlock()
+				}
+			}
+		}
+	})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "science", Name: "Sci"}, Screen: "std.sensors", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}}, Commands: []string{"scan.srs", "scan.lrs", "scan.passive"}})
+	})
+	ui := g.waitUI("sensors", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.sensors" })
+	tab := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "button" && n.Enabled && len(n.Events) > 0 })
+	if tab == nil {
+		t.Fatal("no clickable button on the sensors screen")
+	}
+	// click every enabled button that sends a scan.* command until one does
+	var sent map[string]any
+	var walk func(n *engine.CmcpNode)
+	walk = func(n *engine.CmcpNode) {
+		if n.Widget == "button" && n.Enabled && sent == nil {
+			_, _ = g.e.CmcpEvent(g.sid, n.Path, "click", nil)
+			time.Sleep(60 * time.Millisecond)
+			mu.Lock()
+			for _, m := range cmds {
+				if c, _ := m["cmd"].(string); len(c) > 5 && c[:5] == "scan." {
+					sent = m
+				}
+			}
+			mu.Unlock()
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(ui.Tree.Root)
+	if sent == nil {
+		t.Fatalf("no scan command was sent: %v", cmds)
+	}
+	if sent["text"] != "none" {
+		t.Fatalf("the scan tab must send text none: %v", sent)
 	}
 }
