@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -275,6 +276,9 @@ func dtoNode(b *pack.BoundNode, scr *pack.Screen, ui *cs.UI) *CmcpNode {
 		n.Props["sprite_amounts"] = map[string]any{"zones": am.Zones, "glows": am.Glows}
 		n.Props["sprite_key"] = scr.Pack.SHA256 + "/" + sid
 	}
+	if n.Widget == "viewscreen" {
+		n.Props["items"] = viewItems(n.Props, scr)
+	}
 	for _, c := range b.Children {
 		if d := dtoNode(c, scr, ui); d != nil {
 			n.Children = append(n.Children, d)
@@ -380,4 +384,100 @@ func (e *Engine) CmcpEvent(id, path, event string, value any) (CmcpEventResult, 
 	cm.flush()
 	cm.schedule() // $ui or the screen changed even if the model did not
 	return out, nil
+}
+
+// CmcpSetUI writes a key of the screen's $ui state on behalf of a widget (the team a team-assigner has picked is
+// `$ui.team`, so a schematic click can use it); nil deletes. Keys are dotted identifiers.
+func (e *Engine) CmcpSetUI(id, key string, value any) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	for _, c := range key {
+		if !(c == '.' || c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') || key == "" {
+			return fmt.Errorf("engine: bad ui key %q", key)
+		}
+	}
+	ss := cm.screens()
+	ss.mu.Lock()
+	if ss.ui == nil {
+		ss.ui = map[string]any{}
+	}
+	setUIPath(ss.ui, key, value)
+	ss.mu.Unlock()
+	cm.schedule()
+	return nil
+}
+
+func setUIPath(m map[string]any, path string, v any) {
+	parts := strings.Split(path, ".")
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := m[p].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			m[p] = next
+		}
+		m = next
+	}
+	if v == nil {
+		delete(m, parts[len(parts)-1])
+		return
+	}
+	m[parts[len(parts)-1]] = v
+}
+
+// viewItems places the contacts on the forward view with the shared core's projection and apparent size (spec 7.8).
+func viewItems(props map[string]any, scr *pack.Screen) []map[string]any {
+	fov, minPx := 60.0, 3.0
+	art := map[string]string{}
+	def := "marker"
+	if sc := scr.Pack.Scenes[fmt.Sprint(props["scene"])]; sc != nil {
+		var raw struct {
+			FOV      float64 `json:"fov_deg"`
+			Contacts struct {
+				Art   map[string]string `json:"art"`
+				Def   string            `json:"default"`
+				MinPx float64           `json:"min_px"`
+			} `json:"contacts"`
+		}
+		if json.Unmarshal(sc.Raw, &raw) == nil {
+			if raw.FOV > 0 {
+				fov = raw.FOV
+			}
+			art, def = raw.Contacts.Art, raw.Contacts.Def
+			if raw.Contacts.MinPx > 0 {
+				minPx = raw.Contacts.MinPx
+			}
+		}
+	}
+	cs, _ := props["contacts"].(map[string]any)
+	items := []map[string]any{}
+	for k, v := range cs {
+		c, _ := v.(map[string]any)
+		rel, _ := c["rel"].(map[string]any)
+		az, ok1 := rel["az"].(float64)
+		mk, _ := rel["mark"].(float64)
+		d, ok2 := c["distance_m"].(float64)
+		if !ok1 || !ok2 || d <= 0 {
+			continue
+		}
+		x, y, vis := pack.Project(az, mk, fov, 0.5)
+		if !vis {
+			continue
+		}
+		typ, _ := c["type"].(string)
+		class, _ := c["class"].(string)
+		size := 120.0
+		if typ == "Planet" {
+			size = 1.2e7
+		}
+		if sz, ok := c["size_m"].(float64); ok && sz > 0 {
+			size = sz
+		}
+		empire, _ := c["empire"].(string)
+		items = append(items, map[string]any{"cid": k, "name": c["name"], "x": x, "y": y, "size": pack.ApparentFraction(size, d, fov),
+			"type": typ, "class": class, "art": pack.LookupArt(art, empire, class, typ, def), "min_px": minPx})
+	}
+	sort.Slice(items, func(i, j int) bool { return fmt.Sprint(items[i]["cid"]) < fmt.Sprint(items[j]["cid"]) })
+	return items
 }

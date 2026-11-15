@@ -3,6 +3,8 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,10 +25,11 @@ type cmcpGame struct {
 	executed []msg.Cmd
 }
 
-func (g *cmcpGame) ShipEpoch() (int, bool, bool) { return 1, true, false }
-func (g *cmcpGame) ConsoleFor() (string, bool)   { return "operations", false }
-func (g *cmcpGame) Permitted(string) bool        { return true }
-func (g *cmcpGame) CanSubscribe(string) bool     { return true }
+func (g *cmcpGame) Player() cs.Player {
+	return cs.Player{Epoch: 1, Aboard: true, Held: []string{"operations", "science", "tactical", "navigation"}}
+}
+func (g *cmcpGame) Permitted(string) bool    { return true }
+func (g *cmcpGame) CanSubscribe(string) bool { return true }
 func (g *cmcpGame) Execute(c *msg.Cmd) msg.Reply {
 	g.mu.Lock()
 	g.executed = append(g.executed, *c)
@@ -288,5 +291,78 @@ func TestCmcpScreenFromData(t *testing.T) {
 	ta = findNode(ro.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" })
 	if ta == nil || ta.Enabled {
 		t.Fatalf("team-assigner must stay but be disabled while read-only: %+v", ta)
+	}
+}
+
+// TestCmcpDumpFixtures writes the real engine output (UI model with the bound tree) for every built-in screen, filled with the
+// example messages of the protocol repository. The front end's tests, mock engine and dev page use them, so they draw
+// exactly what the Go side produces. Run with CMCP_FIXTURES=<dir>.
+func TestCmcpDumpFixtures(t *testing.T) {
+	dir := os.Getenv("CMCP_FIXTURES")
+	if dir == "" {
+		t.Skip("CMCP_FIXTURES not set")
+	}
+	ex := os.Getenv("CMCP_EXAMPLES")
+	if ex == "" {
+		ex = "../../../cmcp/examples/messages"
+	}
+	var wel struct {
+		Payload msg.Welcome `json:"payload"`
+	}
+	b, err := os.ReadFile(filepath.Join(ex, "Cobra.Welcome--std.json"))
+	if err != nil {
+		t.Skip(err)
+	}
+	if err := json.Unmarshal(b, &wel); err != nil {
+		t.Fatal(err)
+	}
+	pkgs := []string{"Space.Power", "Space.Power.Group", "Space.Damage.Stat", "Space.Damage.Teams", "Space.Contacts", "Space.Nav", "Space.Weapons", "Space.Shields", "Space.Ops.Stat", "Space.Tractor", "Space.Ship.Status"}
+	screens := map[string]string{"operations": "operations", "power": "operations", "damage": "operations", "sensors": "science", "tactical": "tactical", "helm": "navigation"}
+	for scr, console := range screens {
+		g := newCmcpRig(t)
+		var subs []msg.SubSpec
+		for _, p := range pkgs {
+			subs = append(subs, msg.SubSpec{Pkg: p})
+		}
+		var cmds []string
+		for _, c := range wel.Payload.Commands {
+			cmds = append(cmds, c.Name)
+		}
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "ss-booty-king", Epoch: 1, Name: "SS Booty King", Class: "Marauder"}, Console: &msg.ConsoleRef{ID: console, Name: console},
+				Screen: "std." + scr, Reason: "manned", Subscribe: subs, Commands: cmds})
+			for _, p := range pkgs {
+				f, err := os.ReadFile(filepath.Join(ex, p+"--full.json"))
+				if err != nil {
+					continue
+				}
+				var m struct {
+					Payload struct {
+						D json.RawMessage `json:"d"`
+					} `json:"payload"`
+				}
+				if json.Unmarshal(f, &m) == nil {
+					var d any
+					_ = json.Unmarshal(m.Payload.D, &d)
+					s.Push(p, true, d)
+				}
+			}
+		})
+		ui := g.waitUI("screen "+scr, func(u *engine.CmcpUI) bool {
+			return u.Tree != nil && u.Seqs["Space.Contacts"] > 0 && u.Seqs["Space.Power.Group"] > 0
+		})
+		out, _ := json.MarshalIndent(ui, "", " ")
+		if err := os.WriteFile(filepath.Join(dir, scr+".json"), out, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if scr == "damage" {
+			sp, err := g.e.CmcpSprite(g.sid, "marauder")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "marauder.sprite.json"), sp, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
