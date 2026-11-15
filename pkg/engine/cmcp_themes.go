@@ -129,6 +129,7 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 	defer func() { ps.mu.Lock(); delete(ps.busy, ref.SHA256); ps.mu.Unlock() }()
 
 	raw, _, hit := st.cache.Get(host, ref.SHA256)
+	cm.s.e.packStat(hit)
 	if !hit {
 		cm.c.PackProgress(e.now(), ref, 0, int64(ref.Size))
 		var err error

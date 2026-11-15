@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -220,9 +222,10 @@ type cmcpSess struct {
 	aboard                      bool         // the last Aboard() seen (guarded by mu)
 	ctxLast                     string       // the last context line logged (guarded by mu)
 	ctxLines                    int
-	dbgLines                    int         // wire/action debug lines written (guarded by mu), capped
-	themeSeen                   string      // id|source|version last announced on the notice line
-	th                          *themeState // downloaded themes (guarded by mu)
+	streams                     map[string]*streamStat // per-package counters of the high-volume streams (guarded by mu)
+	streamAt                    time.Time              // when they were last written
+	themeSeen                   string                 // id|source|version last announced on the notice line
+	th                          *themeState            // downloaded themes (guarded by mu)
 	started                     time.Time
 }
 
@@ -309,6 +312,7 @@ func (s *session) cmcpStop() {
 	if cm == nil {
 		return
 	}
+	cm.streamFlush()
 	cm.mu.Lock()
 	cm.stopped = true
 	if cm.tick != nil {
@@ -332,16 +336,14 @@ func (s *session) cmcpStop() {
 	}
 }
 
-// dbgMax caps the wire/action debug lines per session; dbgPayload truncates one payload.
-const (
-	dbgMax     = 4000
-	dbgPayload = 700
-)
+// dbgPayload truncates one logged payload (the byte count is appended); control-plane payloads are logged in full up to this size.
+const dbgPayload = 8000
 
-// dbg writes one debug line to the client diagnostics sink (client.log): what the game sent, what the client sent back and what the player did to
-// the view, so a report shows both sides of the conversation. Capped per session.
+// dbg writes one trail line to the client diagnostics sink (the diagnostics log): what the game sent, what the client sent back and what the player did
+// to the view, so a report shows both sides of the conversation. The sink decides what to keep; the engine caps nothing (high-volume streams are
+// summarized by streamNote instead).
 func (cm *cmcpSess) dbg(format string, args ...any) {
-	if !dbgOn {
+	if !cm.s.e.cmcpTrail.Load() {
 		return
 	}
 	cm.s.e.cmcpMu.Lock()
@@ -350,19 +352,8 @@ func (cm *cmcpSess) dbg(format string, args ...any) {
 	if f == nil {
 		return
 	}
-	cm.mu.Lock()
-	n := cm.dbgLines
-	cm.dbgLines++
-	cm.mu.Unlock()
-	if n < dbgMax {
-		f(fmt.Sprintf("dbg %s: ", cm.s.id) + fmt.Sprintf(format, args...))
-	} else if n == dbgMax {
-		f(fmt.Sprintf("dbg %s: debug line limit reached, no more wire lines this session", cm.s.id))
-	}
+	f(fmt.Sprintf("dbg %s: ", cm.s.id) + fmt.Sprintf(format, args...))
 }
-
-// dbgOn turns the wire/action debug trail on (SQUAT_DEBUG=1 in the environment of the client); off by default.
-var dbgOn = os.Getenv("SQUAT_DEBUG") == "1"
 
 func dbgPayloadText(b []byte) string {
 	t := strings.Join(strings.Fields(string(b)), " ")
@@ -372,14 +363,93 @@ func dbgPayloadText(b []byte) string {
 	return t
 }
 
-// dbgQuiet names the packages that arrive many times a second; they are not logged on the wire.
-func dbgQuiet(pkg string) bool {
-	return strings.HasPrefix(pkg, "Cobra.Ship.Status") || strings.HasPrefix(pkg, "Cobra.Sound") || strings.HasPrefix(pkg, "Cobra.Pulse") || strings.HasPrefix(pkg, "Cobra.Ping")
+// dbgStream names the packages that arrive many times a second (ship status, space/crew/mission deltas, pulse, ping): they are counted per session and
+// summarized every few seconds instead of logged one by one, unless the payload is a full document, a resync or an error.
+func dbgStream(pkg string) bool {
+	for _, p := range []string{"Space.", "Crew.", "Mission.", "Cobra.Ship.Status", "Cobra.Pulse", "Cobra.Ping"} {
+		if strings.HasPrefix(pkg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// dbgNotable is true for a stream payload that must be logged in full.
+func dbgNotable(data []byte) bool {
+	return notableRe.Match(data)
+}
+
+var notableRe = regexp.MustCompile(`"full"\s*:\s*true|resync|"error"`)
+
+// streamEvery is how often the per-package counters are written.
+const streamEvery = 5 * time.Second
+
+type streamStat struct {
+	n, bytes int
+	lastSeq  int64
+}
+
+var seqRe = regexp.MustCompile(`"seq"\s*:\s*(\d+)`)
+
+// streamNote counts one high-volume payload and writes the summary lines when the interval has passed.
+func (cm *cmcpSess) streamNote(dir, pkg string, data []byte) {
+	if !cm.s.e.cmcpTrail.Load() {
+		return
+	}
+	var seq int64 = -1
+	if m := seqRe.FindSubmatch(data); m != nil {
+		seq, _ = strconv.ParseInt(string(m[1]), 10, 64)
+	}
+	cm.mu.Lock()
+	if cm.streams == nil {
+		cm.streams = map[string]*streamStat{}
+		cm.streamAt = cm.s.e.now()
+	}
+	k := dir + " " + pkg
+	st := cm.streams[k]
+	if st == nil {
+		st = &streamStat{lastSeq: -1}
+		cm.streams[k] = st
+	}
+	st.n++
+	st.bytes += len(data)
+	if seq >= 0 {
+		st.lastSeq = seq
+	}
+	due := cm.s.e.now().Sub(cm.streamAt) >= streamEvery
+	cm.mu.Unlock()
+	if due {
+		cm.streamFlush()
+	}
+}
+
+// streamFlush writes one counter line per package seen since the last flush.
+func (cm *cmcpSess) streamFlush() {
+	cm.mu.Lock()
+	streams := cm.streams
+	cm.streams = nil
+	cm.streamAt = cm.s.e.now()
+	cm.mu.Unlock()
+	keys := make([]string, 0, len(streams))
+	for k := range streams {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		st := streams[k]
+		seq := ""
+		if st.lastSeq >= 0 {
+			seq = fmt.Sprintf(" last_seq=%d", st.lastSeq)
+		}
+		cm.dbg("stream %s count=%d bytes=%d%s (last %ds)", k, st.n, st.bytes, seq, int(streamEvery/time.Second))
+	}
 }
 
 func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
-	if !dbgQuiet(pkg) {
+	if !dbgStream(pkg) || dbgNotable(data) {
 		cm.dbg("<- %s %s", pkg, dbgPayloadText(data))
+	} else {
+		cm.streamNote("<-", pkg, data)
 	}
 	if cm.packFrame(pkg, data) {
 		return
@@ -401,8 +471,10 @@ func (cm *cmcpSess) flush() {
 			cm.s.systemLine(fmt.Sprintf("cmcp: cannot encode %s: %v", o.Package, err))
 			continue
 		}
-		if !dbgQuiet(o.Package) {
-			cm.dbg("-> %s %s", o.Package, dbgPayloadText(b))
+		if !dbgStream(o.Package) || dbgNotable(outPayload(o, b)) {
+			cm.dbg("-> %s %s", o.Package, dbgPayloadText(outPayload(o, b)))
+		} else {
+			cm.streamNote("->", o.Package, outPayload(o, b))
 		}
 		if err := cm.tx.SendFrame(b); err != nil {
 			break
@@ -743,7 +815,14 @@ func (e *Engine) SetCmcpLog(f func(string)) {
 	e.cmcpMu.Lock()
 	e.cmcpLogFn = f
 	e.cmcpMu.Unlock()
+	e.cmcpTrail.Store(f != nil || dbgEnv)
 }
+
+// SetCmcpTrail turns the wire/action trail on or off (the diagnostics log being on or off); it needs a sink set with SetCmcpLog.
+func (e *Engine) SetCmcpTrail(on bool) { e.cmcpTrail.Store(on || dbgEnv) }
+
+// dbgEnv keeps the old switch: SQUAT_DEBUG=1 forces the trail on.
+var dbgEnv = os.Getenv("SQUAT_DEBUG") == "1"
 
 // logContext writes one line when the context stack, the console or the chosen screen changed (at most 400 lines per session).
 func (cm *cmcpSess) logContext(ui *cs.UI, d *CmcpUI) {
@@ -804,4 +883,15 @@ func (e *Engine) CmcpAboard(id string) bool {
 		return false
 	}
 	return cm.c.UI().Aboard()
+}
+
+// outPayload is the JSON a frame carries (the telnet framing bytes around it are not part of the trail); b is the framed bytes, the fallback.
+func outPayload(o cs.Out, b []byte) []byte {
+	if o.Payload == nil {
+		return []byte("null")
+	}
+	if j, err := json.Marshal(o.Payload); err == nil {
+		return j
+	}
+	return b
 }

@@ -293,8 +293,11 @@ func (s *session) onConnected() {
 		}
 		s.scheduleProbe(d)
 	}
-	s.e.tf.FireHookWorld(s.tfName, "CONNECT", s.world.Name)
-	s.e.lua.FireEventFor(s.id, "connect", map[string]any{"world": s.id, "name": s.tfName}, true)
+	s.mu.Lock() // a rename writes both names under the lock
+	tfName, worldName := s.tfName, s.world.Name
+	s.mu.Unlock()
+	s.e.tf.FireHookWorld(tfName, "CONNECT", worldName)
+	s.e.lua.FireEventFor(s.id, "connect", map[string]any{"world": s.id, "name": tfName}, true)
 }
 
 func (s *session) onEnded(ev conn.Event) {

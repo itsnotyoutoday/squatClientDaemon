@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/itsnotyoutoday/cmcp/go/fetch"
 	"github.com/itsnotyoutoday/cmcp/go/pack"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
@@ -1644,5 +1645,47 @@ func TestCmcpAlertHueStaysAfterTheXCloses(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 	if !hue() {
 		t.Fatal("the alert hue went away when the player closed the screen")
+	}
+}
+
+// The diagnostics trail: a control-plane payload is logged in full, the high-volume streams (Space.*) become one counter line per package every few
+// seconds, a full document is still logged in full, and nothing is capped.
+func TestCmcpTrailSummarizesStreams(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1_800_000_000, 0)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) { c.clock = clock })
+	var lines []string
+	var lmu sync.Mutex
+	g.e.SetCmcpLog(func(l string) { lmu.Lock(); lines = append(lines, l); lmu.Unlock() })
+	get := func() []string { lmu.Lock(); defer lmu.Unlock(); return append([]string(nil), lines...) }
+	// deliver frames from the server side straight to the engine (the GMCP event the engine would receive)
+	deliver := func(pkg, body string) {
+		g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: pkg, Data: json.RawMessage(body)})
+	}
+	for i := 0; i < 300; i++ {
+		deliver("Space.Contacts", fmt.Sprintf(`{"seq":%d,"contacts":{}}`, i))
+	}
+	deliver("Cobra.Sound.Play", `{"id":"impulse_loop","loop":true}`)
+	deliver("Space.Contacts", `{"seq":301,"full":true,"contacts":{"c1":{}}}`)
+	time.Sleep(200 * time.Millisecond)
+	joined := strings.Join(get(), "\n")
+	if strings.Contains(joined, `<- Space.Contacts {"seq":5,`) {
+		t.Fatal("a stream delta was logged one by one")
+	}
+	if !strings.Contains(joined, `<- Cobra.Sound.Play {"id":"impulse_loop","loop":true}`) {
+		t.Fatalf("control-plane payload missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"full":true`) {
+		t.Fatalf("a full document must be logged in full:\n%s", joined)
+	}
+	mu.Lock()
+	now = now.Add(6 * time.Second)
+	mu.Unlock()
+	deliver("Space.Contacts", `{"seq":400,"contacts":{}}`)
+	time.Sleep(200 * time.Millisecond)
+	joined = strings.Join(get(), "\n")
+	if !strings.Contains(joined, "stream <- Space.Contacts count=") || !strings.Contains(joined, "last_seq=") {
+		t.Fatalf("no stream summary:\n%s", joined)
 	}
 }

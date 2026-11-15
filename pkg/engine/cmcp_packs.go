@@ -224,6 +224,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	defer func() { ps.mu.Lock(); delete(ps.busy, ref.SHA256); ps.mu.Unlock() }()
 
 	raw, _, hit := st.cache.Get(host, ref.SHA256)
+	cm.s.e.packStat(hit)
 	if !hit {
 		cm.c.PackProgress(e.now(), ref, 0, int64(ref.Size))
 		var err error
@@ -585,3 +586,15 @@ func (cm *cmcpSess) accepted(ref msg.PackRef) {
 
 // HasCmcpPacks reports whether the engine has a pack store: without one nothing a game announces (sound packs, layouts, themes) is ever fetched.
 func (e *Engine) HasCmcpPacks() bool { return e.packStore() != nil }
+
+// packStat counts one pack-store lookup (the diagnostics snapshot shows hits and misses).
+func (e *Engine) packStat(hit bool) {
+	if hit {
+		e.packHits.Add(1)
+	} else {
+		e.packMisses.Add(1)
+	}
+}
+
+// PackStats is how many pack-store lookups were served from the cache and how many were not.
+func (e *Engine) PackStats() (hits, misses int64) { return e.packHits.Load(), e.packMisses.Load() }

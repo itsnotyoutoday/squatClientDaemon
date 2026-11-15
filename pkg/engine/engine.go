@@ -134,13 +134,15 @@ type Engine struct {
 
 	noAutoReconnect atomic.Bool
 
-	extMu      sync.Mutex
-	cmcpMu     sync.Mutex
-	cmcpLogFn  func(string) // the client-diagnostics sink (SetCmcpLog)
-	cmcpRender CmcpRender
-	cmcpPacks  *PackStore
-	cmcpCfg    func() cs.Config // nil: CMCP is off (see cmcp.go)
-	extensions []Extension      // protocol extensions offered to squatters (extension.go)
+	extMu                sync.Mutex
+	cmcpMu               sync.Mutex
+	cmcpLogFn            func(string) // the client-diagnostics sink (SetCmcpLog)
+	packHits, packMisses atomic.Int64 // pack-store lookups (PackStats)
+	cmcpTrail            atomic.Bool  // the wire/action trail is written to it (SetCmcpTrail)
+	cmcpRender           CmcpRender
+	cmcpPacks            *PackStore
+	cmcpCfg              func() cs.Config // nil: CMCP is off (see cmcp.go)
+	extensions           []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
 	log        *slog.Logger
