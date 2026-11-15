@@ -120,7 +120,9 @@ func (cm *cmcpSess) pulseStep() time.Duration {
 	now := cm.s.e.now()
 	// the alert look and the shake belong to a ship the player is on NOW: a context the game pushed (room, console, event...). The ship's status stays in the
 	// model after the player leaves it, so it is no evidence.
-	if u := cm.c.UI(); len(u.Stack) == 0 && u.Console == nil {
+	// the core's own aboard state (the latest Cobra.Console or Cobra.Context names a real ship) AND a live context: a game that never sends the "No ship"
+	// sentinel on leaving (older servers) still leaves the stale ship behind, but its contexts are gone
+	if u := cm.c.UI(); !u.Aboard() || (len(u.Stack) == 0 && u.Console == nil) {
 		if cm.pulseLast.Active || cm.pulseLast.Ambient != nil || cm.pulseLast.Shake != nil {
 			cm.pulseLast = CmcpPulse{}
 			cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})

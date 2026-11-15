@@ -1573,3 +1573,23 @@ func TestCmcpLocalSwitchToTheRoomWhileManned(t *testing.T) {
 	}
 	g.waitUI("the room view", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
 }
+
+// A connection that ends (closed by the game, "Logged in from elsewhere") must not leave its last console on screen: the engine publishes one final model
+// with no screen.
+func TestCmcpEndedConnectionDrawsNothing(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"dmg.assign"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvEnded, Reason: "remote_closed", Detail: "Logged in from elsewhere"})
+	g.r.until(t, "a final model with no screen", func() bool {
+		s := g.r.snapshot()
+		for i := len(s) - 1; i >= 0; i-- {
+			if s[i].Cmcp != nil {
+				return s[i].Cmcp.Tree == nil && s[i].Cmcp.State == "ended"
+			}
+		}
+		return false
+	})
+}

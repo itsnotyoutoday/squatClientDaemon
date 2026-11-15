@@ -136,6 +136,7 @@ type Engine struct {
 
 	extMu      sync.Mutex
 	cmcpMu     sync.Mutex
+	cmcpLogFn  func(string) // the client-diagnostics sink (SetCmcpLog)
 	cmcpRender CmcpRender
 	cmcpPacks  *PackStore
 	cmcpCfg    func() cs.Config // nil: CMCP is off (see cmcp.go)

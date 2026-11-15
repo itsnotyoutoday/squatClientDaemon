@@ -319,6 +319,7 @@ func (s *session) onEnded(ev conn.Event) {
 		s.logw = nil
 	}
 	s.mu.Unlock()
+	s.cmcpStop() // a dead connection draws no console (and no alert look): one last empty model
 	s.e.tf.FireHookWorld(s.tfName, "DISCONNECT", s.world.Name)
 	s.e.tf.WorldClosed(s.tfName)
 	s.e.lua.FireEventFor(s.id, "disconnect", map[string]any{"world": s.id, "name": s.tfName, "reason": ev.Reason}, true)

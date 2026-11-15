@@ -424,6 +424,13 @@ func TestCmcpLiveShiproom(t *testing.T) {
 	}
 	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "pathfinder"))
 	show("boarded (no console)", "std.shiproom")
+	if dir := os.Getenv("SQUAT_LIVE_CMCP_DUMP"); dir != "" { // the room as the engine produces it, for the screenshot script
+		_ = e.CmcpViewport(si.ID, 1300, 1, 14)
+		time.Sleep(600 * time.Millisecond)
+		u, _ := e.CmcpUI(si.ID)
+		b, _ := json.MarshalIndent(u, "", " ")
+		_ = os.WriteFile(filepath.Join(dir, "live-shiproom.json"), b, 0o644)
+	}
 	_ = e.Input(si.ID, "man tactical")
 	show("manned tactical", "")
 	_ = e.Input(si.ID, "unman")

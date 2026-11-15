@@ -213,8 +213,11 @@ type cmcpSess struct {
 	pulseLast                   CmcpPulse
 	pulseTmr                    *time.Timer
 	vp                          cmcpViewport // the web view's viewport (guarded by mu)
-	themeSeen                   string       // id|source|version last announced on the notice line
-	th                          *themeState  // downloaded themes (guarded by mu)
+	aboard                      bool         // the last Aboard() seen (guarded by mu)
+	ctxLast                     string       // the last context line logged (guarded by mu)
+	ctxLines                    int
+	themeSeen                   string      // id|source|version last announced on the notice line
+	th                          *themeState // downloaded themes (guarded by mu)
 	started                     time.Time
 }
 
@@ -313,6 +316,15 @@ func (s *session) cmcpStop() {
 		cm.pulseTmr.Stop()
 	}
 	cm.mu.Unlock()
+	// the connection is gone (it ended, or "Logged in from elsewhere"): one last model with no screen and no alert look, so the view does not keep
+	// drawing the last console of a dead session
+	d := cmcpDTO(cm.s.id, cm.c.UI())
+	d.State, d.Tree, d.Notice = "ended", nil, nil
+	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
+	cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})
+	if f := cm.s.e.cmcpLogFn; f != nil {
+		f(fmt.Sprintf("ctx %s: the connection ended: no screen", cm.s.id))
+	}
 }
 
 func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
@@ -382,6 +394,8 @@ func (cm *cmcpSess) publish() {
 	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
+	cm.logContext(ui, d)
+	cm.aboardChanged(ui.Aboard())
 	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
 }
 
@@ -452,7 +466,7 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		Readonly: u.Readonly, AI: u.AI, Title: u.Title, ShipTheme: u.ShipTheme, ConTheme: u.ConsoleTheme,
 		Screen:   CmcpScreen{ID: u.Screen.ID, Resolved: u.Screen.Resolved, PackID: u.Screen.PackID, Pack: u.Screen.PackWanted, Fallback: u.Screen.Fallback},
 		Commands: append([]string{}, u.Commands...), Catalogue: u.Catalogue, Docs: u.Docs, Seqs: u.Seqs, Alert: u.Alert, Pending: u.Pending}
-	if u.HaveShip && u.Ship.ID != "none" { // the "No ship" sentinel (spec 3.1.1) is the absence of a ship, never a ship named "No ship"
+	if u.HaveShip && u.Aboard() && u.Ship.ID != "none" { // the "No ship" sentinel (spec 3.1.1) is the absence of a ship, never a ship named "No ship"
 		sh := u.Ship
 		d.Ship = &sh
 	}
@@ -660,4 +674,73 @@ func (e *Engine) CmcpCloseAll() {
 		}
 		_ = e.CmcpClose(si.ID, cs.CloseClient)
 	}
+}
+
+// SetCmcpLog gives the engine a sink for the client's own diagnostics (the app writes them to client.log): every change of the context stack, the console
+// and the screen the client chose, so a report shows what the client received from the game.
+func (e *Engine) SetCmcpLog(f func(string)) {
+	e.cmcpMu.Lock()
+	e.cmcpLogFn = f
+	e.cmcpMu.Unlock()
+}
+
+// logContext writes one line when the context stack, the console or the chosen screen changed (at most 400 lines per session).
+func (cm *cmcpSess) logContext(ui *cs.UI, d *CmcpUI) {
+	cm.s.e.cmcpMu.Lock()
+	f := cm.s.e.cmcpLogFn
+	cm.s.e.cmcpMu.Unlock()
+	if f == nil {
+		return
+	}
+	var stack []string
+	for _, e := range ui.Stack {
+		a := ""
+		if e.Active {
+			a = "*"
+		}
+		stack = append(stack, fmt.Sprintf("%s%s:%s(%s)", a, e.Kind, e.ID, e.Screen))
+	}
+	con, ship, tree := "", "", ""
+	if ui.Console != nil {
+		con = ui.Console.ID
+	}
+	if d.Ship != nil {
+		ship = d.Ship.ID
+	}
+	if d.Tree != nil {
+		tree = d.Tree.Screen
+	}
+	line := fmt.Sprintf("ctx %s: state=%s ship=%q console=%q stack=%v screen=%q local=%q drawn=%q", cm.s.id, ui.State, ship, con, stack, ui.Screen.Resolved, ui.LocalScreen, tree)
+	cm.mu.Lock()
+	same := line == cm.ctxLast
+	cm.ctxLast = line
+	n := cm.ctxLines
+	if !same {
+		cm.ctxLines++
+	}
+	cm.mu.Unlock()
+	if !same && n < 400 {
+		f(line)
+	}
+}
+
+// aboardChanged stops every sound of the session when the player leaves a ship (the core keeps no alert-sound state: a red-alert loop would go on
+// sounding), and remembers the state for CmcpAboard.
+func (cm *cmcpSess) aboardChanged(now bool) {
+	cm.mu.Lock()
+	was := cm.aboard
+	cm.aboard = now
+	cm.mu.Unlock()
+	if was && !now {
+		cm.s.e.bus.publish(Event{Kind: EvCmcpNote, Session: cm.s.id, CmcpNotes: []CmcpNote{{Kind: "sound", StopAll: true, FadeMS: 300}}})
+	}
+}
+
+// CmcpAboard says whether the core thinks the session's player is aboard a ship now (false after the "No ship" sentinel).
+func (e *Engine) CmcpAboard(id string) bool {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return false
+	}
+	return cm.c.UI().Aboard()
 }
