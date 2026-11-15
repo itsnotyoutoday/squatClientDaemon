@@ -151,6 +151,16 @@ func TestCmcpLiveThemes(t *testing.T) {
 				continue
 			}
 			seen[u.Tree.Theme] = true
+			if dir := os.Getenv("SQUAT_LIVE_CMCP_DUMP"); dir != "" { // the bound UI of this ship's console, for the screenshot script
+				_ = e.CmcpViewport(si.ID, 1300, 0.8125, 14) // a 1300 px wide window: the core decides the side layout and the cap
+				time.Sleep(600 * time.Millisecond)
+				u, _ = e.CmcpUI(si.ID)
+				b, _ := json.MarshalIndent(u, "", " ")
+				_ = os.WriteFile(filepath.Join(dir, "live-"+sh+"-"+c+".json"), b, 0o644)
+				if sp, err := e.CmcpSprite(si.ID, "marauder"); err == nil {
+					_ = os.WriteFile(filepath.Join(dir, "live.sprite.json"), sp, 0o644)
+				}
+			}
 			t.Logf("%s / man %-6s ship=%s shipTheme=%q consoleTheme=%q -> screen %s theme %s (%s)", sh, c, u.Ship.ID, u.ShipTheme, u.ConTheme, u.Tree.Screen, u.Tree.Theme, u.Tree.ThemeSource)
 		}
 		t.Logf("%s: distinct themes %v", sh, seen)
