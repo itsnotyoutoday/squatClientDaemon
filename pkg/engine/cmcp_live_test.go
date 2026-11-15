@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -365,4 +366,86 @@ func TestCmcpLiveRoom(t *testing.T) {
 	show("manned")
 	_ = e.Input(si.ID, "unman")
 	show("unmanned")
+}
+
+// TestCmcpLiveShiproom walks the sequence board -> man -> unman -> walk through the ship against the live game and logs the context stack and the screen
+// the engine chose at every step. An ordinary room aboard (no console manned) must be the generic ship-room screen with the room's name
+// (SQUAT_LIVE_CMCP_SHIPROOM=1, SQUATCLIENT_DEV_LOOPBACK_HTTP=1; Evennia PoC on 127.0.0.1:4101 only).
+func TestCmcpLiveShiproom(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP_SHIPROOM") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_SHIPROOM=1")
+	}
+	e, r := newEngine(t)
+	ps, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect bob cobalt-fern-52")
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	var steps []string
+	show := func(label string, wantScreen string) {
+		time.Sleep(2200 * time.Millisecond)
+		u, _ := e.CmcpUI(si.ID)
+		var stack []string
+		for _, s := range u.Stack {
+			stack = append(stack, fmt.Sprintf("%s:%s name=%q screen=%s active=%v", s.Kind, s.ID, s.Name, s.Screen, s.Active))
+		}
+		tree, room := "", ""
+		if u.Tree != nil {
+			tree = u.Tree.Screen
+			if n := findNodeLive(u.Tree.Root, func(n *engine.CmcpNode) bool { s, _ := n.Props["text"].(string); return n.Widget == "label" && s != "" }); n != nil {
+				room, _ = n.Props["text"].(string)
+			}
+		}
+		t.Logf("%-22s console=%v local=%q screen=%q resolved=%q tree=%q\n      stack=%v\n      strip=%q", label, u.Console != nil, u.LocalScreen, u.Screen.ID, u.Screen.Resolved, tree, stack, room)
+		steps = append(steps, label)
+		if wantScreen != "" && tree != wantScreen {
+			t.Errorf("%s: the screen is %q, want %q", label, tree, wantScreen)
+		}
+		if wantScreen == "std.shiproom" { // an ordinary room: the strip names the room the game pushed (the active room context's name)
+			name := ""
+			for _, s := range u.Stack {
+				if s.Active && s.Kind == "room" {
+					name = s.Name
+				}
+			}
+			if name == "" || !strings.Contains(room, name) {
+				t.Errorf("%s: the ship-room strip %q does not name the room %q", label, room, name)
+			}
+		}
+	}
+	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "pathfinder"))
+	show("boarded (no console)", "std.shiproom")
+	_ = e.Input(si.ID, "man tactical")
+	show("manned tactical", "")
+	_ = e.Input(si.ID, "unman")
+	show("unmanned", "std.shiproom")
+	for _, mv := range strings.Split(envOr("SQUAT_LIVE_CMCP_WALK", "out,in,north,south"), ",") {
+		_ = e.Input(si.ID, mv)
+		show("after "+mv, "")
+	}
+	_ = steps
+}
+
+func findNodeLive(n *engine.CmcpNode, pred func(*engine.CmcpNode) bool) *engine.CmcpNode {
+	if n == nil {
+		return nil
+	}
+	if pred(n) {
+		return n
+	}
+	for _, c := range n.Children {
+		if f := findNodeLive(c, pred); f != nil {
+			return f
+		}
+	}
+	return nil
 }

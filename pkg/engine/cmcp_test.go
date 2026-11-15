@@ -1484,3 +1484,31 @@ func TestCmcpCloseRefusalShowsTheHint(t *testing.T) {
 	adv(6 * time.Second)
 	g.waitUI("the no-answer notice", func(u *engine.CmcpUI) bool { return u.Notice != nil && strings.Contains(u.Notice.Text, "no answer") })
 }
+
+// The screen follows the ACTIVE context: a console screen only while a console is manned. A screen the player switched to locally (the menu) lasts
+// only until the stack changes, so after the console is unmanned the ship room wins, never the console's or the player's last screen.
+func TestCmcpActiveContextWinsAfterUnman(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Pathfinder"}, Console: &msg.ConsoleRef{ID: "science", Name: "Sci"}, Screen: "std.sensors", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}, {Pkg: "Space.Nav"}}, Commands: []string{"scan.srs"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.sensors" })
+	if err := g.e.CmcpShowScreen(g.sid, "std.helm"); err != nil { // the player switches the view with the menu
+		t.Fatal(err)
+	}
+	g.waitUI("local switch", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.helm" })
+	// unmanned: the console goes (Cobra.Console with no console) and the game pushes the room it stands in
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Pathfinder"}, Reason: "unmanned"})
+	})
+	prio := 35
+	b, _ := json.Marshal(msg.Context{Rev: 9, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 7, Kind: "room", ID: "shiproom", Name: "Ready Room", Screen: "std.shiproom", Priority: &prio}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	u := g.waitUI("the room wins", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
+	if u.LocalScreen != "" || u.Console != nil {
+		t.Fatalf("no console and no local screen choice after the unman: console=%v local=%q", u.Console != nil, u.LocalScreen)
+	}
+}
