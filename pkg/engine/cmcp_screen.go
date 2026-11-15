@@ -10,6 +10,8 @@ import (
 
 	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
+	"github.com/itsnotyoutoday/cmcp/textport"
+	"github.com/itsnotyoutoday/cmcp/theme"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
@@ -18,9 +20,12 @@ import (
 
 // CmcpRender says how screens are themed.
 type CmcpRender struct {
-	Theme        string                            // the player's theme (tng, soft, ...)
-	UseShipTheme bool                              // follow the console/ship/screen suggestion (spec 6.6)
-	Tokens       func(theme string) map[string]any // design tokens of a theme (nil: client defaults)
+	PortDefault    string                            // compact | balanced (default) | large: the text view's default size (spec 6.13.1)
+	Calm           bool                              // slower eased motion
+	StartCollapsed bool                              // the console screen starts switched off
+	Theme          string                            // the player's theme (tng, soft, ...)
+	UseShipTheme   bool                              // follow the console/ship/screen suggestion (spec 6.6)
+	Tokens         func(theme string) map[string]any // design tokens of a theme (nil: client defaults)
 }
 
 // SetCmcpRender sets the theming used by all sessions; the next UI update uses it.
@@ -78,19 +83,29 @@ type CmcpNode struct {
 	Children []*CmcpNode    `json:"children,omitempty"`
 }
 
+// CmcpView is the text view's state (shared core: textport.View) and the player's size choice.
+type CmcpView struct {
+	State       string  `json:"state"`       // default | expanded | off
+	PortDefault string  `json:"portDefault"` // compact | balanced | large
+	Fraction    float64 `json:"fraction"`    // the minimum share of the stacked height the textport has in this state
+	Calm        bool    `json:"calm"`
+}
+
 // CmcpTree is the bound screen.
 type CmcpTree struct {
-	Session    string         `json:"session"`
-	Generation int            `json:"generation"`
-	Screen     string         `json:"screen"` // the id being drawn ("std.damage", "fspace-std/damage")
-	Title      string         `json:"title"`
-	Console    string         `json:"console,omitempty"`
-	Theme      string         `json:"theme"`   // the theme in force after the precedence rules of 6.6
-	Tokens     map[string]any `json:"tokens"`  // resolved design tokens for that theme and pack
-	PackKey    string         `json:"packKey"` // changes when the pack or tokens change (sprite cache key part)
-	Exhausted  bool           `json:"exhausted,omitempty"`
-	Root       *CmcpNode      `json:"root"`
-	UI         map[string]any `json:"ui"` // the screen's $ui state, for highlighting a selection
+	Session     string         `json:"session"`
+	Generation  int            `json:"generation"`
+	Screen      string         `json:"screen"` // the id being drawn ("std.damage", "fspace-std/damage")
+	Title       string         `json:"title"`
+	Console     string         `json:"console,omitempty"`
+	Theme       string         `json:"theme"`       // the theme in force after the precedence rules of 6.6
+	ThemeSource string         `json:"themeSource"` // pack | builtin | plain (19.10)
+	View        CmcpView       `json:"view"`
+	Tokens      map[string]any `json:"tokens"`  // resolved design tokens for that theme and pack
+	PackKey     string         `json:"packKey"` // changes when the pack or tokens change (sprite cache key part)
+	Exhausted   bool           `json:"exhausted,omitempty"`
+	Root        *CmcpNode      `json:"root"`
+	UI          map[string]any `json:"ui"` // the screen's $ui state, for highlighting a selection
 }
 
 type screenState struct {
@@ -188,22 +203,45 @@ func consoleID(ui *cs.UI) string {
 	return ui.Console.ID
 }
 
-func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) string {
+func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	cm.s.e.cmcpMu.Lock()
 	r := cm.s.e.cmcpRender
 	cm.s.e.cmcpMu.Unlock()
-	th := r.Theme
-	if th == "" {
-		th = "tng"
+	def := r.Theme
+	if def == "" {
+		def = "tng"
 	}
-	if r.UseShipTheme {
-		for _, c := range []string{ui.ConsoleTheme, ui.ShipTheme, scr.SuggestTheme} {
-			if c != "" {
-				return c
-			}
-		}
+	// precedence of spec 6.6 (the player's choice, then, only with "use the ship's theme", console, ship, screen): the shared core's rule
+	want := theme.Select("", r.UseShipTheme, ui.ConsoleTheme, ui.ShipTheme, scr.SuggestTheme, def)
+	if !r.UseShipTheme {
+		want = def
 	}
-	return th
+	id, src := theme.Resolve(want, nil, theme.BuiltinSet())
+	return id, src
+}
+
+// view returns the session's text-view state machine (LOG and screen-off toggles).
+func (cm *cmcpSess) view() *textport.View {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.tv == nil {
+		cm.s.e.cmcpMu.Lock()
+		sc := cm.s.e.cmcpRender.StartCollapsed
+		cm.s.e.cmcpMu.Unlock()
+		cm.tv = textport.NewView(sc)
+	}
+	return cm.tv
+}
+
+// CmcpViewEvent applies a view event (log_toggle, screen_toggle) of the text view and returns the new state.
+func (e *Engine) CmcpViewEvent(id, ev string) (string, error) {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return "", err
+	}
+	st := cm.view().Event(ev)
+	cm.schedule()
+	return string(st), nil
 }
 
 // tree binds the current screen; nil when no console screen is up (the normal text UI).
@@ -229,7 +267,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 	}
 	env := pack.EnvFromUI(ui, ss.ui)
 	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets, Class: "gpu"})
-	theme := cm.theme(ui, scr)
+	theme, themeSrc := cm.theme(ui, scr)
 	cm.s.e.cmcpMu.Lock()
 	tf := cm.s.e.cmcpRender.Tokens
 	cm.s.e.cmcpMu.Unlock()
@@ -249,7 +287,16 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		toks[k] = tt[k]
 	}
 	ss.last, ss.lastEnv, ss.lastScr = b, env, scr
-	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, Tokens: toks,
+	cm.s.e.cmcpMu.Lock()
+	rr := cm.s.e.cmcpRender
+	cm.s.e.cmcpMu.Unlock()
+	vs := cm.view().State()
+	pd := rr.PortDefault
+	if pd != "compact" && pd != "large" {
+		pd = "balanced"
+	}
+	viewDTO := CmcpView{State: string(vs), PortDefault: pd, Fraction: textport.Fraction(textport.Stacked, vs), Calm: rr.Calm}
+	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, View: viewDTO, Tokens: toks,
 		PackKey: scr.Pack.SHA256 + "/" + theme, Exhausted: b.Exhausted, Root: dtoNode(b, scr, ui), UI: copyMap(ss.ui)}
 	if ui.Title != "" {
 		t.Title = ui.Title

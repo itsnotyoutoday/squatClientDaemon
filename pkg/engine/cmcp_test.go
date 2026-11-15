@@ -662,3 +662,32 @@ func TestCmcpViewscreenContactArt(t *testing.T) {
 		t.Fatalf("the contact's own damage tints its art: %v", views[0]["zones"])
 	}
 }
+
+// The text view's LOG and screen-off toggles are the shared core's state machine; the theme is chosen by the core's rule and
+// falls back to built-in/plain; data keeps flowing while the screen is off.
+func TestCmcpViewStateAndTheme(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "klingon", PortDefault: "large"})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Theme: "romulan"}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.damage", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Damage.Stat"}}, Commands: []string{"dmg.assign"}})
+		s.Push("Space.Damage.Stat", true, map[string]any{"hull": map[string]any{"cur": 800.0, "max": 1000.0}})
+	})
+	ui := g.waitUI("tree", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	if ui.Tree.Theme != "klingon" || ui.Tree.ThemeSource != "builtin" || ui.Tree.View.State != "default" || ui.Tree.View.PortDefault != "large" || ui.Tree.View.Fraction != 0.45 {
+		t.Fatalf("tree %+v", ui.Tree.View)
+	}
+	for _, step := range [][2]string{{"log_toggle", "expanded"}, {"log_toggle", "default"}, {"screen_toggle", "off"}, {"log_toggle", "default"}} { // LOG while off brings the screen back
+		st, err := g.e.CmcpViewEvent(g.sid, step[0])
+		if err != nil || st != step[1] {
+			t.Fatalf("%s -> %q (%v), want %q", step[0], st, err, step[1])
+		}
+	}
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.waitUI("ship theme by the core's rule", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Theme == "romulan" })
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, StartCollapsed: true})
+	g.do(func(s *cs.Server) {
+		s.Push("Space.Damage.Stat", false, map[string]any{"hull": map[string]any{"cur": 700.0}})
+	})
+	g.waitUI("data flows", func(u *engine.CmcpUI) bool { return u.Seqs["Space.Damage.Stat"] >= 2 })
+}

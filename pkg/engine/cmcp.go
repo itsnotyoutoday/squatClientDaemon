@@ -13,6 +13,7 @@ import (
 	"github.com/itsnotyoutoday/cmcp/msg"
 	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
+	"github.com/itsnotyoutoday/cmcp/textport"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
@@ -168,7 +169,8 @@ type cmcpSess struct {
 	lastRev   atomic.Uint64
 	ss        *screenState
 	ps        *cmcpPackState
-	soundPack *audio.Pack // guarded by mu
+	soundPack *audio.Pack    // guarded by mu
+	tv        *textport.View // guarded by mu
 	started   time.Time
 }
 
