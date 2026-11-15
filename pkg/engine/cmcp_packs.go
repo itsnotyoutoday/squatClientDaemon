@@ -403,16 +403,7 @@ func (cm *cmcpSess) loadCached() {
 	}
 	ui := cm.c.UI()
 	host := cm.s.world.Host
-	var refs []msg.PackRef
-	if ui.Welcome != nil {
-		refs = append(refs, ui.Welcome.Packs...)
-	}
-	refs = append(refs, ui.Ship.Packs...)
-	for _, sv := range ui.Scopes { // v2: the packs a scope's owner brings (a ship's own pack)
-		if sv.Owner != nil {
-			refs = append(refs, sv.Owner.Packs...)
-		}
-	}
+	refs := announcedPacks(ui)
 	ss := cm.screens()
 	for _, r := range refs {
 		if r.Kind == "sounds" {

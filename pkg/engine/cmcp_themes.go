@@ -43,10 +43,7 @@ func (cm *cmcpSess) themesLocked() *themeState {
 // announcedThemes is the usable set for theme.Select: the built-in themes and the announced theme packs that have a gpu rendition.
 func announcedThemes(ui *cs.UI) (avail map[string]bool, refs map[string]msg.PackRef) {
 	avail, refs = theme.BuiltinSet(), map[string]msg.PackRef{}
-	if ui.Welcome == nil {
-		return
-	}
-	for _, p := range ui.Welcome.Packs {
+	for _, p := range announcedPacks(ui) {
 		if p.Kind != "theme" {
 			continue
 		}
@@ -146,11 +143,9 @@ func (cm *cmcpSess) themePack(ref msg.PackRef) {
 	// the file must be what the announcement chose for this class
 	ui := cm.c.UI()
 	var orig msg.PackRef
-	if ui.Welcome != nil {
-		for _, p := range ui.Welcome.Packs {
-			if p.Kind == "theme" && p.ID == ref.ID {
-				orig = p
-			}
+	for _, p := range announcedPacks(ui) {
+		if p.Kind == "theme" && p.ID == ref.ID {
+			orig = p
 		}
 	}
 	ch := theme.ChooseRendition(orig, themeClass)

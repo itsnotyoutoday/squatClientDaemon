@@ -199,3 +199,33 @@ func statusDoc(ui *cs.UI) map[string]any {
 	}
 	return nil
 }
+
+// announcedPacks is every pack the game announced for this session: Welcome.packs, the ship's packs (v1) and the packs a scope's owner brings
+// (v2: a ship's own layout pack and theme), once each. Themes, layouts and sounds are looked up here, not in one of those lists.
+func announcedPacks(ui *cs.UI) []msg.PackRef {
+	var out []msg.PackRef
+	seen := map[string]bool{}
+	add := func(ps []msg.PackRef) {
+		for _, p := range ps {
+			if !seen[p.SHA256] {
+				seen[p.SHA256] = true
+				out = append(out, p)
+			}
+		}
+	}
+	if ui.Welcome != nil {
+		add(ui.Welcome.Packs)
+	}
+	add(ui.Ship.Packs)
+	names := make([]string, 0, len(ui.Scopes))
+	for n := range ui.Scopes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if o := ui.Scopes[n].Owner; o != nil {
+			add(o.Packs)
+		}
+	}
+	return out
+}
