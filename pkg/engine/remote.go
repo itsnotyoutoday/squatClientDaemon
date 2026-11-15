@@ -145,6 +145,9 @@ func (s *session) ingestLine(l proto.Line, live bool) {
 		if l.Kind == proto.KindEcho && s.cap.dropEcho(l.Plain()) {
 			return // echo of an internal Capture send (daemon without noEcho)
 		}
+		if l.Kind == proto.KindEcho && l.Origin != "" && l.Origin == s.remote.sq.deviceIDValue() && !s.localEchoOn() {
+			return // /localecho off: what this device typed is not shown (the squatter echoes every sent line back to every device, the sender included)
+		}
 		spans := l.Spans
 		if l.Kind == proto.KindEcho {
 			spans = s.echoWithOrigin(spans, l.Origin)
@@ -301,6 +304,13 @@ func (s *session) armLogin(w World, login string) {
 	for _, f := range after {
 		f()
 	}
+}
+
+// localEchoOn reports the session's /localecho setting.
+func (s *session) localEchoOn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.localEcho
 }
 
 // echoWithOrigin marks echo lines typed by someone else: "[tf] " for TinyFugue's
