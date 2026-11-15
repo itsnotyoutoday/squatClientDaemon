@@ -301,9 +301,8 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		return nil
 	}
 	if ui.Console == nil && !ui.Readonly && ui.Screen.Resolved == "" {
-		if ui.HaveShip { // aboard a ship without a console (a room, the dock, away): the ship's frame around the text, so the alert and the hit shake have something to move
-			return cm.roomTree(ui)
-		}
+		// No console, no context with a screen: nothing is drawn, only the plain text UI. The game does not say when the player leaves a ship (the ship
+		// and its status stay in the model), so "aboard" is never inferred from them: a screen needs a context the game pushed (std.shiproom for a room).
 		return nil
 	}
 	scr, id := cm.pickScreen(ui)
@@ -743,50 +742,3 @@ func (e *Engine) CmcpViewport(id string, widthPx, scale, monoPx float64) error {
 }
 
 type cmcpViewport struct{ w, scale, mono float64 }
-
-// roomTree is the screen of a player who is aboard a ship but not manning a console: no widgets, only a title and the text port, drawn in
-// the ship's theme frame. The ship-wide alert look (6.17.1) and the hit shake (6.18) live on that frame, so they work in a room too.
-func (cm *cmcpSess) roomTree(ui *cs.UI) *CmcpTree {
-	base := pack.Builtin("std.damage") // only for its token resolver: a room has no screen of its own
-	if base == nil {
-		return nil
-	}
-	theme, themeSrc := cm.theme(ui, &pack.Screen{})
-	lay, capPx := cm.layoutNow(theme)
-	tver := ""
-	if themeSrc == "pack" {
-		cm.mu.Lock()
-		tver = cm.themeVersionLocked(theme)
-		cm.mu.Unlock()
-	}
-	cm.s.e.cmcpMu.Lock()
-	tf, rr := cm.s.e.cmcpRender.Tokens, cm.s.e.cmcpRender
-	cm.s.e.cmcpMu.Unlock()
-	var tt map[string]any
-	if tf != nil {
-		tt = tf(theme)
-	}
-	rs := base.Pack.Resolver(tt)
-	toks := map[string]any{}
-	for k := range pack.DefaultTokens() {
-		toks[k], _ = rs.Resolve(k)
-	}
-	for k := range tt {
-		toks[k] = tt[k]
-	}
-	pd := rr.PortDefault
-	if pd != "compact" && pd != "large" {
-		pd = "balanced"
-	}
-	vs := cm.view().State()
-	title := "ABOARD"
-	if ui.Ship.Name != "" {
-		title = "ABOARD " + strings.ToUpper(ui.Ship.Name)
-	}
-	root := &CmcpNode{Path: "0", Widget: "label", Props: map[string]any{"text": ""}, Layout: CmcpLayout{Dir: "col", Gap: 6}, Enabled: true, Children: []*CmcpNode{
-		{Path: "0.0", Widget: "label", Props: map[string]any{"text": title}, Layout: CmcpLayout{}, Enabled: true},
-		{Path: "0.1", ID: "text", Widget: "textport", Props: map[string]any{}, Layout: CmcpLayout{Size: 160, HasSize: true}, Enabled: true},
-	}}
-	return &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: "std.room", Title: title, Theme: theme, ThemeSource: themeSrc, AlertMode: cm.alertModeNow(), Layout: lay, PortCapPx: capPx, ThemeVersion: tver,
-		View: CmcpView{State: string(vs), PortDefault: pd, Fraction: textport.Fraction(textport.Stacked, vs), Calm: rr.Calm}, Tokens: toks, PackKey: "room/" + theme + "@" + themeSrc + tver, Root: root, UI: map[string]any{}}
-}

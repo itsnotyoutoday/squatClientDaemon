@@ -118,6 +118,15 @@ func (cm *cmcpSess) pulseStep() time.Duration {
 		return pulseIdle
 	}
 	now := cm.s.e.now()
+	// the alert look and the shake belong to a ship the player is on NOW: a context the game pushed (room, console, event...). The ship's status stays in the
+	// model after the player leaves it, so it is no evidence.
+	if u := cm.c.UI(); len(u.Stack) == 0 && u.Console == nil {
+		if cm.pulseLast.Active || cm.pulseLast.Ambient != nil || cm.pulseLast.Shake != nil {
+			cm.pulseLast = CmcpPulse{}
+			cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})
+		}
+		return pulseIdle
+	}
 	st := cm.c.Pulse(now)
 	amb := cm.c.Ambient(now)
 	shk := cm.c.Shake(now)
@@ -191,25 +200,6 @@ func firstNonEmpty(a, b string) string {
 
 func (cm *cmcpSess) publishPulse(p CmcpPulse) {
 	cm.s.e.bus.publish(Event{Kind: EvCmcpPulse, Session: cm.s.id, CmcpPulse: &p})
-}
-
-// ensureFx configures the pulse, the ambience and the shake from the player's own theme when no screen (and so no ship theme) decides it: the
-// ship-wide alert look is not tied to a console (6.17.1), a room or the dock shows it too.
-func (cm *cmcpSess) ensureFx() {
-	cm.s.e.cmcpMu.Lock()
-	r := cm.s.e.cmcpRender
-	cm.s.e.cmcpMu.Unlock()
-	id := r.Theme
-	if id == "" {
-		id = "tng"
-	}
-	pk := theme.Builtin(id)
-	if pk == nil {
-		pk = theme.Builtin("tng")
-	}
-	cm.mu.Lock()
-	cm.syncPulseLocked(pk, r)
-	cm.mu.Unlock()
 }
 
 // kickPulse makes the sampling loop take its next sample now (a hit, an alert change): the idle interval would otherwise delay a shake by

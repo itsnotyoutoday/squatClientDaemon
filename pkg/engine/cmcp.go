@@ -382,9 +382,6 @@ func (cm *cmcpSess) publish() {
 	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
-	if d.Tree == nil {
-		cm.ensureFx() // no console screen (a room, the dock): the alert ambience, the shake and the pulse still follow the player's default theme
-	}
 	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
 }
 

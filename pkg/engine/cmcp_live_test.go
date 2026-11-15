@@ -544,3 +544,65 @@ func TestCmcpLiveTwoSessions(t *testing.T) {
 	}
 	show("B local switch to the room")
 }
+
+// TestCmcpLiveLeave walks board -> teleport away (@tel me=#2) -> board again on the live game and logs, at every step, what the engine knows: the context
+// stack, UI.Screen, the console, whether it thinks the player is aboard (HaveShip, the ship id) and the screen drawn. Off a ship nothing must be
+// drawn (SQUAT_LIVE_CMCP_LEAVE=1; spaceadmin/granite-sky-77 can @tel; Evennia PoC on 127.0.0.1:4101 only).
+func TestCmcpLiveLeave(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP_LEAVE") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_LEAVE=1")
+	}
+	e, r := newEngine(t)
+	ps, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect "+envOr("SQUAT_LIVE_CMCP_ACCOUNT", "spaceadmin granite-sky-77"))
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	show := func(label string) *engine.CmcpUI {
+		time.Sleep(2500 * time.Millisecond)
+		u, _ := e.CmcpUI(si.ID)
+		var stack []string
+		for _, s := range u.Stack {
+			stack = append(stack, fmt.Sprintf("%s:%s(%s) active=%v", s.Kind, s.ID, s.Screen, s.Active))
+		}
+		tree := ""
+		if u.Tree != nil {
+			tree = u.Tree.Screen
+		}
+		shipID := ""
+		if u.Ship != nil {
+			shipID = u.Ship.ID
+		}
+		st := ""
+		if u.Status != nil {
+			st = fmt.Sprintf("name=%v alert=%v", u.Status["name"], u.Status["alert"])
+		}
+		t.Logf("%-24s console=%v screen=%q resolved=%q tree=%q\n      stack=%v ship=%q status{%s} welcomeShip=%v", label, u.Console != nil, u.Screen.ID, u.Screen.Resolved, tree, stack, shipID, st, u.Welcome != nil && u.Welcome.Ship != nil)
+		return u
+	}
+	show("logged in")
+	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "pathfinder"))
+	aboard := show("boarded")
+	if aboard.Tree == nil {
+		t.Errorf("boarded: a ship screen is expected")
+	}
+	_ = e.Input(si.ID, "@tel me=#2")
+	off := show("teleported to #2")
+	if off.Tree != nil {
+		t.Errorf("off a ship no CMCP screen may be drawn, got %q", off.Tree.Screen)
+	}
+	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "pathfinder"))
+	again := show("boarded again")
+	if again.Tree == nil {
+		t.Errorf("boarded again: a ship screen is expected")
+	}
+}

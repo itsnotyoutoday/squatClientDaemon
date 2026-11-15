@@ -1248,26 +1248,49 @@ func TestCmcpHitShakeAndAmbient(t *testing.T) {
 	}
 }
 
-// Aboard but not manning a console (a room, the dock) the engine draws the room in the ship's frame (std.room), and the alert ambience reaches
-// the view: the ship-wide look (6.17.1) is not tied to a console.
-func TestCmcpAmbientWithoutAScreen(t *testing.T) {
+// Aboard in an ordinary room the game pushes room:shiproom and the ship-wide alert look reaches the view; once the contexts are gone (the player left
+// the ship: the game sends nothing about it, the ship's status just stays) NO screen and no ambience remain, only the plain text UI.
+func TestCmcpAmbientInTheRoomAndNothingOffTheShip(t *testing.T) {
 	g := newCmcpRig(t)
 	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
-	g.do(func(s *cs.Server) { // aboard (the ship is known) with no console: a room
-		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Reason: "none"})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
 		s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
 	})
-	g.r.until(t, "ambience without a screen", func() bool {
+	// a ship's status and a ship id but no context: nothing is drawn
+	time.Sleep(600 * time.Millisecond)
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree != nil {
+		t.Fatalf("no context, no screen: %q", u.Tree.Screen)
+	}
+	prio := 35
+	push := func(rev int) {
+		b, _ := json.Marshal(msg.Context{Rev: rev, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+			Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Bridge", Screen: "std.shiproom", Priority: &prio}})
+		g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	}
+	push(3)
+	g.waitUI("the room screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
+	g.r.until(t, "ambience in the room", func() bool {
 		for _, ev := range g.r.snapshot() {
-			if ev.CmcpPulse != nil && ev.CmcpPulse.Ambient != nil && ev.CmcpPulse.Ambient.Edge != "" {
+			if p := ev.CmcpPulse; p != nil && p.Ambient != nil && p.Ambient.Edge != "" {
 				return true
 			}
 		}
 		return false
 	})
-	if u, _ := g.e.CmcpUI(g.sid); u.Tree == nil || u.Tree.Screen != "std.room" {
-		t.Fatalf("aboard without a console the ship's frame is the room screen: %+v", u.Tree)
-	}
+	// the player leaves: the game pops the room context
+	b, _ := json.Marshal(msg.Context{Rev: 4, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "pop", Key: "room:shiproom", Ctx: 1, Reason: "left"})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	g.waitUI("no screen off the ship", func(u *engine.CmcpUI) bool { return u.Tree == nil })
+	g.r.until(t, "the ambience is cleared", func() bool {
+		s := g.r.snapshot()
+		for i := len(s) - 1; i >= 0; i-- {
+			if p := s[i].CmcpPulse; p != nil {
+				return p.Ambient == nil && p.Shake == nil
+			}
+		}
+		return false
+	})
 }
 
 // A shield hit that reports strength 0 (the game's usual shield hit) still shakes the display: the client floors the strength, and the shake
@@ -1279,10 +1302,22 @@ func TestCmcpShieldHitStrengthZeroShakesInARoom(t *testing.T) {
 		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
 		s.Push("Space.Ship.Status", true, map[string]any{"alert": "yellow", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
 	})
-	ui := g.waitUI("the room is a screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.room" })
+	rp := 35
+	rb, _ := json.Marshal(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Mess Hall", Screen: "std.shiproom", Priority: &rp}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: rb})
+	ui := g.waitUI("the room is a screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
 	if findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "textport" }) == nil {
 		t.Fatal("the room screen has a text port")
 	}
+	g.r.until(t, "the fx are configured (ambience on the yellow alert)", func() bool { // the shake config is set together with the ambience: a hit before it would be ignored
+		for _, ev := range g.r.snapshot() {
+			if p := ev.CmcpPulse; p != nil && p.Ambient != nil {
+				return true
+			}
+		}
+		return false
+	})
 	b, _ := json.Marshal(msg.Event{Type: "hit", Data: map[string]any{"cid": "self", "shield": true, "strength": 0.0, "facing": "aft"}})
 	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Event", Data: b})
 	g.r.until(t, "a visible shake for a strength-0 shield hit", func() bool {
