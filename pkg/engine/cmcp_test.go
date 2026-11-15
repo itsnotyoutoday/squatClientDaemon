@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"github.com/itsnotyoutoday/cmcp/fetch"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -121,6 +123,7 @@ func (g *cmcpRig) waitUI(what string, pred func(*engine.CmcpUI) bool) *engine.Cm
 }
 
 type cmcpRigCfg struct {
+	assets   *msg.Assets
 	packs    []msg.PackRef
 	storeDir string
 	onFrame  func(*cmcpRig, frame.Frame)
@@ -135,7 +138,7 @@ func newCmcpRigWith(t *testing.T, mod func(*cmcpRigCfg)) *cmcpRig {
 	}
 	g := &cmcpRig{t: t, game: &cmcpGame{}}
 	g.srv = cs.NewServer(cs.ServerConfig{Server: "test", Backend: g.game,
-		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"}, Packs: rc.packs,
+		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"}, Packs: rc.packs, Assets: rc.assets,
 		Commands: rigCommands()})
 	g.e, g.r = newEngine(t, func(o *engine.Options) {
 		o.Dialer = func(ctx context.Context, cfg conn.Config) (engine.Transport, error) {
@@ -165,7 +168,7 @@ func newCmcpRigWith(t *testing.T, mod func(*cmcpRigCfg)) *cmcpRig {
 		g.e.SetCmcpPacks(ps)
 	}
 	g.e.SetCmcp(func() cs.Config {
-		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536}
+		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536, Logf: t.Logf}
 	})
 	si, err := g.e.Dial(engine.World{ID: "w", Name: "w", Host: "127.0.0.1", Port: 1}, "")
 	if err != nil {
@@ -526,4 +529,74 @@ func rigCommands() []msg.CommandSpec {
 		return one
 	}
 	return list
+}
+
+// The game's pack over plain http on loopback: refused by default, accepted with the developer flag when the origin is the one the
+// Welcome announced and the game itself is on loopback; then consent, switch from the built-in screen to the pack screen, cache.
+func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
+	raw, err := os.ReadFile("../../../cmcp/examples/packs/fspace-std/pack.json")
+	if err != nil {
+		t.Skip(err)
+	}
+	sum := sha256.Sum256(raw)
+	sha := hex.EncodeToString(sum[:])
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cmcp/v1/blob/"+sha {
+			hits++
+			_, _ = w.Write(raw)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	ref := msg.PackRef{ID: "fspace-std", Kind: "layout", Version: "1.0.0", SHA256: sha, Size: len(raw), URL: srv.URL + "/cmcp/v1/blob/" + sha}
+	run := func(t *testing.T, flag bool) *cmcpRig {
+		if flag {
+			t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
+		} else {
+			t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "")
+		}
+		g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+			c.packs = []msg.PackRef{ref}
+			c.assets = &msg.Assets{Origin: srv.URL, Base: "/cmcp/v1"}
+			c.storeDir = t.TempDir()
+		})
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: ref.ID, Version: ref.Version, SHA256: sha}, Packs: []msg.PackRef{ref}},
+				Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "fspace-std/damage", Reason: "manned", Commands: []string{"dmg.assign"}})
+		})
+		return g
+	}
+	g := run(t, false)
+	time.Sleep(400 * time.Millisecond)
+	if hits != 0 {
+		t.Fatal("plain http was fetched without the developer flag")
+	}
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree == nil || u.Tree.Screen != "std.operations" {
+		t.Fatalf("without the flag the built-in screen must stay: %+v", u.Tree)
+	}
+	g = run(t, true)
+	g.r.until(t, "consent prompt", func() bool {
+		for _, ev := range g.r.snapshot() {
+			for _, n := range ev.CmcpNotes {
+				if n.Kind == "pack-consent" {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree.Screen != "std.operations" {
+		t.Fatalf("before consent the built-in screen is shown: %q", u.Tree.Screen)
+	}
+	if err := g.e.CmcpPackConsent(g.sid, ref.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	ui := g.waitUI("pack screen", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && u.Tree.Screen == "fspace-std/damage" && !u.Screen.Fallback
+	})
+	if hits != 1 || ui.Tree == nil {
+		t.Fatalf("hits %d", hits)
+	}
 }
