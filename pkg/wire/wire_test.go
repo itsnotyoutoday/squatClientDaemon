@@ -315,7 +315,11 @@ func TestSlowClientIsDropped(t *testing.T) {
 	dropped := false
 	for i := 0; i < 200 && !dropped; i++ {
 		for _, p := range peers {
-			if !p.SendRaw(big) && p.DeviceID() != good.DeviceID() {
+			// flood only the peer that never reads: the healthy client has the same small queue and, under load, would be dropped by the flood itself
+			if p.DeviceID() == good.DeviceID() {
+				continue
+			}
+			if !p.SendRaw(big) {
 				dropped = true
 			}
 		}

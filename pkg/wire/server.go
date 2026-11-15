@@ -190,7 +190,17 @@ func (c *client) Close(reason string) {
 	c.mu.Unlock()
 	c.s.log.Info("wire: dropping client", "device", c.devID, "reason", reason)
 	c.stop()
-	go func() { _ = c.ws.Close(websocket.StatusPolicyViolation, truncate(reason, 100)) }()
+	go func() {
+		// a peer that is being dropped for not reading will not answer the close handshake either: give it a second, then cut the connection
+		// (otherwise the client stays registered for the library's 5 s handshake wait, or longer under load)
+		done := make(chan struct{})
+		go func() { _ = c.ws.Close(websocket.StatusPolicyViolation, truncate(reason, 100)); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			_ = c.ws.CloseNow()
+		}
+	}()
 }
 
 func truncate(s string, n int) string {
