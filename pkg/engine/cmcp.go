@@ -114,6 +114,8 @@ type CmcpScreenOption struct {
 	Reason    string `json:"reason,omitempty"`
 	HintCmd   string `json:"hintCmd,omitempty"`
 	Active    bool   `json:"active"`
+	State     string `json:"state,omitempty"` // own | alternate | viewable | context | locked
+	Hint      string `json:"hint,omitempty"`  // "man <console> to use" for a screen this console cannot show (the "more..." list only)
 }
 
 // CmcpScreen is session.ScreenRef for the UI.
@@ -415,7 +417,7 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 	d.CatalogueComplete = u.CatalogueComplete
 	d.Screens, d.LocalScreen, d.Pinned = []CmcpScreenOption{}, u.LocalScreen, u.Pinned
 	for _, o := range u.Screens {
-		d.Screens = append(d.Screens, CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active})
+		d.Screens = append(d.Screens, CmcpScreenOption{ID: o.ID, Title: o.Title, Available: o.Available, Reason: o.Reason, HintCmd: o.HintCmd, Active: o.Active, State: o.State, Hint: o.Hint})
 	}
 	d.Stack = []CmcpStackEntry{}
 	for _, e := range u.Stack {

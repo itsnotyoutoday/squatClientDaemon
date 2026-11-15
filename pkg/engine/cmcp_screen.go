@@ -224,9 +224,9 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	want := def
 	if r.UseShipTheme {
 		// the ship's theme first (as the "console" slot of the core's rule), then the console's own, then the screen's suggestion
-		want = theme.Select("", true, ui.ShipTheme, ui.ConsoleTheme, scr.SuggestTheme, def)
+		want = theme.Select("ship", def, ui.ShipTheme, ui.ConsoleTheme, scr.SuggestTheme, "", theme.BuiltinSet())
 	}
-	id, src := theme.Resolve(want, nil, theme.BuiltinSet())
+	id, src := theme.Resolve(want, "gpu", nil, theme.BuiltinVersions(), false)
 	cm.themeKey, cm.themeID, cm.themeSrc, cm.themeShip = key, id, src, hasShip && r.UseShipTheme
 	return id, src
 }

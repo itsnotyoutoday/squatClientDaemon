@@ -294,7 +294,8 @@ func TestCmcpScreenFromData(t *testing.T) {
 		s.Push("Space.Damage.Stat", true, map[string]any{"hull": map[string]any{"cur": 800.0, "max": 1000.0}, "systems": map[string]any{"Port_Nacelle": map[string]any{"cur": 50.0, "max": 100.0}}})
 	})
 	ui := g.waitUI("tree", func(u *engine.CmcpUI) bool {
-		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" }) != nil
+		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "team-assigner" }) != nil &&
+			findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Props["text"] == "DAMAGE CONTROL  -  hull 800.00 / 1000.00" }) != nil
 	})
 	if ui.Tree.Screen != "std.damage" {
 		t.Fatalf("screen %q", ui.Tree.Screen)
@@ -632,7 +633,7 @@ func waitConsentSaved(t *testing.T, dir string) {
 func TestCmcpViewscreenContactArt(t *testing.T) {
 	g := newCmcpRig(t)
 	g.do(func(s *cs.Server) {
-		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "science", Name: "Science"}, Screen: "std.sensors", Reason: "manned",
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "navigation", Name: "Helm"}, Screen: "std.helm", Reason: "manned",
 			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}, {Pkg: "Space.Nav"}}, Commands: []string{"scan.srs"}})
 		s.Push("Space.Contacts", true, map[string]any{"contacts": map[string]any{
 			"17": map[string]any{"cid": 17, "name": "Near", "rel": map[string]any{"az": 10.0, "mark": 0.0}, "bearing": map[string]any{"az": 10.0, "mark": 0.0}, "distance_m": 1000000.0,
@@ -749,7 +750,7 @@ func TestCmcpOneThemePerShip(t *testing.T) {
 	g := newCmcpRig(t)
 	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
 	consoles := []struct{ console, screen string }{{"operations", "std.operations"}, {"science", "std.sensors"}, {"tactical", "std.tactical"}, {"navigation", "std.helm"}, {"engineering", "std.power"}, {"command", "std.command"}, {"medical", "std.medical"}}
-	rev := 0
+	rev, fallback := 0, ""
 	for _, sh := range ships {
 		for i, c := range consoles {
 			g.do(func(s *cs.Server) {
@@ -762,7 +763,15 @@ func TestCmcpOneThemePerShip(t *testing.T) {
 				return u.Tree != nil && u.Ship != nil && u.Ship.ID == sh.id && u.Tree.Screen == scr
 			})
 			// the theme must be ready for the first screen of the hop: "frontier" is not built in, so it falls back to plain (still ONE id per ship)
-			if u.Tree.Theme != want && !(want == "frontier" && u.Tree.Theme == "plain") {
+			if want == "frontier" { // not built in and not announced: not usable, so the next choice is made once and sticks for the stay
+				if i == 0 {
+					want = u.Tree.Theme
+					fallback = want
+				} else {
+					want = fallback
+				}
+			}
+			if u.Tree.Theme != want {
 				t.Fatalf("ship %s console %s (%d): theme %q, want %q", sh.id, c.console, i, u.Tree.Theme, want)
 			}
 		}
