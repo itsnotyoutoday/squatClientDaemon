@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,9 +46,18 @@ func (g *cmcpGame) Snapshot(pkg string) (any, bool) {
 // fakeTr is a Transport that is also a frame sender: the engine writes frames into the server endpoint, the
 // server's answers come back as GMCP events.
 type fakeTr struct {
-	ev    chan conn.Event
-	onTx  func(raw []byte)
-	close sync.Once
+	ev   chan conn.Event
+	onTx func(raw []byte)
+	mu   sync.Mutex
+	shut bool
+}
+
+func (f *fakeTr) deliver(ev conn.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.shut {
+		f.ev <- ev
+	}
 }
 
 func (f *fakeTr) Events() <-chan conn.Event { return f.ev }
@@ -55,8 +65,15 @@ func (f *fakeTr) Send(string) error         { return nil }
 func (f *fakeTr) Resize(int, int)           {}
 func (f *fakeTr) SetCaps(proto.Caps)        {}
 func (f *fakeTr) RemoteEcho() bool          { return false }
-func (f *fakeTr) Close()                    { f.close.Do(func() { close(f.ev) }) }
-func (f *fakeTr) SendFrame(b []byte) error  { f.onTx(b); return nil }
+func (f *fakeTr) Close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.shut {
+		f.shut = true
+		close(f.ev)
+	}
+}
+func (f *fakeTr) SendFrame(b []byte) error { f.onTx(b); return nil }
 
 func TestCmcpEndToEnd(t *testing.T) {
 	game := &cmcpGame{}
@@ -65,17 +82,18 @@ func TestCmcpEndToEnd(t *testing.T) {
 		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status"},
 		Commands: []msg.CommandSpec{{Name: "dmg.assign", Consoles: []string{"operations"}, Mutating: true, Text: "dmg assign {team}={system}",
 			Args: map[string]msg.ArgSpec{"team": {Type: "int"}, "system": {Type: "string"}}}}})
-	var tr *fakeTr
+	var trp atomic.Pointer[fakeTr]
 	var smu sync.Mutex
 	push := func() { // server output -> client
 		for _, o := range srv.Drain().Frames {
 			b, _ := json.Marshal(o.Payload)
-			tr.ev <- conn.Event{Kind: conn.EvGmcp, Package: o.Package, Data: b}
+			trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: o.Package, Data: b})
 		}
 	}
 	e, r := newEngine(t, func(o *engine.Options) {
 		o.Dialer = func(ctx context.Context, cfg conn.Config) (engine.Transport, error) {
-			tr = &fakeTr{ev: make(chan conn.Event, 64)}
+			tr := &fakeTr{ev: make(chan conn.Event, 64)}
+			trp.Store(tr)
 			tr.onTx = func(raw []byte) {
 				smu.Lock()
 				defer smu.Unlock()
@@ -161,12 +179,11 @@ func TestCmcpEndToEnd(t *testing.T) {
 		t.Fatalf("ticket %+v err %v", tk, err)
 	}
 	r.waitLine(t, si.ID, "cmcp> dmg assign 3=Port_Nacelle")
-	game.mu.Lock()
-	n := len(game.executed)
-	game.mu.Unlock()
-	if n != 1 {
-		t.Fatalf("server executed %d commands", n)
-	}
+	r.until(t, "server executed the command", func() bool {
+		game.mu.Lock()
+		defer game.mu.Unlock()
+		return len(game.executed) == 1
+	})
 	r.until(t, "reply note", func() bool {
 		for _, ev := range r.snapshot() {
 			for _, n := range ev.CmcpNotes {
