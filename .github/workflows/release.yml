@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch the shared cmcp core (go.mod replaces it with ../cmcp/go)
+        run: git clone --depth 1 https://github.com/itsnotyoutoday/cmcp.git ../cmcp
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
