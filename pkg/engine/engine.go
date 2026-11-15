@@ -142,6 +142,7 @@ type Engine struct {
 	cmcpRender           CmcpRender
 	cmcpPacks            *PackStore
 	cmcpCfg              func() cs.Config // nil: CMCP is off (see cmcp.go)
+	worldCmcpProto       map[string]int   // world name (lower case) -> 1 or 2: the one CMCP version that world declares; guarded by cmcpMu
 	extensions           []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
@@ -226,7 +227,8 @@ func New(o Options) *Engine {
 	}
 	// the console starts with a banner; the interpreter then loads the library as it is created, and its lines follow
 	e.consoleSystem(bannerLine(o.Version))
-	e.consoleSystem("Type /connect <world>, or use the Worlds button, to connect.")
+	e.consoleSystem("Welcome! Use the Worlds button or type /connect <world> to get started, and /help for help.")
+	e.consoleSystem("Source code, releases and bug reports: https://github.com/itsnotyoutoday/squatclient")
 	e.tf = tfengine.New(&tfHost{e}, topts)
 	if o.OnLuaVar != nil {
 		o.Lua.OnVar = o.OnLuaVar
@@ -436,7 +438,7 @@ func (e *Engine) Dial(w World, password string) (SessionInfo, error) {
 		World: proto.World{Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
 			TLSVerify: orDefault(w.TLSVerify, "strict"), Encoding: orDefault(w.Encoding, "utf-8")},
 		Caps: e.getCaps(), Version: e.opts.Version, DialTimeout: e.opts.DialTimeout, TLSConfig: e.opts.TLSConfig,
-		NoCobra: !e.cmcpOn(),
+		NoCobra: !e.cmcpOn(), CobraGate: e.cmcpGate(w.Name),
 	}
 	e.mu.Lock()
 	if e.closed {

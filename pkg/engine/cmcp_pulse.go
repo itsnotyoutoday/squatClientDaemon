@@ -143,11 +143,22 @@ func (cm *cmcpSess) pulseStep() time.Duration {
 	// the core's own aboard state (the latest Cobra.Console or Cobra.Context names a real ship) AND a live context: a game that never sends the "No ship"
 	// sentinel on leaving (older servers) still leaves the stale ship behind, but its contexts are gone
 	u := cm.c.UI()
-	if len(u.Stack) > 0 || u.Console != nil || !u.Aboard() {
+	if u.V2 {
+		// v2: the alert look, the ambience and the shake belong to an ambient context whose scope has an owner (the core's Ambience);
+		// leaving the scope (Cobra.Scope owner null) is what ends them, so there is no user-closed exception
+		cm.userClosed = false
+		if !u.Ambience {
+			if cm.pulseLast.Active || cm.pulseLast.Ambient != nil || cm.pulseLast.Shake != nil {
+				cm.pulseLast = CmcpPulse{}
+				cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})
+			}
+			return pulseIdle
+		}
+	} else if len(u.Stack) > 0 || u.Console != nil || !u.Aboard() {
 		cm.userClosed = false // a live context again, or the ship was really left: the exception is over
 	}
 	// (the exception: the player closed the last screen himself; the game popped it but the ship is still the player's, so the alert look stays)
-	if !u.Aboard() || (len(u.Stack) == 0 && u.Console == nil && !cm.userClosed) {
+	if !u.V2 && (!u.Aboard() || (len(u.Stack) == 0 && u.Console == nil && !cm.userClosed)) {
 		if cm.pulseLast.Active || cm.pulseLast.Ambient != nil || cm.pulseLast.Shake != nil {
 			cm.pulseLast = CmcpPulse{}
 			cm.publishPulse(CmcpPulse{Session: cm.s.id, Level: 1, Phase: "on"})

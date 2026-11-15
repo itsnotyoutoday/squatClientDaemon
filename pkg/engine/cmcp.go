@@ -99,6 +99,34 @@ type CmcpUI struct {
 	Pinned            bool                       `json:"pinned,omitempty"`
 	Status            map[string]any             `json:"status,omitempty"` // Space.Ship.Status (name, alert, hull, core, lock) for the frame
 	Tree              *CmcpTree                  `json:"tree"`             // the bound screen, nil = no console screen
+
+	// ---- protocol 2 (spec chapter 20); V2 is false and the rest empty for a v1 session ----
+	V2         bool                 `json:"v2,omitempty"`
+	Def        *msg.DefRef          `json:"def,omitempty"`        // the applied definition
+	TextClient bool                 `json:"textClient,omitempty"` // the definition was refused: no contexts are shown (a notice says why)
+	TextReason string               `json:"textReason,omitempty"`
+	Scopes     map[string]CmcpScope `json:"scopes,omitempty"`
+	Ctx        *CmcpCtx             `json:"ctx,omitempty"` // the active context
+	Ambience   bool                 `json:"ambience,omitempty"`
+}
+
+// CmcpScope is one scope of the definition with its current owner (nil: nobody).
+type CmcpScope struct {
+	Title string          `json:"title,omitempty"`
+	Owner *msg.ScopeOwner `json:"owner,omitempty"`
+}
+
+// CmcpCtx is the active context of a v2 session: its type and scope, the layout in force and where it is presented (screen, panel, dock, float).
+type CmcpCtx struct {
+	Type    string         `json:"type"`
+	Scope   string         `json:"scope"`
+	Key     string         `json:"key"`
+	ID      string         `json:"id,omitempty"`
+	Layout  string         `json:"layout"`
+	Surface string         `json:"surface"`
+	Ambient bool           `json:"ambient"`
+	Data    map[string]any `json:"data,omitempty"` // $ctx.data
+	Layouts []string       `json:"layouts,omitempty"`
 }
 
 // CmcpStackEntry is one held context (a console, a room, an away team, an event, a dock).
@@ -257,7 +285,7 @@ func (s *session) cmcp(create bool) *cmcpSess {
 	if mk == nil {
 		return nil
 	}
-	cfg := mk()
+	cfg := s.e.cmcpConfigFor(mk, s.world.Name)
 	if cfg.ScreenCatalog == nil {
 		cfg.ScreenCatalog = pack.SessionCatalog
 	}
@@ -266,6 +294,7 @@ func (s *session) cmcp(create bool) *cmcpSess {
 	if ents := cm.cacheEntries(); len(ents) > 0 {
 		cm.c.SetPackCache(s.e.now(), ents)
 	}
+	cm.holdCachedDefs() // v2: the definitions this host sent before are listed in Hello.defs
 	cm.c.TelnetEvent(cs.WillGMCP, s.e.now())
 	s.mu.Lock()
 	if s.cm != nil {
@@ -533,6 +562,13 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 		switch n.Kind {
 		case cs.NoteReady, cs.NoteConsole:
 			go cm.loadCached()
+		case cs.NoteDefFetch:
+			if n.Blob != nil {
+				cm.defFetch(*n.Blob)
+			}
+		case cs.NoteDefApplied:
+			cm.defApplied(n)
+			go cm.loadCached()
 		case cs.NoteEvent:
 			ns = append(ns, CmcpNote{Kind: "event", Event: n.Event})
 			if n.Event != nil && n.Event.Type == "hit" {
@@ -629,6 +665,23 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		d.Screens = append(d.Screens, opt(o))
 	}
 	d.Stack = []CmcpStackEntry{}
+	if u.V2 {
+		d.V2, d.Def, d.TextClient, d.TextReason, d.Ambience = true, u.Def, u.TextClient, u.TextReason, u.Ambience
+		d.Scopes = map[string]CmcpScope{}
+		for n, sv := range u.Scopes {
+			d.Scopes[n] = CmcpScope{Title: sv.Title, Owner: sv.Owner}
+		}
+		if u.CtxType != "" {
+			d.Ctx = &CmcpCtx{Type: u.CtxType, Scope: u.CtxScope, Key: u.CtxKey, ID: u.CtxID, Layout: u.CtxLayout, Surface: u.CtxSurface, Ambient: u.CtxAmbient, Data: u.CtxData, Layouts: u.Layouts}
+		}
+		for _, e := range u.Stack2 {
+			x := CmcpStackEntry{Key: e.Key, Kind: e.Type, ID: e.ID, Name: e.Name, Title: e.Title, Screen: e.EffectiveLayout, Priority: e.Priority, Active: e.Active, Readonly: e.Readonly, MannedBy: e.MannedBy}
+			if !e.Expires.IsZero() {
+				x.Expires = e.Expires.UnixMilli()
+			}
+			d.Stack = append(d.Stack, x)
+		}
+	}
 	for _, e := range u.Stack {
 		x := CmcpStackEntry{Key: e.Key, Kind: e.Kind, ID: e.ID, Name: e.Name, Title: e.Title, Screen: e.Screen, Priority: e.Priority, Active: e.Active, Readonly: e.Readonly, MannedBy: e.MannedBy}
 		if !e.Expires.IsZero() {
@@ -833,7 +886,7 @@ func (cm *cmcpSess) logContext(ui *cs.UI, d *CmcpUI) {
 		return
 	}
 	var stack []string
-	for _, e := range ui.Stack {
+	for _, e := range d.Stack { // the DTO's stack: v1 contexts, or the v2 ones (kind = the context type)
 		a := ""
 		if e.Active {
 			a = "*"
@@ -846,6 +899,16 @@ func (cm *cmcpSess) logContext(ui *cs.UI, d *CmcpUI) {
 	}
 	if d.Ship != nil {
 		ship = d.Ship.ID
+	}
+	if ui.V2 {
+		owners := []string{}
+		for n, sv := range d.Scopes {
+			if sv.Owner != nil {
+				owners = append(owners, n+"="+sv.Owner.ID)
+			}
+		}
+		sort.Strings(owners)
+		ship = "scopes=" + strings.Join(owners, ",") + " " + cm.defStatusLine(ui)
 	}
 	if d.Tree != nil {
 		tree = d.Tree.Screen

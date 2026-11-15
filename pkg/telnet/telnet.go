@@ -52,11 +52,12 @@ type Config struct {
 	ClientName string // GMCP client name; the first TTYPE answer is its upper-case form; default "SquatClient"
 	Version    string // GMCP client version; default "0.1.0"
 	Caps       proto.Caps
-	UTF8       bool // the world's encoding is utf-8 (MTTS UTF-8 bit, CHARSET)
-	TLS        bool // connection is TLS (MTTS SSL bit)
-	Proxied    bool // connection is relayed by squatterd (MTTS PROXY bit)
-	Cols, Rows int  // initial window size for NAWS; default 80x24
-	NoCobra    bool // do not declare CMCP (Core.Supports.Set ["Cobra 1"]); Core.Hello is still sent
+	UTF8       bool   // the world's encoding is utf-8 (MTTS UTF-8 bit, CHARSET)
+	TLS        bool   // connection is TLS (MTTS SSL bit)
+	Proxied    bool   // connection is relayed by squatterd (MTTS PROXY bit)
+	Cols, Rows int    // initial window size for NAWS; default 80x24
+	NoCobra    bool   // do not declare CMCP (Core.Supports.Set); Core.Hello is still sent
+	CobraGate  string // the Core.Supports.Set list as JSON, for example ["Cobra 2"]; "" = ["Cobra 1"]
 }
 
 // EventKind identifies an Event.
@@ -378,7 +379,11 @@ func (m *Machine) negotiate(cmd, opt byte) {
 				case OptGMCP:
 					m.send(GMCP("Core.Hello", fmt.Sprintf(`{"client":%q,"version":%q}`, m.cfg.ClientName, m.cfg.Version))...)
 					if !m.cfg.NoCobra {
-						m.send(GMCP("Core.Supports.Set", `["Cobra 1"]`)...)
+						gate := m.cfg.CobraGate
+						if gate == "" {
+							gate = `["Cobra 1"]`
+						}
+						m.send(GMCP("Core.Supports.Set", gate)...)
 					}
 				}
 			}

@@ -181,6 +181,9 @@ func (cm *cmcpSess) loadPack(raw []byte) error {
 func (cm *cmcpSess) pickScreen(ui *cs.UI) (*pack.Screen, string) {
 	ss := cm.screens()
 	id := ui.Screen.Resolved
+	if ui.V2 {
+		id = cm.layoutScreenID(ui, id)
+	}
 	if strings.HasPrefix(id, "std.") {
 		if s := pack.Builtin(id); s != nil {
 			return s, id
@@ -193,7 +196,7 @@ func (cm *cmcpSess) pickScreen(ui *cs.UI) (*pack.Screen, string) {
 			return p.Screens[sid], id
 		}
 	}
-	if ui.Console != nil {
+	if !ui.V2 && ui.Console != nil {
 		if s := pack.Builtin("std." + ui.Console.ID); s != nil { // the built-in screen of the same console
 			return s, "std." + ui.Console.ID
 		}
@@ -214,7 +217,11 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 		def = "tng"
 	}
 	shipID, epoch := "", 0
-	if ui.HaveShip {
+	if ui.V2 {
+		if o := ui.Owner("ship"); o != nil { // the theme is sticky per owner and epoch (a new ship is a new theme decision)
+			shipID, epoch = o.ID, o.Epoch
+		}
+	} else if ui.HaveShip {
 		shipID, epoch = ui.Ship.ID, ui.Ship.Epoch
 	}
 	avail, refs := announcedThemes(ui)
@@ -296,7 +303,18 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 	cm.s.e.cmcpMu.Lock()
 	roomScreens := cm.s.e.cmcpRender.RoomScreens
 	cm.s.e.cmcpMu.Unlock()
-	if ui.Console == nil && !ui.Readonly && !roomScreens {
+	if ui.V2 {
+		// v2: the active context's layout is the screen, when it is presented as a screen and the definition was accepted. A game's own
+		// context types decide what is drawn; there is no "no console and no room" rule and no ship sentinel (spec 20.10).
+		if ui.TextClient || ui.CtxType == "" || ui.CtxSurface != "screen" || ui.Screen.Resolved == "" {
+			if ui.Ambience { // the ship-wide alert look still needs the theme's pulse and ambience
+				if scr, _ := cm.pickScreen(ui); scr != nil {
+					cm.theme(ui, scr)
+				}
+			}
+			return nil
+		}
+	} else if ui.Console == nil && !ui.Readonly && !roomScreens {
 		// Not at a console (manned or watched): no screen, only the plain text UI. The game pushes a generic ship room (std.shiproom) for anyone aboard
 		// and special rooms (turbolift, sickbay...) with screens of their own; those are drawn only when the player asks (Settings: room screens).
 		// The ship-wide alert look (a plain web-view edge and glow, no scene) still needs the theme's pulse and ambience, so that is configured here.
@@ -309,7 +327,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		}
 		return nil
 	}
-	if ui.Console == nil && !ui.Readonly && ui.Screen.Resolved == "" {
+	if !ui.V2 && ui.Console == nil && !ui.Readonly && ui.Screen.Resolved == "" {
 		// No console, no context with a screen: nothing is drawn, only the plain text UI. The game does not say when the player leaves a ship (the ship
 		// and its status stay in the model), so "aboard" is never inferred from them: a screen needs a context the game pushed (std.shiproom for a room).
 		return nil

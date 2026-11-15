@@ -408,6 +408,11 @@ func (cm *cmcpSess) loadCached() {
 		refs = append(refs, ui.Welcome.Packs...)
 	}
 	refs = append(refs, ui.Ship.Packs...)
+	for _, sv := range ui.Scopes { // v2: the packs a scope's owner brings (a ship's own pack)
+		if sv.Owner != nil {
+			refs = append(refs, sv.Owner.Packs...)
+		}
+	}
 	ss := cm.screens()
 	for _, r := range refs {
 		if r.Kind == "sounds" {
@@ -521,6 +526,20 @@ func (cm *cmcpSess) needsPack(ref msg.PackRef) bool {
 	}
 	if ui.Ship.Pack != nil && ui.Ship.Pack.ID == ref.ID {
 		return true
+	}
+	if ui.V2 { // a layout pack of the definition: its screens serve the context types ("by:console" finds its screen in it)
+		if ui.Definition != nil && (strings.HasPrefix(ui.CtxLayout, "by:") || ui.Screen.PackID == ref.ID) {
+			for _, lp := range ui.Definition.Layouts {
+				if lp.ID == ref.ID {
+					return true
+				}
+			}
+		}
+		for _, sv := range ui.Scopes {
+			if sv.Owner != nil && sv.Owner.Pack != nil && sv.Owner.Pack.ID == ref.ID {
+				return true
+			}
+		}
 	}
 	return false
 }
