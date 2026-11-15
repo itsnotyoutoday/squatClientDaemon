@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itsnotyoutoday/squatClientDaemon/pkg/ansi"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/tfengine"
 )
@@ -18,11 +17,15 @@ import (
 type tfHost struct{ e *Engine }
 
 func (h *tfHost) Echo(world string, spans []proto.Span) {
+	if world == "" && h.e.consoleOut.Load() > 0 {
+		h.e.consoleAdd(proto.KindSystem, spans) // typed in the console, or the library / startup file loading: the console, whatever is in front
+		return
+	}
 	if s := h.e.resolve(world); s != nil {
 		s.addLine(proto.KindSystem, spans)
 		return
 	}
-	h.e.bus.publish(Event{Kind: EvNotice, Level: LevelInfo, Text: ansi.PlainText(spans)})
+	h.e.consoleAdd(proto.KindSystem, spans) // no world to show it in: the console
 }
 
 // DisplayLine shows fake_recv()'s line as a game line.

@@ -145,6 +145,9 @@ type Engine struct {
 	extensions           []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
+	// console is the client's own screen (console.go); consoleOut > 0 routes what scripts print for "no world" to it even with a session in front.
+	console    consoleLog
+	consoleOut atomic.Int32
 	// localEchoOff / worldLocalEcho: the persisted local-echo settings (the global one and per-world overrides, keyed by lower-case world name:
 	// "on" or "off"); guarded by echoMu. A session starts with the world's value, else the global one; /localecho changes the running session.
 	echoMu         sync.Mutex
@@ -221,12 +224,22 @@ func New(o Options) *Engine {
 	if topts.LibDirs == nil && o.ConfigDir != "" {
 		topts.LibDirs = []string{o.ConfigDir}
 	}
+	// the console starts with a banner; the interpreter then loads the library as it is created, and its lines follow
+	e.consoleSystem(bannerLine(o.Version))
+	e.consoleSystem("Type /connect <world>, or use the Worlds button, to connect.")
 	e.tf = tfengine.New(&tfHost{e}, topts)
 	if o.OnLuaVar != nil {
 		o.Lua.OnVar = o.OnLuaVar
 	}
 	e.lua = lua.New(&luaHost{e}, o.Lua)
 	return e
+}
+
+func bannerLine(version string) string {
+	if version == "" {
+		return "SquatClient: a graphical MU* client with TinyFugue-compatible scripting."
+	}
+	return "SquatClient " + version + ": a graphical MU* client with TinyFugue-compatible scripting."
 }
 
 type discard struct{}

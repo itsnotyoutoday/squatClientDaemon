@@ -23,12 +23,11 @@ func (a *Engine) start(in *gtfparser.Interp) {
 	if _, err := os.Stat(p); err != nil {
 		return
 	}
-	a.muted = true
 	in.SetVar("TFLIBDIR", filepath.Dir(p))
+	a.echoText("% Loading commands from " + p + ".") // as TinyFugue does at start-up; the client shows it on its console
 	if err := in.LoadFile(p); err != nil {
 		a.warn("stdlib.tf: " + err.Error())
 	}
-	a.muted = false
 	a.pushKeys(in)
 }
 

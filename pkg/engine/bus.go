@@ -34,6 +34,7 @@ const (
 	EvCmcp                                // Session, Cmcp: the CMCP UI model changed (throttled by the engine)
 	EvCmcpNote                            // Session, CmcpNotes: sounds, events, replies (never coalesced)
 	EvCmcpPulse                           // Session, CmcpPulse: one sample of the red-alert pulse (~20 Hz while it pulses)
+	EvConsole                             // Line: a line of the console (the client's own screen; see console.go)
 )
 
 // Notice levels.

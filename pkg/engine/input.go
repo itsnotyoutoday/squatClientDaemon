@@ -198,9 +198,13 @@ func splitCmd(t string) (name, arg string) {
 func (e *Engine) LoadScripts() error {
 	var first error
 	if _, err := os.Stat(e.opts.StartupFile); err == nil {
-		if err := e.tf.LoadFile(e.opts.StartupFile); err != nil {
-			first = err
-		}
+		e.inConsole(func() {
+			e.consoleSystem("% Loading commands from " + e.opts.StartupFile + ".")
+			if err := e.tf.LoadFile(e.opts.StartupFile); err != nil {
+				first = err
+				e.consoleSystem("% " + err.Error())
+			}
+		})
 	}
 	if _, err := e.lua.LoadPlugins(); err != nil && first == nil {
 		first = err
@@ -217,7 +221,12 @@ func (e *Engine) Reload() {
 		e.notice("", LevelError, "reload: "+err.Error())
 	}
 	if _, err := os.Stat(e.opts.StartupFile); err == nil {
-		_ = e.tf.LoadFile(e.opts.StartupFile)
+		e.inConsole(func() {
+			e.consoleSystem("% Loading commands from " + e.opts.StartupFile + ".")
+			if err := e.tf.LoadFile(e.opts.StartupFile); err != nil {
+				e.consoleSystem("% " + err.Error())
+			}
+		})
 	}
 }
 
