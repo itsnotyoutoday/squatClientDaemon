@@ -319,9 +319,6 @@ func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
 	if cm.packFrame(pkg, data) {
 		return
 	}
-	if pkg == msg.PkgEvent {
-		data = floorHitStrength(data)
-	}
 	f := frame.Frame{Package: pkg}
 	if len(data) > 0 && string(data) != "null" {
 		f.Payload = data
@@ -628,30 +625,6 @@ func (e *Engine) CmcpDisable(id string) error {
 	cm.c.Disable(e.now())
 	cm.flush()
 	return nil
-}
-
-// MinHitStrength is the least strength this client gives a hit on its own ship. The spec's amplitude is 12 px x strength, so a shield hit that
-// reports strength 0 (a fully absorbed hit: the game sends that for most shield hits) would not move the display at all; the player wants to
-// SEE every hit, so the client raises a lower strength to this floor before the core's shake sees it. Client policy, not spec.
-const MinHitStrength = 0.4
-
-// floorHitStrength raises data.strength of a `hit` event on the own ship to MinHitStrength.
-func floorHitStrength(raw json.RawMessage) json.RawMessage {
-	var ev map[string]any
-	if json.Unmarshal(raw, &ev) != nil || ev["type"] != "hit" {
-		return raw
-	}
-	d, _ := ev["data"].(map[string]any)
-	if d == nil || d["cid"] != "self" {
-		return raw
-	}
-	if v, ok := d["strength"].(float64); ok && v < MinHitStrength {
-		d["strength"] = MinHitStrength
-		if b, err := json.Marshal(ev); err == nil {
-			return b
-		}
-	}
-	return raw
 }
 
 // CmcpClose asks the game to close the session's active context (the X of the console window, a close key or command): Cobra.Context.Close

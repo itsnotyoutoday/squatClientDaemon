@@ -1441,3 +1441,46 @@ func TestCmcpShiproomScreen(t *testing.T) {
 		return len(closes) > 0 && closes[len(closes)-1]["kind"] == "room" && closes[len(closes)-1]["key"] == "room:shiproom"
 	})
 }
+
+// The game may refuse a close: the screen stays and the player sees an error notice with the game's hint; no answer within 5 s is a refusal too.
+func TestCmcpCloseRefusalShowsTheHint(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1_700_000_000, 0)
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	adv := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	answer := true
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+		c.clock = clock
+		c.onFrame = func(r *cmcpRig, f frame.Frame) {
+			var m struct {
+				ID uint32 `json:"id"`
+			}
+			if f.Package == msg.PkgContextClose && json.Unmarshal(f.Payload, &m) == nil && answer {
+				b, _ := json.Marshal(msg.Reply{ID: m.ID, OK: false, Err: "refused", Hint: "The captain has the console: ask them to release it"})
+				r.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: msg.PkgReply, Data: b})
+			}
+		}
+	})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"dmg.assign"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	if err := g.e.CmcpClose(g.sid, "user"); err != nil {
+		t.Fatal(err)
+	}
+	u := g.waitUI("the refusal's hint", func(u *engine.CmcpUI) bool {
+		return u.Notice != nil && u.Notice.Kind == "error" && strings.Contains(u.Notice.Text, "The captain has the console")
+	})
+	if u.Tree == nil || u.Tree.Screen != "std.operations" {
+		t.Fatalf("a refused close keeps the screen: %+v", u.Tree)
+	}
+
+	// no answer at all: after 5 s the core treats it as refused ("no answer")
+	answer = false
+	adv(3 * time.Second) // the previous notice has lingered out; two requests a second are allowed again
+	if err := g.e.CmcpClose(g.sid, "user"); err != nil {
+		t.Fatal(err)
+	}
+	adv(6 * time.Second)
+	g.waitUI("the no-answer notice", func(u *engine.CmcpUI) bool { return u.Notice != nil && strings.Contains(u.Notice.Text, "no answer") })
+}
