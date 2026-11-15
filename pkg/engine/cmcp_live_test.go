@@ -216,4 +216,11 @@ func TestCmcpLiveSound(t *testing.T) {
 		}
 	}
 	t.Logf("%d sound notes; pack loaded %v", n, e.CmcpSoundPack(si.ID) != nil)
+	if sp := e.CmcpSoundPack(si.ID); sp != nil {
+		t.Logf("sound pack %s %s: %d files, %d recipes, %d events", sp.ID, sp.Version, len(sp.Files), len(sp.Recipes), len(sp.Events))
+		for name := range sp.Files {
+			b, ct, err := e.CmcpSample(si.ID, name)
+			t.Logf("sample %-22s %6d bytes %s err=%v", name, len(b), ct, err)
+		}
+	}
 }
