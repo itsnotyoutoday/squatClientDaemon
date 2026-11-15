@@ -182,6 +182,15 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	if st == nil {
 		return
 	}
+	if ref.Kind == "theme" {
+		cm.themePack(ref)
+		return
+	}
+	if ref.Kind == "layout" && cm.consentMode() == "never" {
+		cm.c.PackAvailable(ref.ID, ref.SHA256, false) // refused by the player's setting: nothing is fetched, the built-in screens stay
+		cm.flush()
+		return
+	}
 	ps := cm.packs()
 	if ref.Kind == "layout" && !cm.needsPack(ref) {
 		ps.mu.Lock()
@@ -239,6 +248,15 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 		sigKey = ref.Sig.Key
 	}
 	silent := fetch.NeedsPrompt(trust) == false || (had && rec.Allowed && rec.SigKey == sigKey && major(rec.Version) == major(ref.Version)) || (had && rec.Allowed && rec.SHA256 == ref.SHA256)
+	known := silent
+	switch cm.consentMode() {
+	case "always":
+		silent = true
+	case "never":
+		cm.c.PackAvailable(ref.ID, ref.SHA256, false)
+		cm.flush()
+		return
+	}
 	if !silent {
 		ok := cm.askConsent(ref, host, string(trust))
 		if !ok {
@@ -262,6 +280,9 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	st.consent[ckey(host, ref.ID)] = consentRec{SHA256: ref.SHA256, Version: ref.Version, SigKey: sigKey, Allowed: true}
 	st.save()
 	st.mu.Unlock()
+	if !known && cm.consentMode() == "always" {
+		cm.accepted(ref)
+	}
 }
 
 func (cm *cmcpSess) fetchInline(ref msg.PackRef) ([]byte, error) {
@@ -501,10 +522,30 @@ func (cm *cmcpSess) retryDeferred() {
 // is on loopback; SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED=1: a self-signed certificate on loopback). Release builds do not set them.
 func (cm *cmcpSess) fetchPolicy() fetch.Policy {
 	p := fetch.Policy{GameHost: cm.s.world.Host,
-		DevAllowLoopbackHTTP: os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1",
-		DevTrustLoopbackTLS:  os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1"}
+		DevAllowLoopbackHTTP:  os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1",
+		DevTrustLoopbackTLS:   os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1",
+		DevForceThemeDownload: devForceThemes()}
 	if ui := cm.c.UI(); ui.Welcome != nil && ui.Welcome.Assets != nil {
 		p.Announced = ui.Welcome.Assets.Origin
 	}
 	return p
+}
+
+// consentMode is the player's rule for announced interface packs and themes: always (default: loaded automatically, every check
+// unchanged), ask (the first-use dialog) or never (the built-in screens and themes only).
+func (cm *cmcpSess) consentMode() string {
+	cm.s.e.cmcpMu.Lock()
+	m := cm.s.e.cmcpRender.PackConsent
+	cm.s.e.cmcpMu.Unlock()
+	if m != "ask" && m != "never" {
+		return "always"
+	}
+	return m
+}
+
+// accepted tells the player once about a newly accepted pack (a log line and a toast note).
+func (cm *cmcpSess) accepted(ref msg.PackRef) {
+	cm.s.systemLine(fmt.Sprintf("cmcp: Accepted interface pack %s %s", ref.ID, ref.Version))
+	pr := ref
+	cm.s.e.bus.publish(Event{Kind: EvCmcpNote, Session: cm.s.id, CmcpNotes: []CmcpNote{{Kind: "pack-accepted", Pack: &pr, Text: fmt.Sprintf("Accepted interface pack %s %s", ref.ID, ref.Version)}}})
 }

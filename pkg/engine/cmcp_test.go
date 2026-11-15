@@ -470,6 +470,9 @@ func TestCmcpPackInlineConsentAndCache(t *testing.T) {
 				}
 			}
 		})
+		if answer != nil {
+			g.e.SetCmcpRender(engine.CmcpRender{PackConsent: "ask"})
+		}
 		g.do(func(s *cs.Server) {
 			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: "fspace-std", Version: "1.0.0", SHA256: sha}, Packs: []msg.PackRef{ref}},
 				Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "fspace-std/damage", Reason: "manned", Commands: []string{"dmg.assign"}})
@@ -576,6 +579,7 @@ func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
 			c.assets = &msg.Assets{Origin: srv.URL, Base: "/cmcp/v1"}
 			c.storeDir = dir
 		})
+		g.e.SetCmcpRender(engine.CmcpRender{PackConsent: "ask"})
 		g.do(func(s *cs.Server) {
 			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: ref.ID, Version: ref.Version, SHA256: sha}, Packs: []msg.PackRef{ref}},
 				Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "fspace-std/damage", Reason: "manned", Commands: []string{"dmg.assign"}})
@@ -793,4 +797,160 @@ func TestCmcpOneThemePerShip(t *testing.T) {
 	// a setting change takes effect: fixed mode uses the player's theme
 	g.e.SetCmcpRender(engine.CmcpRender{Theme: "ferengi", UseShipTheme: false})
 	g.waitUI("fixed", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Theme == "ferengi" })
+}
+
+// A downloaded theme (spec 19.10): only the gpu rendition of the SELECTED theme is fetched, asked once, cached, and overrides the
+// embedded copy only with a higher version (or with the dev flag); the second launch needs no fetch and no prompt.
+func TestCmcpThemeDownload(t *testing.T) {
+	load := func(f string) ([]byte, msg.PackRef) {
+		raw, err := os.ReadFile("../../../cmcp/examples/themes/" + f)
+		if err != nil {
+			t.Skip(err)
+		}
+		sum := sha256.Sum256(raw)
+		sha := hex.EncodeToString(sum[:])
+		var doc struct{ Version string }
+		_ = json.Unmarshal(raw, &doc)
+		return raw, msg.PackRef{ID: "klingon", Kind: "theme", Version: doc.Version, Renditions: &msg.Renditions{GPU: &msg.Rendition{SHA256: sha, Size: len(raw), Inline: true}}}
+	}
+	run := func(t *testing.T, file string, store string, answer *bool, wantSrc string) (gets int, prompted bool, ui *engine.CmcpUI) {
+		raw, ref := load(file)
+		sha := ref.Renditions.GPU.SHA256
+		g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+			c.packs = []msg.PackRef{ref}
+			c.storeDir = store
+			c.onFrame = func(r *cmcpRig, f frame.Frame) {
+				if f.Package == msg.PkgPackGet {
+					gets++
+					chunks, _ := fetch.ChunkPlan(raw, 12288)
+					for i, c := range chunks {
+						d := msg.PackData{ID: ref.ID, Version: ref.Version, SHA256: sha, Part: i + 1, Parts: len(chunks), Data: base64.StdEncoding.EncodeToString(c)}
+						b, _ := json.Marshal(d)
+						r.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: msg.PkgPackData, Data: b})
+					}
+				}
+			}
+		})
+		mode := "always"
+		if answer != nil {
+			mode = "ask"
+		}
+		g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: mode})
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Theme: "klingon"}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned",
+				Commands: []string{"scan.srs"}})
+		})
+		if answer != nil {
+			g.r.until(t, "theme consent", func() bool {
+				for _, ev := range g.r.snapshot() {
+					for _, n := range ev.CmcpNotes {
+						if n.Kind == "pack-consent" && n.Pack != nil && n.Pack.Kind == "theme" {
+							prompted = true
+						}
+					}
+				}
+				return prompted
+			})
+			if err := g.e.CmcpPackConsent(g.sid, "klingon", *answer); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ui = g.waitUI("themed tree", func(u *engine.CmcpUI) bool {
+			return u.Tree != nil && u.Tree.Theme == "klingon" && u.Tree.ThemeSource == wantSrc
+		})
+		if ui.Tree.ThemeSource == "pack" {
+			if d, err := g.e.CmcpThemeDoc(g.sid, "klingon"); err != nil || d["id"] != "klingon" {
+				t.Fatalf("theme doc: %v %v", d, err)
+			}
+		}
+		return
+	}
+	store := t.TempDir()
+	yes := true
+	gets, prompted, ui := run(t, "klingon-1.0.1.gpu.json", store, &yes, "pack")
+	waitConsentSaved(t, store)
+	if gets != 1 || !prompted || ui.Tree.ThemeSource != "pack" || ui.Tree.ThemeVersion != "1.0.1" {
+		t.Fatalf("first launch: gets %d prompted %v source %q version %q", gets, prompted, ui.Tree.ThemeSource, ui.Tree.ThemeVersion)
+	}
+	gets, prompted, ui = run(t, "klingon-1.0.1.gpu.json", store, nil, "pack")
+	if gets != 0 || prompted || ui.Tree.ThemeSource != "pack" {
+		t.Fatalf("second launch: gets %d prompted %v source %q", gets, prompted, ui.Tree.ThemeSource)
+	}
+	// the same version as the embedded copy: nothing is downloaded
+	gets, prompted, ui = run(t, "klingon.gpu.json", t.TempDir(), nil, "builtin")
+	if gets != 0 || prompted || ui.Tree.ThemeSource != "builtin" {
+		t.Fatalf("same version: gets %d prompted %v source %q", gets, prompted, ui.Tree.ThemeSource)
+	}
+	// the developer flag prefers the pack whatever its version
+	t.Setenv("SQUATCLIENT_DEV_FORCE_THEME_DOWNLOAD", "1")
+	gets, _, ui = run(t, "klingon.gpu.json", t.TempDir(), &yes, "pack")
+	if gets != 1 || ui.Tree.ThemeSource != "pack" {
+		t.Fatalf("forced: gets %d source %q", gets, ui.Tree.ThemeSource)
+	}
+}
+
+// The consent setting: "always" (default) loads a verified pack without a prompt and says so once; "never" fetches nothing.
+func TestCmcpPackConsentModes(t *testing.T) {
+	raw, err := os.ReadFile("../../../cmcp/examples/packs/fspace-std/pack.json")
+	if err != nil {
+		t.Skip(err)
+	}
+	sum := sha256.Sum256(raw)
+	sha := hex.EncodeToString(sum[:])
+	ref := msg.PackRef{ID: "fspace-std", Kind: "layout", Version: "1.0.0", SHA256: sha, Size: len(raw), Inline: true}
+	for _, mode := range []string{"always", "never"} {
+		gets := 0
+		g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+			c.packs = []msg.PackRef{ref}
+			c.storeDir = t.TempDir()
+			c.onFrame = func(r *cmcpRig, f frame.Frame) {
+				if f.Package == msg.PkgPackGet {
+					gets++
+					chunks, _ := fetch.ChunkPlan(raw, 12288)
+					for i, c := range chunks {
+						d := msg.PackData{ID: ref.ID, Version: ref.Version, SHA256: sha, Part: i + 1, Parts: len(chunks), Data: base64.StdEncoding.EncodeToString(c)}
+						b, _ := json.Marshal(d)
+						r.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: msg.PkgPackData, Data: b})
+					}
+				}
+			}
+		})
+		g.e.SetCmcpRender(engine.CmcpRender{PackConsent: mode})
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: "fspace-std", Version: "1.0.0", SHA256: sha}, Packs: []msg.PackRef{ref}},
+				Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "fspace-std/damage", Reason: "manned", Commands: []string{"dmg.assign"}})
+		})
+		if mode == "always" {
+			g.waitUI("auto-accepted pack screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "fspace-std/damage" })
+			g.r.until(t, "accepted note", func() bool {
+				for _, ev := range g.r.snapshot() {
+					for _, n := range ev.CmcpNotes {
+						if n.Kind == "pack-accepted" {
+							return true
+						}
+					}
+				}
+				return false
+			})
+			accepted, prompted := 0, false
+			for _, ev := range g.r.snapshot() {
+				for _, n := range ev.CmcpNotes {
+					if n.Kind == "pack-accepted" {
+						accepted++
+					}
+					if n.Kind == "pack-consent" {
+						prompted = true
+					}
+				}
+			}
+			if gets != 1 || prompted || accepted != 1 {
+				t.Fatalf("always: gets %d prompted %v accepted notes %d", gets, prompted, accepted)
+			}
+			continue
+		}
+		time.Sleep(500 * time.Millisecond)
+		if u, _ := g.e.CmcpUI(g.sid); gets != 0 || u.Tree == nil || u.Tree.Screen == "fspace-std/damage" {
+			t.Fatalf("never: gets %d screen %+v", gets, u.Tree)
+		}
+	}
 }

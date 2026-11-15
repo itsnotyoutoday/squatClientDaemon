@@ -189,6 +189,7 @@ type cmcpSess struct {
 	tv                          *textport.View // guarded by mu
 	themeKey, themeID, themeSrc string         // the sticky per-ship theme (guarded by mu)
 	themeShip                   bool
+	th                          *themeState // downloaded themes (guarded by mu)
 	started                     time.Time
 }
 

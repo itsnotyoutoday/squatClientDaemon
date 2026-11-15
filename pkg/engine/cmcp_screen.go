@@ -22,6 +22,7 @@ import (
 type CmcpRender struct {
 	PortDefault    string                            // compact | balanced (default) | large: the text view's default size (spec 6.13.1)
 	Calm           bool                              // slower eased motion
+	PackConsent    string                            // always (default) | ask | never: whether announced interface packs and themes load automatically
 	StartCollapsed bool                              // the console screen starts switched off
 	Theme          string                            // the player's theme (tng, soft, ...)
 	UseShipTheme   bool                              // follow the console/ship/screen suggestion (spec 6.6)
@@ -93,19 +94,20 @@ type CmcpView struct {
 
 // CmcpTree is the bound screen.
 type CmcpTree struct {
-	Session     string         `json:"session"`
-	Generation  int            `json:"generation"`
-	Screen      string         `json:"screen"` // the id being drawn ("std.damage", "fspace-std/damage")
-	Title       string         `json:"title"`
-	Console     string         `json:"console,omitempty"`
-	Theme       string         `json:"theme"`       // the theme in force after the precedence rules of 6.6
-	ThemeSource string         `json:"themeSource"` // pack | builtin | plain (19.10)
-	View        CmcpView       `json:"view"`
-	Tokens      map[string]any `json:"tokens"`  // resolved design tokens for that theme and pack
-	PackKey     string         `json:"packKey"` // changes when the pack or tokens change (sprite cache key part)
-	Exhausted   bool           `json:"exhausted,omitempty"`
-	Root        *CmcpNode      `json:"root"`
-	UI          map[string]any `json:"ui"` // the screen's $ui state, for highlighting a selection
+	Session      string         `json:"session"`
+	Generation   int            `json:"generation"`
+	Screen       string         `json:"screen"` // the id being drawn ("std.damage", "fspace-std/damage")
+	Title        string         `json:"title"`
+	Console      string         `json:"console,omitempty"`
+	Theme        string         `json:"theme"`                  // the theme in force after the precedence rules of 6.6
+	ThemeSource  string         `json:"themeSource"`            // pack | builtin | plain (19.10)
+	ThemeVersion string         `json:"themeVersion,omitempty"` // the downloaded pack's version when the source is "pack"
+	View         CmcpView       `json:"view"`
+	Tokens       map[string]any `json:"tokens"`  // resolved design tokens for that theme and pack
+	PackKey      string         `json:"packKey"` // changes when the pack or tokens change (sprite cache key part)
+	Exhausted    bool           `json:"exhausted,omitempty"`
+	Root         *CmcpNode      `json:"root"`
+	UI           map[string]any `json:"ui"` // the screen's $ui state, for highlighting a selection
 }
 
 type screenState struct {
@@ -214,19 +216,22 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	if ui.HaveShip {
 		shipID, epoch = ui.Ship.ID, ui.Ship.Epoch
 	}
-	key := fmt.Sprintf("%s/%d|%v|%s", shipID, epoch, r.UseShipTheme, def)
-	hasShip := ui.ShipTheme != "" || ui.ConsoleTheme != ""
+	avail, refs := announcedThemes(ui)
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+	th := cm.themesLocked()
+	key := fmt.Sprintf("%s/%d|%v|%s|%d", shipID, epoch, r.UseShipTheme, def, th.gen)
+	hasShip := ui.ShipTheme != "" || ui.ConsoleTheme != ""
 	if key == cm.themeKey && (cm.themeShip || !hasShip) {
 		return cm.themeID, cm.themeSrc
 	}
 	want := def
 	if r.UseShipTheme {
 		// the ship's theme first (as the "console" slot of the core's rule), then the console's own, then the screen's suggestion
-		want = theme.Select("ship", def, ui.ShipTheme, ui.ConsoleTheme, scr.SuggestTheme, "", theme.BuiltinSet())
+		want = theme.Select("ship", def, ui.ShipTheme, ui.ConsoleTheme, scr.SuggestTheme, "", avail)
 	}
-	id, src := theme.Resolve(want, "gpu", nil, theme.BuiltinVersions(), false)
+	cm.wantThemeLocked(want, refs)
+	id, src := th.reg.Resolve(want)
 	cm.themeKey, cm.themeID, cm.themeSrc, cm.themeShip = key, id, src, hasShip && r.UseShipTheme
 	return id, src
 }
@@ -279,6 +284,12 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 	env := pack.EnvFromUI(ui, ss.ui)
 	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets, Class: "gpu"})
 	theme, themeSrc := cm.theme(ui, scr)
+	tver := ""
+	if themeSrc == "pack" {
+		cm.mu.Lock()
+		tver = cm.themeVersionLocked(theme)
+		cm.mu.Unlock()
+	}
 	cm.s.e.cmcpMu.Lock()
 	tf := cm.s.e.cmcpRender.Tokens
 	cm.s.e.cmcpMu.Unlock()
@@ -307,8 +318,8 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 		pd = "balanced"
 	}
 	viewDTO := CmcpView{State: string(vs), PortDefault: pd, Fraction: textport.Fraction(textport.Stacked, vs), Calm: rr.Calm}
-	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, View: viewDTO, Tokens: toks,
-		PackKey: scr.Pack.SHA256 + "/" + theme, Exhausted: b.Exhausted, Root: dtoNode(b, scr, ui), UI: copyMap(ss.ui)}
+	t := &CmcpTree{Session: cm.s.id, Generation: ui.Generation, Screen: id, Title: scr.Title, Console: scr.Console, Theme: theme, ThemeSource: themeSrc, ThemeVersion: tver, View: viewDTO, Tokens: toks,
+		PackKey: scr.Pack.SHA256 + "/" + theme + "@" + themeSrc + tver, Exhausted: b.Exhausted, Root: dtoNode(b, scr, ui), UI: copyMap(ss.ui)}
 	if ui.Title != "" {
 		t.Title = ui.Title
 	}
