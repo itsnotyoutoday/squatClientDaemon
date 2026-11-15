@@ -69,7 +69,7 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 }
 
 // TestCmcp2LiveThemesAndConsoles checks that what worked the v1 way still works the v2 way: the ship's own theme (a downloaded pack) is used,
-// a console is drawn with its screen, and the sound pack is loaded. SQUAT_LIVE_CMCP2=1; the ship to board is SQUAT_LIVE_CMCP2_SHIP (default drakhar).
+// a console is drawn with its screen, and the sound pack is loaded. SQUAT_LIVE_CMCP2=1; the ship to board is SQUAT_LIVE_CMCP2_SHIP (default resolute: the SquatClient tests use that ship only, others use theirs).
 func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
 		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
@@ -102,7 +102,7 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Tree != nil })
 	ship := os.Getenv("SQUAT_LIVE_CMCP2_SHIP")
 	if ship == "" {
-		ship = "drakhar"
+		ship = "resolute"
 	}
 	_ = e.Input(si.ID, "board "+ship)
 	r.until(t, "aboard "+ship, func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
@@ -221,7 +221,8 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 	_ = e.Input(si.ID, "board resolute")
 	r.until(t, "aboard", func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
 	defer func() { _ = e.Input(si.ID, "home"); time.Sleep(500 * time.Millisecond) }()
-	for _, c := range []string{"helm", "ops", "tac", "sci", "engineering", "damage", "command", "comms", "medical", "security"} {
+	// the bridge: engineering and damage control are in the engineering room, medical in sickbay, security in the brig
+	for _, c := range []string{"helm", "ops", "tac", "sci", "command", "comms"} {
 		_ = e.Input(si.ID, "man "+c)
 		ok := false
 		deadline := time.Now().Add(4 * time.Second)
