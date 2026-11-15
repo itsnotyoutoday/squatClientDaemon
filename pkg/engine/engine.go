@@ -145,10 +145,15 @@ type Engine struct {
 	extensions           []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.
 	showGagged atomic.Bool
-	log        *slog.Logger
-	tf         *tfengine.Engine
-	lua        *lua.Runtime
-	bus        *bus
+	// localEchoOff / worldLocalEcho: the persisted local-echo settings (the global one and per-world overrides, keyed by lower-case world name:
+	// "on" or "off"); guarded by echoMu. A session starts with the world's value, else the global one; /localecho changes the running session.
+	echoMu         sync.Mutex
+	localEchoOff   bool
+	worldLocalEcho map[string]string
+	log            *slog.Logger
+	tf             *tfengine.Engine
+	lua            *lua.Runtime
+	bus            *bus
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -592,4 +597,57 @@ func (e *Engine) notice(session, level, text string) {
 		return
 	}
 	e.bus.publish(Event{Kind: EvNotice, Level: level, Text: text})
+}
+
+// SetLocalEchoDefault sets the global local-echo setting for sessions that have not been told otherwise (on by default) and applies it to the
+// open sessions that follow the settings.
+func (e *Engine) SetLocalEchoDefault(on bool) {
+	e.echoMu.Lock()
+	e.localEchoOff = !on
+	e.echoMu.Unlock()
+	e.applyLocalEchoSettings()
+}
+
+// SetWorldLocalEcho sets the per-world local-echo overrides: world name -> "on" or "off" (a world not in the map follows the global setting).
+func (e *Engine) SetWorldLocalEcho(m map[string]string) {
+	c := make(map[string]string, len(m))
+	for k, v := range m {
+		if v == "on" || v == "off" {
+			c[strings.ToLower(strings.TrimSpace(k))] = v
+		}
+	}
+	e.echoMu.Lock()
+	e.worldLocalEcho = c
+	e.echoMu.Unlock()
+	e.applyLocalEchoSettings()
+}
+
+// effectiveLocalEcho is the setting a session of the named world starts with: the world's own, else the global one.
+func (e *Engine) effectiveLocalEcho(world string) bool {
+	e.echoMu.Lock()
+	defer e.echoMu.Unlock()
+	switch e.worldLocalEcho[strings.ToLower(strings.TrimSpace(world))] {
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	return !e.localEchoOff
+}
+
+// applyLocalEchoSettings re-applies the settings to the open sessions, except those where the user typed /localecho (that stays until the session ends).
+func (e *Engine) applyLocalEchoSettings() {
+	e.mu.RLock()
+	ss := make([]*session, 0, len(e.sessions))
+	for _, s := range e.sessions {
+		ss = append(ss, s)
+	}
+	e.mu.RUnlock()
+	for _, s := range ss {
+		s.mu.Lock()
+		if !s.localEchoManual {
+			s.localEcho = e.effectiveLocalEcho(s.world.Name)
+		}
+		s.mu.Unlock()
+	}
 }

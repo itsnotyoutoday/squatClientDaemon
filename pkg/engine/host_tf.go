@@ -274,7 +274,7 @@ func (h *tfHost) Input(text string) {
 func (h *tfHost) LocalEcho(world string, on bool) {
 	if s := h.e.resolve(world); s != nil {
 		s.mu.Lock()
-		s.localEcho = on
+		s.localEcho, s.localEchoManual = on, true
 		s.mu.Unlock()
 	}
 }

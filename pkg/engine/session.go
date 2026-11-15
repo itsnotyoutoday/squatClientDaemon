@@ -52,21 +52,22 @@ type session struct {
 
 	userSend atomic.Int32 // >0 while a user-typed line is being sent (it is echoed)
 
-	mu          sync.Mutex
-	info        proto.SessionInfo
-	unread      []uint64
-	collecting  bool
-	deferred    []deferredLine
-	login       string
-	loginCancel func()
-	status      []StatusField
-	tfStatus    map[string]bool // names of the status fields the TF engine owns
-	logw        *os.File
-	cols, rows  int
-	localEcho   bool
-	hidden      func(line, attrs string) bool // /limit's filter (the engine's snapshot); nil = none
-	storeClosed bool
-	started     bool
+	mu              sync.Mutex
+	info            proto.SessionInfo
+	unread          []uint64
+	collecting      bool
+	deferred        []deferredLine
+	login           string
+	loginCancel     func()
+	status          []StatusField
+	tfStatus        map[string]bool // names of the status fields the TF engine owns
+	logw            *os.File
+	cols, rows      int
+	localEcho       bool
+	localEchoManual bool                          // /localecho was typed in this session: the settings no longer change it
+	hidden          func(line, attrs string) bool // /limit's filter (the engine's snapshot); nil = none
+	storeClosed     bool
+	started         bool
 
 	cap         capState     // Capture machinery (capture.go)
 	props       propsCache   // flag/power catalogues (mushobj_props.go)
@@ -96,7 +97,7 @@ func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login st
 		return nil, fmt.Errorf("engine: %w", err)
 	}
 	s := &session{e: e, id: id, tfName: tfName, world: w, cfg: cfg, store: st, done: make(chan struct{}),
-		login: login, localEcho: true, cols: 80, rows: 24}
+		login: login, localEcho: e.effectiveLocalEcho(w.Name), cols: 80, rows: 24}
 	s.info = proto.SessionInfo{ID: id, Name: w.Name, Host: w.Host, Port: w.Port, TLS: w.TLS,
 		State: proto.StateConnecting, StartedAt: e.now().UnixMilli(), Attached: 1}
 	if w.GameType != "" && w.GameType != "auto" && ValidGameType(w.GameType) {
