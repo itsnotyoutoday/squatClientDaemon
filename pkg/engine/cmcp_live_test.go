@@ -613,3 +613,53 @@ func TestCmcpLiveLeave(t *testing.T) {
 		t.Errorf("boarded again: a ship screen is expected")
 	}
 }
+
+// TestCmcpLiveNexusSamples is the "tester profile" check against a game that hosts its sound pack on a CDN: no local folder, no developer flags, the default
+// pack setting. Every sample of the announced sound pack must fetch over https (SQUAT_LIVE_NEXUS=host:port, SQUAT_LIVE_NEXUS_LOGIN="connect alice ember-tide-91").
+func TestCmcpLiveNexusSamples(t *testing.T) {
+	addr := os.Getenv("SQUAT_LIVE_NEXUS")
+	if addr == "" {
+		t.Skip("set SQUAT_LIVE_NEXUS=host:port")
+	}
+	host, ps, _ := strings.Cut(addr, ":")
+	port, _ := strconv.Atoi(ps)
+	e, r := newEngine(t)
+	store, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(store)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng",
+			Audio: &msg.Audio{Play: true, Formats: []string{"wav", "ogg", "mp3"}, Recipes: true, Voices: 16}, Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
+	})
+	si, err := e.Dial(engine.World{Name: "nexus", Host: host, Port: port}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, envOr("SQUAT_LIVE_NEXUS_LOGIN", "connect alice ember-tide-91"))
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	var sp *struct{}
+	_ = sp
+	deadline := time.Now().Add(20 * time.Second)
+	for e.CmcpSoundPack(si.ID) == nil && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+	}
+	pk := e.CmcpSoundPack(si.ID)
+	if pk == nil {
+		t.Fatal("the sound pack was never loaded")
+	}
+	ok, bad := 0, 0
+	for name := range pk.Files {
+		b, ct, err := e.CmcpSample(si.ID, name)
+		if err != nil {
+			bad++
+			t.Errorf("sample %s: %v", name, err)
+			continue
+		}
+		ok++
+		_ = b
+		_ = ct
+	}
+	t.Logf("sound pack %s %s: %d samples fetched from the network, %d failed", pk.ID, pk.Version, ok, bad)
+}

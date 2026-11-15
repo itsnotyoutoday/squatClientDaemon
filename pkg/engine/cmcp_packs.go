@@ -135,6 +135,7 @@ func (cm *cmcpSess) packFrame(pkg string, data json.RawMessage) bool {
 		if in == nil {
 			return true
 		}
+		cm.clog("Pack.Data %s part %d/%d", d.ID, d.Part, d.Parts)
 		b, err := in.Add(cm.s.e.now(), &d)
 		if err != nil {
 			ps.mu.Lock()
@@ -167,12 +168,23 @@ func (cm *cmcpSess) packFrame(pkg string, data json.RawMessage) bool {
 	return false
 }
 
+// clog writes a line of the client's own diagnostics (client.log): the pack lifecycle, so a tester's report shows where a pack stopped.
+func (cm *cmcpSess) clog(format string, a ...any) {
+	cm.s.e.cmcpMu.Lock()
+	f := cm.s.e.cmcpLogFn
+	cm.s.e.cmcpMu.Unlock()
+	if f != nil {
+		f(fmt.Sprintf("pack %s: ", cm.s.id) + fmt.Sprintf(format, a...))
+	}
+}
+
 // wantPack runs in its own goroutine for each pack the game announces and the client lacks.
 func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	e := cm.s.e
 	st := e.packStore()
 	host := cm.s.world.Host
-	logf := func(f string, a ...any) { cm.s.systemLine("cmcp: " + fmt.Sprintf(f, a...)) }
+	logf := func(f string, a ...any) { cm.s.systemLine("cmcp: " + fmt.Sprintf(f, a...)); cm.clog(f, a...) }
+	cm.clog("wanted %s %s %s (inline=%v size=%d)", ref.Kind, ref.ID, ref.Version, ref.Inline, ref.Size)
 	fail := func(err error) {
 		logf("pack %s %s dropped: %v", ref.ID, ref.Version, err)
 		cm.c.PackFailed(e.now(), ref, err.Error())
@@ -182,6 +194,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 		cm.flush()
 	}
 	if st == nil {
+		cm.clog("no pack store: %s %s is not fetched", ref.Kind, ref.ID)
 		return
 	}
 	if ref.Kind == "theme" {
@@ -229,6 +242,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	}
 	if ref.Kind == "sounds" {
 		cm.loadSoundPack(raw)
+		cm.clog("sound pack %s %s fetched (%d bytes, cache hit=%v)", ref.ID, ref.Version, len(raw), hit)
 	}
 	if ref.Kind != "layout" {
 		// sound packs and art: cached for the audio side (spec 9); nothing to consent to for layouts' sake
@@ -304,10 +318,13 @@ func (cm *cmcpSess) fetchInline(ref msg.PackRef) ([]byte, error) {
 	ps.inline, ps.inlineC = in, ch
 	ps.mu.Unlock()
 	cm.sendRaw(msg.PkgPackGet, msg.PackGet{ID: ref.ID, Version: ref.Version, SHA256: ref.SHA256})
+	cm.clog("inline transfer of %s %s asked (Cobra.Pack.Get)", ref.ID, ref.Version)
+	t0 := time.Now()
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 	select {
 	case r := <-ch:
+		cm.clog("inline transfer of %s ended after %s: %d bytes, err=%v", ref.ID, time.Since(t0).Round(time.Millisecond), len(r.b), r.err)
 		return r.b, r.err
 	case <-timeout.C:
 		ps.mu.Lock()
@@ -527,12 +544,21 @@ func (cm *cmcpSess) retryDeferred() {
 // (SQUATCLIENT_DEV_LOOPBACK_HTTP=1: plain http from the loopback origin this connection's Welcome announced, only when the game itself
 // is on loopback; SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED=1: a self-signed certificate on loopback). Release builds do not set them.
 func (cm *cmcpSess) fetchPolicy() fetch.Policy {
-	p := fetch.Policy{GameHost: cm.s.world.Host,
-		DevAllowLoopbackHTTP:  os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1",
-		DevTrustLoopbackTLS:   os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1",
-		DevForceThemeDownload: devForceThemes()}
+	announced := ""
 	if ui := cm.c.UI(); ui.Welcome != nil && ui.Welcome.Assets != nil {
-		p.Announced = ui.Welcome.Assets.Origin
+		announced = ui.Welcome.Assets.Origin
+	}
+	return originPolicy(cm.s.world.Host, announced, cm.consentMode(), os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1", os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1", devForceThemes())
+}
+
+// originPolicy is the origin rule of spec 8.4 for one connection. A game usually hosts its packs on a CDN, not on its own host (a game on a bare IP cannot
+// have a certificate at all): such an https origin is accepted only when the player allowed it. The player's pack setting "Always" is that standing
+// allowance for the origin THIS connection's Welcome announced (every blob is still checked by hash, size and caps); "Ask" and "Never" allow nothing
+// beyond the game's own host.
+func originPolicy(gameHost, announced, consent string, devHTTP, devTLS, devTheme bool) fetch.Policy {
+	p := fetch.Policy{GameHost: gameHost, Announced: announced, DevAllowLoopbackHTTP: devHTTP, DevTrustLoopbackTLS: devTLS, DevForceThemeDownload: devTheme}
+	if consent == "always" && strings.HasPrefix(strings.ToLower(announced), "https://") {
+		p.AllowedOrigins = map[string]bool{strings.ToLower(announced): true}
 	}
 	return p
 }
@@ -556,3 +582,6 @@ func (cm *cmcpSess) accepted(ref msg.PackRef) {
 	pr := ref
 	cm.s.e.bus.publish(Event{Kind: EvCmcpNote, Session: cm.s.id, CmcpNotes: []CmcpNote{{Kind: "pack-accepted", Pack: &pr, Text: fmt.Sprintf("Accepted interface pack %s %s", ref.ID, ref.Version)}}})
 }
+
+// HasCmcpPacks reports whether the engine has a pack store: without one nothing a game announces (sound packs, layouts, themes) is ever fetched.
+func (e *Engine) HasCmcpPacks() bool { return e.packStore() != nil }
