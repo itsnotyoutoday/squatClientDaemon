@@ -296,7 +296,7 @@ func (cm *cmcpSess) fetchHTTPS(ref msg.PackRef) ([]byte, error) {
 	if ui.Welcome == nil || ui.Welcome.Assets == nil {
 		return nil, fmt.Errorf("the game announced no asset origin")
 	}
-	f := fetch.NewFetcher(fetch.Policy{GameHost: cm.s.world.Host, DevTrustLoopbackTLS: true})
+	f := fetch.NewFetcher(cm.fetchPolicy())
 	ctx, cancel := context.WithTimeout(cm.s.e.ctx, 2*time.Minute)
 	defer cancel()
 	return f.Fetch(ctx, fetch.BlobFor(fetch.Origin{Origin: ui.Welcome.Assets.Origin, Base: ui.Welcome.Assets.Base}, ref))
@@ -455,7 +455,7 @@ func (e *Engine) CmcpSample(id, name string) ([]byte, string, error) {
 	if ui.Welcome == nil || ui.Welcome.Assets == nil {
 		return nil, "", fmt.Errorf("engine: the game announced no asset origin")
 	}
-	f := fetch.NewFetcher(fetch.Policy{GameHost: host, DevTrustLoopbackTLS: true})
+	f := fetch.NewFetcher(cm.fetchPolicy())
 	ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
 	defer cancel()
 	b, err := f.Fetch(ctx, fetch.Blob{Origin: fetch.Origin{Origin: ui.Welcome.Assets.Origin, Base: ui.Welcome.Assets.Base}, SHA256: fi.SHA256, Size: fi.Size, Kind: fetch.KindSample})
@@ -494,4 +494,17 @@ func (cm *cmcpSess) retryDeferred() {
 			go cm.wantPack(r)
 		}
 	}
+}
+
+// fetchPolicy is the origin rule of spec 8.4 for this connection. The developer flags are OFF unless the environment sets them
+// (SQUATCLIENT_DEV_LOOPBACK_HTTP=1: plain http from the loopback origin this connection's Welcome announced, only when the game itself
+// is on loopback; SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED=1: a self-signed certificate on loopback). Release builds do not set them.
+func (cm *cmcpSess) fetchPolicy() fetch.Policy {
+	p := fetch.Policy{GameHost: cm.s.world.Host,
+		DevAllowLoopbackHTTP: os.Getenv("SQUATCLIENT_DEV_LOOPBACK_HTTP") == "1",
+		DevTrustLoopbackTLS:  os.Getenv("SQUATCLIENT_DEV_LOOPBACK_SELFSIGNED") == "1"}
+	if ui := cm.c.UI(); ui.Welcome != nil && ui.Welcome.Assets != nil {
+		p.Announced = ui.Welcome.Assets.Origin
+	}
+	return p
 }
