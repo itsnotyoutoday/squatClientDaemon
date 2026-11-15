@@ -4,9 +4,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/itsnotyoutoday/cmcp/ambient"
-	cs "github.com/itsnotyoutoday/cmcp/session"
-	"github.com/itsnotyoutoday/cmcp/theme"
+	"github.com/itsnotyoutoday/cmcp/go/ambient"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
+	"github.com/itsnotyoutoday/cmcp/go/theme"
 )
 
 // The red-alert pulse (spec 19.3, 6.17): the level comes from the core (Client.Pulse, driven by the time since the alert level started),

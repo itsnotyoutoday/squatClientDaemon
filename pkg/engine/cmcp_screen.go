@@ -8,10 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/itsnotyoutoday/cmcp/pack"
-	cs "github.com/itsnotyoutoday/cmcp/session"
-	"github.com/itsnotyoutoday/cmcp/textport"
-	"github.com/itsnotyoutoday/cmcp/theme"
+	"github.com/itsnotyoutoday/cmcp/go/pack"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
+	"github.com/itsnotyoutoday/cmcp/go/textport"
+	"github.com/itsnotyoutoday/cmcp/go/theme"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 

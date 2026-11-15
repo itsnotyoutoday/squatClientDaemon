@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/itsnotyoutoday/cmcp/fetch"
-	"github.com/itsnotyoutoday/cmcp/pack"
+	"github.com/itsnotyoutoday/cmcp/go/fetch"
+	"github.com/itsnotyoutoday/cmcp/go/pack"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
 	"math"
 	"net/http"
@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	cs "github.com/itsnotyoutoday/cmcp/session"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
 
-	"github.com/itsnotyoutoday/cmcp/frame"
-	"github.com/itsnotyoutoday/cmcp/msg"
+	"github.com/itsnotyoutoday/cmcp/go/frame"
+	"github.com/itsnotyoutoday/cmcp/go/msg"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/engine"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
@@ -1511,4 +1511,30 @@ func TestCmcpActiveContextWinsAfterUnman(t *testing.T) {
 	if u.LocalScreen != "" || u.Console != nil {
 		t.Fatalf("no console and no local screen choice after the unman: console=%v local=%q", u.Console != nil, u.LocalScreen)
 	}
+}
+
+// While a console is manned the ship room is still one menu entry away: the local view switch to std.shiproom works whenever the room context is on
+// the stack beneath the console, so the player always has a way out of the console layout that does not depend on the game answering.
+func TestCmcpLocalSwitchToTheRoomWhileManned(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	prio := 35
+	b, _ := json.Marshal(msg.Context{Rev: 2, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Bridge", Screen: "std.shiproom", Priority: &prio}})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Pathfinder"}, Console: &msg.ConsoleRef{ID: "science", Name: "Sci"}, Screen: "std.sensors", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}}, Commands: []string{"scan.srs"}})
+	})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	g.waitUI("console up", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.sensors" })
+	u, _ := g.e.CmcpUI(g.sid)
+	var menu []string
+	for _, o := range u.Screens {
+		menu = append(menu, o.ID)
+	}
+	t.Logf("menu while manned: %v stack=%d", menu, len(u.Stack))
+	if err := g.e.CmcpShowScreen(g.sid, "std.shiproom"); err != nil {
+		t.Fatalf("the local switch to the room must work while a console is manned: %v", err)
+	}
+	g.waitUI("the room view", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
 }

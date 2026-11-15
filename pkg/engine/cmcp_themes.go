@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/itsnotyoutoday/cmcp/fetch"
-	"github.com/itsnotyoutoday/cmcp/msg"
-	cs "github.com/itsnotyoutoday/cmcp/session"
-	"github.com/itsnotyoutoday/cmcp/theme"
+	"github.com/itsnotyoutoday/cmcp/go/fetch"
+	"github.com/itsnotyoutoday/cmcp/go/msg"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
+	"github.com/itsnotyoutoday/cmcp/go/theme"
 )
 
 // Downloaded themes (cmcp spec 19.10): a theme the game announces is fetched only when it is the one selected, as the gpu

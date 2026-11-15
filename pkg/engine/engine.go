@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	cs "github.com/itsnotyoutoday/cmcp/session"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
 	"log/slog"
 	"os"
 	"path/filepath"

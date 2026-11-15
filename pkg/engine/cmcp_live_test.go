@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/itsnotyoutoday/cmcp/msg"
-	cs "github.com/itsnotyoutoday/cmcp/session"
+	"github.com/itsnotyoutoday/cmcp/go/msg"
+	cs "github.com/itsnotyoutoday/cmcp/go/session"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/engine"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
@@ -448,4 +448,99 @@ func findNodeLive(n *engine.CmcpNode, pred func(*engine.CmcpNode) bool) *engine.
 		}
 	}
 	return nil
+}
+
+// TestCmcpLiveTwoSessions: two connections on ONE character (gtf plus SquatClient is the real case). Session A boards and mans a console; session B only
+// watches. It logs, per step, the context stack and the screen of both, then tries B's escape paths: Cobra.Context.Close (the X), `unman` typed in
+// the input line and the local view switch (SQUAT_LIVE_CMCP_TWO=1; Evennia PoC on 127.0.0.1:4101 only).
+func TestCmcpLiveTwoSessions(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP_TWO") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_TWO=1")
+	}
+	mk := func() (*engine.Engine, *rec, string) {
+		e, r := newEngine(t)
+		ps, _ := engine.OpenPackStore(t.TempDir())
+		e.SetCmcpPacks(ps)
+		e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+		e.SetCmcp(func() cs.Config {
+			return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+		})
+		si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.waitState(t, e, si.ID, proto.StateConnected)
+		time.Sleep(1500 * time.Millisecond)
+		_ = e.Input(si.ID, "connect bob cobalt-fern-52")
+		r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+		return e, r, si.ID
+	}
+	ea, ra, ia := mk()
+	var eb *engine.Engine
+	var rb *rec
+	var ib string
+	show := func(label string) {
+		time.Sleep(2500 * time.Millisecond)
+		who := []struct {
+			n  string
+			e  *engine.Engine
+			id string
+		}{{"A", ea, ia}}
+		if eb != nil {
+			who = append(who, struct {
+				n  string
+				e  *engine.Engine
+				id string
+			}{"B", eb, ib})
+		}
+		for _, x := range who {
+			u, _ := x.e.CmcpUI(x.id)
+			var stack []string
+			for _, s := range u.Stack {
+				stack = append(stack, fmt.Sprintf("%s:%s(%s)active=%v readonly=%v", s.Kind, s.ID, s.Screen, s.Active, s.Readonly))
+			}
+			tree := ""
+			if u.Tree != nil {
+				tree = u.Tree.Screen
+			}
+			var menu []string
+			for _, o := range u.Screens {
+				menu = append(menu, o.ID)
+			}
+			t.Logf("%-26s %s: console=%v readonly=%v local=%q tree=%q\n        stack=%v\n        menu=%v", label, x.n, u.Console != nil, u.Readonly, u.LocalScreen, tree, stack, menu)
+		}
+	}
+	_ = ea.Input(ia, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "pathfinder"))
+	show("A boarded")
+	_ = ea.Input(ia, envOr("SQUAT_LIVE_CMCP_MAN", "man tactical"))
+	show("A manned tactical")
+	for _, l := range ra.lines(ia) {
+		t.Logf("A game said: %s", l.Plain())
+	}
+	// B logs in as the same character while A has the console manned
+	eb, rb, ib = mk()
+	show("B logged in (A manned)")
+	// B: the X
+	if err := eb.CmcpClose(ib, "user"); err != nil {
+		t.Logf("B CmcpClose error: %v", err)
+	}
+	show("B pressed X")
+	for _, ev := range rb.snapshot() {
+		for _, n := range ev.CmcpNotes {
+			if n.Kind == "reply" && n.Reply != nil && !n.Reply.OK {
+				t.Logf("B refusal: %+v", n.Reply)
+			}
+		}
+	}
+	if u, _ := eb.CmcpUI(ib); u.Notice != nil {
+		t.Logf("B notice: %s %q", u.Notice.State, u.Notice.Text)
+	}
+	// B: unman typed
+	_ = eb.Input(ib, "unman")
+	show("B typed unman")
+	// B: the local menu switch to the ship room
+	if err := eb.CmcpShowScreen(ib, "std.shiproom"); err != nil {
+		t.Logf("B ShowScreen(std.shiproom): %v", err)
+	}
+	show("B local switch to the room")
 }

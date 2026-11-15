@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/itsnotyoutoday/cmcp/audio"
-	"github.com/itsnotyoutoday/cmcp/fetch"
-	"github.com/itsnotyoutoday/cmcp/msg"
-	"github.com/itsnotyoutoday/cmcp/notice"
+	"github.com/itsnotyoutoday/cmcp/go/audio"
+	"github.com/itsnotyoutoday/cmcp/go/fetch"
+	"github.com/itsnotyoutoday/cmcp/go/msg"
+	"github.com/itsnotyoutoday/cmcp/go/notice"
 )
 
 // Pack delivery (cmcp spec 8): the Go side fetches (inline chunks over GMCP or origin-pinned HTTPS), verifies, keeps the
