@@ -107,10 +107,7 @@ type screenState struct {
 }
 
 func (cm *cmcpSess) screens() *screenState {
-	if cm.ss == nil {
-		cm.ss = &screenState{packs: map[string]*pack.Pack{}}
-	}
-	return cm.ss
+	return cm.ss // created with the session
 }
 
 // CmcpLoadPack parses a layout pack that was fetched and verified (hash and consent are the fetcher's job) and makes it
@@ -123,7 +120,13 @@ func (e *Engine) CmcpLoadPack(id string, raw []byte) error {
 	return cm.loadPack(raw)
 }
 
-func (cm *cmcpSess) loadPack(raw []byte) error {
+// validatePack parses a pack against the server's catalogue without loading it (whole-or-nothing, spec 10.2 rule 3).
+func (cm *cmcpSess) validatePack(raw []byte) error {
+	_, err := cm.parsePack(raw)
+	return err
+}
+
+func (cm *cmcpSess) parsePack(raw []byte) (*pack.Pack, error) {
 	ui := cm.c.UI()
 	var cmds map[string]struct{}
 	if ui.Catalogue != nil {
@@ -132,7 +135,11 @@ func (cm *cmcpSess) loadPack(raw []byte) error {
 			cmds[n] = struct{}{}
 		}
 	}
-	p, err := pack.Parse(raw, pack.Options{Commands: cmds})
+	return pack.Parse(raw, pack.Options{Commands: cmds})
+}
+
+func (cm *cmcpSess) loadPack(raw []byte) error {
+	p, err := cm.parsePack(raw)
 	if err != nil {
 		return err
 	}
@@ -199,7 +206,13 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) string {
 }
 
 // tree binds the current screen; nil when no console screen is up (the normal text UI).
-func (cm *cmcpSess) tree(ui *cs.UI) *CmcpTree {
+func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
+	defer func() {
+		if r := recover(); r != nil { // a defect in screen evaluation must never take the client down: no console screen, the text stays
+			cm.s.systemLine(fmt.Sprintf("cmcp: screen evaluation failed: %v", r))
+			out = nil
+		}
+	}()
 	if ui.State != cs.StateReady || (ui.Console == nil && !ui.Readonly) {
 		return nil
 	}
@@ -214,7 +227,7 @@ func (cm *cmcpSess) tree(ui *cs.UI) *CmcpTree {
 		ss.ui, ss.uiFor, ss.uiGen = map[string]any{}, id, ui.Generation
 	}
 	env := pack.EnvFromUI(ui, ss.ui)
-	b := scr.Bind(env, pack.Caps{})
+	b := scr.Bind(env, pack.Caps{Has: cmcpWidgets})
 	theme := cm.theme(ui, scr)
 	cm.s.e.cmcpMu.Lock()
 	tf := cm.s.e.cmcpRender.Tokens
@@ -480,4 +493,9 @@ func viewItems(props map[string]any, scr *pack.Screen) []map[string]any {
 	}
 	sort.Slice(items, func(i, j int) bool { return fmt.Sprint(items[i]["cid"]) < fmt.Sprint(items[j]["cid"]) })
 	return items
+}
+
+// cmcpWidgets is what this client draws: every core widget and the optional joystick, scope (as a radar) and lights.
+func cmcpWidgets(w string) bool {
+	return pack.IsCoreWidget(w) || w == "joystick" || w == "scope" || w == "lights"
 }

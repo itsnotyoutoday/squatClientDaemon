@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,8 +78,9 @@ type session struct {
 	probeStrict bool // the probe was armed by taking the keyboard: only a clear MU* answer counts
 	armedProbe  bool
 	bannerSeen  int
-	noUnread    bool      // appendLocked: do not count the next game line as unread
-	cm          *cmcpSess // CMCP endpoint (cmcp.go); nil until the game speaks it
+	noUnread    bool              // appendLocked: do not count the next game line as unread
+	cm          *cmcpSess         // CMCP endpoint (cmcp.go); nil until the game speaks it
+	mssp        map[string]string // MSSP variables of the game (gametype.go)
 }
 
 func newSession(e *Engine, id, tfName string, w World, cfg conn.Config, login string) (*session, error) {
@@ -198,6 +200,10 @@ func (s *session) pump() {
 			if ev.Connected {
 				s.onConnected()
 			}
+		case conn.EvMssp:
+			s.onMssp(ev.Mssp)
+		case conn.EvEncoding:
+			s.systemLine("*** The game sends " + strings.ToUpper(ev.Encoding) + " (" + ev.Detail + "); this session now uses it. The world's own setting is unchanged.")
 		case conn.EvRemoteEcho:
 			s.mu.Lock()
 			s.info.RemoteEcho = ev.RemoteEcho

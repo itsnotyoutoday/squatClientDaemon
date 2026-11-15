@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/itsnotyoutoday/cmcp/frame"
 	"github.com/itsnotyoutoday/cmcp/msg"
+	"github.com/itsnotyoutoday/cmcp/pack"
 	cs "github.com/itsnotyoutoday/cmcp/session"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
@@ -162,8 +164,9 @@ type cmcpSess struct {
 	pubTmr  *time.Timer
 	tick    *time.Timer
 	stopped bool
-	lastRev uint64
+	lastRev atomic.Uint64
 	ss      *screenState
+	ps      *cmcpPackState
 	started time.Time
 }
 
@@ -197,7 +200,10 @@ func (s *session) cmcp(create bool) *cmcpSess {
 	}
 	cfg := mk()
 	cfg.LayerSendsGate = true // the telnet layer sends Core.Hello and Core.Supports.Set ["Cobra 1"] when GMCP turns on
-	cm = &cmcpSess{s: s, c: cs.NewClient(cfg), tx: tx, refs: map[string]map[string]int{}, started: s.e.now()}
+	cm = &cmcpSess{s: s, c: cs.NewClient(cfg), tx: tx, refs: map[string]map[string]int{}, started: s.e.now(), ss: &screenState{packs: map[string]*pack.Pack{}}}
+	if ents := cm.cacheEntries(); len(ents) > 0 {
+		cm.c.SetPackCache(s.e.now(), ents)
+	}
 	cm.c.TelnetEvent(cs.WillGMCP, s.e.now())
 	s.mu.Lock()
 	if s.cm != nil {
@@ -255,6 +261,9 @@ func (s *session) cmcpStop() {
 }
 
 func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
+	if cm.packFrame(pkg, data) {
+		return
+	}
 	f := frame.Frame{Package: pkg}
 	if len(data) > 0 && string(data) != "null" {
 		f.Payload = data
@@ -279,8 +288,15 @@ func (cm *cmcpSess) flush() {
 	if notes := cm.notes(out); len(notes) > 0 {
 		cm.s.e.bus.publish(Event{Kind: EvCmcpNote, Session: cm.s.id, CmcpNotes: notes})
 	}
-	if ui := cm.c.UI(); ui.Rev != cm.lastRev || len(out.Notes) > 0 {
+	if ui := cm.c.UI(); ui.Rev != cm.lastRev.Load() || len(out.Notes) > 0 {
 		cm.schedule()
+	}
+}
+
+// sendRaw writes one frame outside the Client's own output (pack transfer messages).
+func (cm *cmcpSess) sendRaw(pkg string, payload any) {
+	if b, err := frame.Encode(pkg, payload); err == nil {
+		_ = cm.tx.SendFrame(b)
 	}
 }
 
@@ -304,7 +320,7 @@ func (cm *cmcpSess) schedule() {
 
 func (cm *cmcpSess) publish() {
 	ui := cm.c.UI()
-	cm.lastRev = ui.Rev
+	cm.lastRev.Store(ui.Rev)
 	d := cmcpDTO(cm.s.id, ui)
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
@@ -315,6 +331,8 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 	var ns []CmcpNote
 	for _, n := range out.Notes {
 		switch n.Kind {
+		case cs.NoteReady, cs.NoteConsole:
+			go cm.loadCached()
 		case cs.NoteEvent:
 			ns = append(ns, CmcpNote{Kind: "event", Event: n.Event})
 		case cs.NoteScanReport:
@@ -336,6 +354,9 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 			ns = append(ns, CmcpNote{Kind: k, Reply: rep})
 		case cs.NotePackWanted:
 			ns = append(ns, CmcpNote{Kind: "pack", Pack: n.PackRef})
+			if n.PackRef != nil {
+				go cm.wantPack(*n.PackRef)
+			}
 		case cs.NoteBye:
 			ns = append(ns, CmcpNote{Kind: "bye", Text: n.Text})
 		case cs.NoteError:

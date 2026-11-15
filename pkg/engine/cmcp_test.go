@@ -2,7 +2,12 @@ package engine_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"github.com/itsnotyoutoday/cmcp/fetch"
+	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
 	"os"
 	"path/filepath"
 	"sync"
@@ -115,12 +120,23 @@ func (g *cmcpRig) waitUI(what string, pred func(*engine.CmcpUI) bool) *engine.Cm
 	return ui
 }
 
-func newCmcpRig(t *testing.T) *cmcpRig {
+type cmcpRigCfg struct {
+	packs    []msg.PackRef
+	storeDir string
+	onFrame  func(*cmcpRig, frame.Frame)
+}
+
+func newCmcpRig(t *testing.T) *cmcpRig { return newCmcpRigWith(t, nil) }
+
+func newCmcpRigWith(t *testing.T, mod func(*cmcpRigCfg)) *cmcpRig {
+	var rc cmcpRigCfg
+	if mod != nil {
+		mod(&rc)
+	}
 	g := &cmcpRig{t: t, game: &cmcpGame{}}
 	g.srv = cs.NewServer(cs.ServerConfig{Server: "test", Backend: g.game,
-		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"},
-		Commands: []msg.CommandSpec{{Name: "dmg.assign", Consoles: []string{"operations"}, Mutating: true, Text: "dmg assign {team}={system}",
-			Args: map[string]msg.ArgSpec{"team": {Type: "int"}, "system": {Type: "string"}}}}})
+		Packages: []string{"Space.Power", "Space.Contacts", "Space.Ship.Status", "Space.Damage.Teams", "Space.Damage.Stat"}, Packs: rc.packs,
+		Commands: rigCommands()})
 	g.e, g.r = newEngine(t, func(o *engine.Options) {
 		o.Dialer = func(ctx context.Context, cfg conn.Config) (engine.Transport, error) {
 			tr := &fakeTr{ev: make(chan conn.Event, 64)}
@@ -130,6 +146,9 @@ func newCmcpRig(t *testing.T) *cmcpRig {
 				defer g.smu.Unlock()
 				for _, res := range frame.Split(raw, 65536) {
 					if res.OK() {
+						if rc.onFrame != nil {
+							rc.onFrame(g, res.Frame)
+						}
 						g.srv.Receive(time.Now(), res.Frame)
 					}
 				}
@@ -138,6 +157,13 @@ func newCmcpRig(t *testing.T) *cmcpRig {
 			return tr, nil
 		}
 	})
+	if rc.storeDir != "" {
+		ps, err := engine.OpenPackStore(rc.storeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.e.SetCmcpPacks(ps)
+	}
 	g.e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536}
 	})
@@ -146,6 +172,13 @@ func newCmcpRig(t *testing.T) *cmcpRig {
 		t.Fatal(err)
 	}
 	g.sid = si.ID
+	t.Cleanup(func() {
+		if t.Failed() {
+			for _, l := range g.r.lines(g.sid) {
+				t.Log(l.Plain())
+			}
+		}
+	})
 	g.do(func(s *cs.Server) {
 		s.TelnetEvent(cs.DoGMCP)
 		s.Receive(time.Now(), frame.Frame{Package: "Core.Supports.Set", Payload: json.RawMessage(`["Cobra 1"]`)})
@@ -386,5 +419,111 @@ func TestCmcpContextStack(t *testing.T) {
 		t.Fatalf("stack %+v", ui.Stack)
 	}
 	inject(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "pop", Key: "event:boarding", Ctx: 1})
-	g.waitUI("back to the console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.operations" && len(u.Stack) == 1 })
+	g.waitUI("back to the console", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && u.Tree.Screen == "std.operations" && len(u.Stack) == 1
+	})
+}
+
+// A game's pack: announced in Welcome, fetched inline, verified, asked about once, used; the second launch uses the cache
+// without fetching or asking.
+func TestCmcpPackInlineConsentAndCache(t *testing.T) {
+	raw, err := os.ReadFile("../../../cmcp/examples/packs/fspace-std/pack.json")
+	if err != nil {
+		t.Skip(err)
+	}
+	sum := sha256.Sum256(raw)
+	sha := hex.EncodeToString(sum[:])
+	ref := msg.PackRef{ID: "fspace-std", Kind: "layout", Version: "1.0.0", SHA256: sha, Size: len(raw), Inline: true}
+	store := t.TempDir()
+	run := func(t *testing.T, answer *bool) (gets int, prompted bool, ui *engine.CmcpUI, g *cmcpRig) {
+		g = newCmcpRigWith(t, func(c *cmcpRigCfg) {
+			c.packs = []msg.PackRef{ref}
+			c.storeDir = store
+			c.onFrame = func(r *cmcpRig, f frame.Frame) {
+				if f.Package == msg.PkgPackGet {
+					gets++
+					chunks, err := fetch.ChunkPlan(raw, 12288)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					for i, c := range chunks {
+						d := msg.PackData{ID: ref.ID, Version: ref.Version, SHA256: sha, Part: i + 1, Parts: len(chunks), Data: base64.StdEncoding.EncodeToString(c)}
+						b, _ := json.Marshal(d)
+						r.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: msg.PkgPackData, Data: b})
+					}
+				}
+			}
+		})
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Pack: &msg.PackIdent{ID: "fspace-std", Version: "1.0.0", SHA256: sha}, Packs: []msg.PackRef{ref}},
+				Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "fspace-std/damage", Reason: "manned", Commands: []string{"dmg.assign"}})
+		})
+		if answer != nil {
+			g.r.until(t, "consent prompt", func() bool {
+				for _, ev := range g.r.snapshot() {
+					for _, n := range ev.CmcpNotes {
+						if n.Kind == "pack-consent" {
+							prompted = true
+						}
+					}
+				}
+				return prompted
+			})
+			_ = 0
+			if err := g.e.CmcpPackConsent(g.sid, "fspace-std", *answer); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ui = g.waitUI("pack screen", func(u *engine.CmcpUI) bool {
+			return u.Tree != nil && (answer == nil || !*answer || u.Tree.Screen == "fspace-std/damage")
+		})
+		return gets, prompted, ui, g
+	}
+	yes := true
+	gets, prompted, ui, _ := run(t, &yes)
+	if gets != 1 || !prompted || ui.Tree.Screen != "fspace-std/damage" || ui.Screen.Fallback {
+		t.Fatalf("first launch: gets %d prompted %v screen %q fallback %v", gets, prompted, ui.Tree.Screen, ui.Screen.Fallback)
+	}
+	gets, prompted, _, g2 := run(t, nil)
+	g2.waitUI("cached pack screen", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && u.Tree.Screen == "fspace-std/damage" && !u.Screen.Fallback
+	})
+	if gets != 0 || prompted {
+		t.Fatalf("second launch fetched %d times / prompted %v", gets, prompted)
+	}
+}
+
+// Evennia's banner ("Welcome to testgame") never names it; its MSSP CODEBASE does.
+func TestGameTypeFromMSSP(t *testing.T) {
+	srv := fakemush.New(t)
+	e, r := newEngine(t)
+	si := dial(t, e, r, srv, nil, "")
+	p := srv.Peer()
+	p.Will(70)
+	p.WaitNeg(fakemush.DO, 70)
+	p.Sub(70, []byte("\x01CODEBASE\x02Evennia 4.5.0\x01NAME\x02testgame\x01UTF-8\x021"))
+	srv.SendString("Welcome to testgame\r\n")
+	r.until(t, "game type from MSSP", func() bool {
+		in, err := e.Session(si.ID)
+		return err == nil && in.GameType == "evennia" && in.GameTypeSource == "mssp"
+	})
+	if m := e.MSSP(si.ID); m["NAME"] != "testgame" {
+		t.Fatalf("mssp %v", m)
+	}
+}
+
+// rigCommands is the game's catalogue: the examples' full list when available (packs are validated against it), else one verb.
+func rigCommands() []msg.CommandSpec {
+	one := []msg.CommandSpec{{Name: "dmg.assign", Consoles: []string{"operations"}, Mutating: true, Text: "dmg assign {team}={system}",
+		Args: map[string]msg.ArgSpec{"team": {Type: "int"}, "system": {Type: "string"}}}}
+	b, err := os.ReadFile("../../../cmcp/examples/commands.catalogue.json")
+	if err != nil {
+		return one
+	}
+	var list []msg.CommandSpec
+	if json.Unmarshal(b, &list) != nil || len(list) == 0 {
+		return one
+	}
+	return list
 }

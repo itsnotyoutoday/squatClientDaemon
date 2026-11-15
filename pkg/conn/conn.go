@@ -82,6 +82,8 @@ const (
 	EvState
 	EvRemoteEcho
 	EvEnded
+	EvMssp     // Mssp: the server's status variables
+	EvEncoding // Encoding: the connection switched its text encoding ("utf-8"), Detail says why
 )
 
 // Event is a tagged union: Kind selects which fields are meaningful.
@@ -95,6 +97,12 @@ type Event struct {
 	// EvGmcp
 	Package string
 	Data    json.RawMessage // JSON, or null
+
+	// EvMssp
+	Mssp map[string]string
+
+	// EvEncoding
+	Encoding string
 
 	// EvState
 	Connected bool
@@ -110,10 +118,12 @@ type Event struct {
 
 // Conn is a live (or connecting) game connection.
 type Conn struct {
-	cfg   Config
-	tls   bool
-	utf8  bool
-	limit int
+	cfg      Config
+	tls      bool
+	utf8     atomic.Bool // the text encoding in use; a latin1 world that is seen to speak UTF-8 switches (sniff.go)
+	wantUTF8 atomic.Bool
+	sniff    utf8Sniffer
+	limit    int
 
 	events chan Event
 	quit   chan struct{}
@@ -188,13 +198,14 @@ func isUTF8(enc string) bool {
 }
 
 func newConn(cfg Config, cancel context.CancelFunc) *Conn {
-	c := &Conn{cfg: cfg, tls: cfg.World.TLS, utf8: isUTF8(cfg.World.Encoding), limit: cfg.EventBuffer, cancel: cancel}
+	c := &Conn{cfg: cfg, tls: cfg.World.TLS, limit: cfg.EventBuffer, cancel: cancel}
+	c.utf8.Store(isUTF8(cfg.World.Encoding))
 	c.events = make(chan Event, c.limit+1) // +1: the final Ended always fits
 	c.quit = make(chan struct{})
 	c.done = make(chan struct{})
 	c.exited = make(chan struct{})
 	c.m = telnet.New(c.telnetConfig())
-	c.lines = newLiner(c.utf8, func(spans []proto.Span, prompt bool) bool {
+	c.lines = newLiner(c.utf8.Load(), func(spans []proto.Span, prompt bool) bool {
 		return c.emit(Event{Kind: EvLine, Spans: spans, Prompt: prompt})
 	})
 	return c
@@ -203,7 +214,7 @@ func newConn(cfg Config, cancel context.CancelFunc) *Conn {
 func (c *Conn) telnetConfig() telnet.Config {
 	cfg := c.cfg
 	return telnet.Config{
-		ClientName: cfg.ClientName, Version: cfg.Version, Caps: cfg.Caps, UTF8: c.utf8,
+		ClientName: cfg.ClientName, Version: cfg.Version, Caps: cfg.Caps, UTF8: c.utf8.Load(),
 		TLS: cfg.World.TLS, Proxied: cfg.Proxied, Cols: cfg.Cols, Rows: cfg.Rows, NoCobra: cfg.NoCobra,
 	}
 }
@@ -396,7 +407,7 @@ func (c *Conn) SendFrame(b []byte) error {
 }
 
 func (c *Conn) encode(s string) []byte {
-	if c.utf8 {
+	if c.utf8.Load() {
 		return []byte(s)
 	}
 	b := make([]byte, 0, len(s))
@@ -551,6 +562,9 @@ func (c *Conn) classify(rerr error) (reason, detail string) {
 // process feeds one socket read through telnet, decoding and line splitting.
 // It returns false when the connection must end.
 func (c *Conn) process(b []byte) bool {
+	if c.wantUTF8.Swap(false) && !c.switchUTF8("the game's MSSP says it speaks UTF-8") {
+		return false
+	}
 	c.mu.Lock()
 	data, reply, evs := c.m.Feed(b)
 	c.mu.Unlock()
@@ -560,6 +574,9 @@ func (c *Conn) process(b []byte) bool {
 	pos := 0
 	for _, e := range evs {
 		if e.Offset > pos {
+			if !c.utf8.Load() && c.sniff.feed(data[pos:e.Offset]) && !c.switchUTF8("it sent well-formed UTF-8 text") {
+				return false
+			}
 			if !c.lines.write(data[pos:e.Offset]) {
 				return false
 			}
@@ -568,6 +585,10 @@ func (c *Conn) process(b []byte) bool {
 		switch e.Kind {
 		case telnet.EvGMCP:
 			if !c.emit(Event{Kind: EvGmcp, Package: e.Package, Data: json.RawMessage(e.Data)}) {
+				return false
+			}
+		case telnet.EvMSSP:
+			if !c.emit(Event{Kind: EvMssp, Mssp: e.MSSP}) {
 				return false
 			}
 		case telnet.EvRemoteEcho:
@@ -583,6 +604,9 @@ func (c *Conn) process(b []byte) bool {
 			c.setFatal(e.Err, proto.EndRemoteClosed)
 			return false
 		}
+	}
+	if !c.utf8.Load() && c.sniff.feed(data[pos:]) && !c.switchUTF8("it sent well-formed UTF-8 text") {
+		return false
 	}
 	return c.lines.write(data[pos:])
 }

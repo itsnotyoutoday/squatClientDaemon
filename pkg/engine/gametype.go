@@ -26,10 +26,11 @@ const (
 
 	FamilyMUSH = "mush"
 
-	GameSourceCfg = "world"  // the world's setting
-	GameSourceCmd = "user"   // /gametype
-	GameSourceBan = "banner" // recognised from the game's own output
-	GameSourcePrb = "probe"  // asked the game (think [version()])
+	GameSourceCfg  = "world"  // the world's setting
+	GameSourceCmd  = "user"   // /gametype
+	GameSourceBan  = "banner" // recognised from the game's own output
+	GameSourcePrb  = "probe"  // asked the game (think [version()])
+	GameSourceMSSP = "mssp"   // the game's MSSP CODEBASE / NAME variables
 )
 
 // GameKind describes one known type of game.
@@ -281,4 +282,37 @@ func knownTypes() string {
 		n = append(n, k.Type)
 	}
 	return strings.Join(n, ", ")
+}
+
+// onMssp takes the game's status variables (MSSP, telnet option 70): the codebase names the server software even when the
+// banner does not, and the UTF-8 flag corrects a wrong encoding setting.
+func (s *session) onMssp(vars map[string]string) {
+	s.mu.Lock()
+	s.mssp = vars
+	if s.gameType == "" {
+		for _, k := range []string{"CODEBASE", "NAME"} {
+			if t := sniffGameType(vars[k]); t != "" {
+				s.setGameTypeLocked(t, GameSourceMSSP)
+				break
+			}
+		}
+	}
+	s.publishInfoLocked()
+	enc := strings.ToLower(s.world.Encoding)
+	tr := s.tr
+	s.mu.Unlock()
+	if sw, ok := tr.(interface{ SwitchUTF8() }); ok && (enc == "latin1" || enc == "latin-1" || enc == "iso-8859-1") && vars["UTF-8"] == "1" {
+		sw.SwitchUTF8()
+	}
+}
+
+// MSSP returns the status variables the game sent (nil if it did not offer MSSP).
+func (e *Engine) MSSP(sessionID string) map[string]string {
+	s := e.get(sessionID)
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mssp
 }

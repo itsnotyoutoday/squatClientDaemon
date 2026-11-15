@@ -137,6 +137,7 @@ type Engine struct {
 	extMu      sync.Mutex
 	cmcpMu     sync.Mutex
 	cmcpRender CmcpRender
+	cmcpPacks  *PackStore
 	cmcpCfg    func() cs.Config // nil: CMCP is off (see cmcp.go)
 	extensions []Extension      // protocol extensions offered to squatters (extension.go)
 	// showGagged shows lines TinyFugue gagged (tf-squatterd sessions) instead of hiding them.

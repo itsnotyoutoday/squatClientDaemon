@@ -29,6 +29,7 @@ const (
 	OptEOR     = 25
 	OptNAWS    = 31
 	OptCharset = 42
+	OptMSSP    = 70
 	OptMCCP2   = 86
 	OptGMCP    = 201
 )
@@ -68,6 +69,7 @@ const (
 	EvMCCP                            // Bool = compression started (true) or ended (false)
 	EvOption                          // Option, Bool, Us: an option changed state
 	EvError                           // Err: fatal for the stream (corrupt MCCP2 data)
+	EvMSSP                            // MSSP: the server's status variables (option 70)
 )
 
 // Event is something the application must know about. Offset is the length of
@@ -82,6 +84,7 @@ type Event struct {
 	Option  byte
 	Us      bool // EvOption: true when the option concerns our side (WILL), false for the server's (DO)
 	Err     error
+	MSSP    map[string]string // EvMSSP: variable name -> value (several values joined with ", ")
 }
 
 type parseState uint8
@@ -363,7 +366,7 @@ func (m *Machine) negotiate(cmd, opt byte) {
 	switch cmd {
 	case WILL:
 		switch opt {
-		case OptEcho, OptSGA, OptEOR, OptCharset, OptMCCP2, OptGMCP:
+		case OptEcho, OptSGA, OptEOR, OptCharset, OptMCCP2, OptGMCP, OptMSSP:
 			if !m.him[opt] {
 				m.him[opt] = true
 				m.send(IAC, DO, opt)
@@ -437,6 +440,44 @@ func (m *Machine) subneg(sb []byte) {
 		if m.him[OptGMCP] {
 			m.gmcp(body)
 		}
+	case OptMSSP:
+		if m.him[OptMSSP] {
+			m.mssp(body)
+		}
+	}
+}
+
+// mssp parses MUD Server Status Protocol variables: VAR(1) name VAL(2) value [VAL value ...].
+func (m *Machine) mssp(body []byte) {
+	vars := map[string]string{}
+	var name string
+	var vals []string
+	flush := func() {
+		if name != "" {
+			vars[name] = strings.Join(vals, ", ")
+		}
+		name, vals = "", nil
+	}
+	i := 0
+	for i < len(body) {
+		kind := body[i]
+		j := i + 1
+		for j < len(body) && body[j] != 1 && body[j] != 2 {
+			j++
+		}
+		text := string(body[i+1 : j])
+		switch kind {
+		case 1:
+			flush()
+			name = text
+		case 2:
+			vals = append(vals, text)
+		}
+		i = j
+	}
+	flush()
+	if len(vars) > 0 {
+		m.events = append(m.events, Event{Kind: EvMSSP, Offset: len(m.data), MSSP: vars})
 	}
 }
 
