@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/conn"
@@ -231,17 +230,4 @@ func friendlySendErr(err error) error {
 		return errors.New("not connected yet")
 	}
 	return err
-}
-
-// resolvePath maps a script path: "~/" = home, relative = under ConfigDir.
-func (e *Engine) resolvePath(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		if h, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(h, p[2:])
-		}
-	}
-	if filepath.IsAbs(p) {
-		return p
-	}
-	return filepath.Join(e.opts.ConfigDir, p)
 }

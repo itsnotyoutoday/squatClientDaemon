@@ -286,23 +286,4 @@ func (a *Engine) logInDir(log gtfparser.CmdFunc) gtfparser.CmdFunc {
 	}
 }
 
-// dropWord removes the first whitespace-delimited occurrence of w.
-func dropWord(s, w string) string {
-	i := 0
-	for i < len(s) {
-		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-			i++
-		}
-		j := i
-		for j < len(s) && s[j] != ' ' && s[j] != '\t' {
-			j++
-		}
-		if s[i:j] == w {
-			return s[:i] + strings.TrimLeft(s[j:], " \t")
-		}
-		i = j
-	}
-	return s
-}
-
 var _ = fmt.Sprintf

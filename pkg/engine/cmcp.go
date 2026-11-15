@@ -194,7 +194,6 @@ type cmcpSess struct {
 
 	mu                          sync.Mutex
 	refs                        map[string]map[string]int // package -> owner -> rate_ms
-	dirty                       bool
 	pubTmr                      *time.Timer
 	tick                        *time.Timer
 	stopped                     bool

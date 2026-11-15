@@ -1,8 +1,6 @@
 package tfengine
 
 import (
-	"strings"
-
 	"github.com/itsnotyoutoday/gtfparser"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
@@ -84,14 +82,4 @@ func fromEngineAttr(a gtfparser.Attr) Attr {
 		o.Bg = &c
 	}
 	return o
-}
-
-func flagOn(v string, def bool) bool {
-	switch strings.ToLower(v) {
-	case "":
-		return def
-	case "0", "off", "no":
-		return false
-	}
-	return true
 }

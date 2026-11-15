@@ -123,8 +123,6 @@ type CmcpTree struct {
 type screenState struct {
 	mu       sync.Mutex
 	packs    map[string]*pack.Pack // layout packs by id (the built-ins are separate)
-	override string                // a `show` action: a screen id local to this client
-	overFor  string                // the console the override was made for
 	ui       map[string]any
 	uiFor    string // screen id the $ui belongs to
 	uiGen    int
@@ -201,13 +199,6 @@ func (cm *cmcpSess) pickScreen(ui *cs.UI) (*pack.Screen, string) {
 		}
 	}
 	return nil, ""
-}
-
-func consoleID(ui *cs.UI) string {
-	if ui.Console == nil {
-		return ""
-	}
-	return ui.Console.ID
 }
 
 // theme resolves ONE theme per ship (and per setting), used for every screen of that ship: the ship's theme (UI.ShipTheme, else the active

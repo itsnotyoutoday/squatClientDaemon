@@ -2,8 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"regexp"
-	"strings"
 
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/scrollback"
@@ -120,22 +118,4 @@ func (e *Engine) Ack(id string, seq uint64) error {
 		s.remote.ack(s, rseq) // tell the daemon (best effort)
 	}
 	return nil
-}
-
-// globRegexp compiles a TF-style glob (* and ?) into an anchored regexp.
-func globRegexp(g string) (*regexp.Regexp, error) {
-	var b strings.Builder
-	b.WriteString("(?s)^")
-	for _, r := range g {
-		switch r {
-		case '*':
-			b.WriteString(".*")
-		case '?':
-			b.WriteString(".")
-		default:
-			b.WriteString(regexp.QuoteMeta(string(r)))
-		}
-	}
-	b.WriteString("$")
-	return regexp.Compile(b.String())
 }

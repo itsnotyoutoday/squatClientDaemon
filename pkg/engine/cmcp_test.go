@@ -1214,13 +1214,10 @@ func TestCmcpHitShakeAndAmbient(t *testing.T) {
 	}
 	shaking := func(g *cmcpRig) *engine.CmcpShake {
 		s := samples(g)
-		for i := len(s) - 1; i >= 0; i-- {
-			if s[i].Shake != nil {
-				return s[i].Shake
-			}
+		if len(s) == 0 {
 			return nil
 		}
-		return nil
+		return s[len(s)-1].Shake
 	}
 
 	g := setup(engine.CmcpRender{})

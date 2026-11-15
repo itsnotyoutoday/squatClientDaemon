@@ -253,7 +253,7 @@ func (cm *cmcpSess) wantPack(ref msg.PackRef) {
 	if ref.Sig != nil {
 		sigKey = ref.Sig.Key
 	}
-	silent := fetch.NeedsPrompt(trust) == false || (had && rec.Allowed && rec.SigKey == sigKey && major(rec.Version) == major(ref.Version)) || (had && rec.Allowed && rec.SHA256 == ref.SHA256)
+	silent := !fetch.NeedsPrompt(trust) || (had && rec.Allowed && rec.SigKey == sigKey && major(rec.Version) == major(ref.Version)) || (had && rec.Allowed && rec.SHA256 == ref.SHA256)
 	known := silent
 	switch cm.consentMode() {
 	case "always":

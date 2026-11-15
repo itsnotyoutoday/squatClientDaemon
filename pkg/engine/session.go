@@ -523,27 +523,6 @@ func lineAttrs(spans []proto.Span) string {
 	return ""
 }
 
-func (s *session) setLog(on bool, path string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.logw != nil {
-		_ = s.logw.Close()
-		s.logw = nil
-	}
-	if !on {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	s.logw = f
-	return nil
-}
-
 // secretSender is implemented by transports whose far end would otherwise record
 // what we send (a squatterd): login lines go through it so the password is
 // never echoed, stored or logged there.

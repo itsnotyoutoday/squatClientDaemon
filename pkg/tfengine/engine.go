@@ -387,6 +387,3 @@ func (a *Engine) SessionOpened(world, host string, port int, tls bool) {
 func (a *Engine) WorldClosed(world string) {
 	a.Post(func() { a.in.WorldClosed(world) })
 }
-
-// timeNow is the clock the interpreter uses (the host's).
-func (a *Engine) timeNow() time.Time { return a.host.Now() }
