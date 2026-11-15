@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/itsnotyoutoday/cmcp/fetch"
+	"github.com/itsnotyoutoday/cmcp/pack"
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/testutil/fakemush"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,7 +35,7 @@ type cmcpGame struct {
 }
 
 func (g *cmcpGame) Player() cs.Player {
-	return cs.Player{Epoch: 1, Aboard: true, Held: []string{"operations", "science", "tactical", "navigation"}}
+	return cs.Player{Epoch: 1, Aboard: true, Held: []string{"operations", "science", "tactical", "navigation", "command", "communications", "engineering", "medical", "security", "transporter"}}
 }
 func (g *cmcpGame) Permitted(string) bool    { return true }
 func (g *cmcpGame) CanSubscribe(string) bool { return true }
@@ -352,8 +354,17 @@ func TestCmcpDumpFixtures(t *testing.T) {
 	if err := json.Unmarshal(b, &wel); err != nil {
 		t.Fatal(err)
 	}
-	pkgs := []string{"Space.Power", "Space.Power.Group", "Space.Damage.Stat", "Space.Damage.Teams", "Space.Contacts", "Space.Nav", "Space.Weapons", "Space.Shields", "Space.Ops.Stat", "Space.Tractor", "Space.Ship.Status"}
-	screens := map[string]string{"operations": "operations", "power": "operations", "damage": "operations", "sensors": "science", "tactical": "tactical", "helm": "navigation"}
+	// every package the examples have a full document for
+	var pkgs []string
+	files, _ := filepath.Glob(filepath.Join(ex, "*--full.json"))
+	for _, f := range files {
+		base := filepath.Base(f)
+		pkgs = append(pkgs, strings.TrimSuffix(base, "--full.json"))
+	}
+	screens := map[string]string{}
+	for _, id := range pack.BuiltinScreenIDs() {
+		screens[strings.TrimPrefix(id, "std.")] = pack.Builtin(id).Console
+	}
 	for scr, console := range screens {
 		g := newCmcpRig(t)
 		var subs []msg.SubSpec
@@ -385,7 +396,7 @@ func TestCmcpDumpFixtures(t *testing.T) {
 			}
 		})
 		ui := g.waitUI("screen "+scr, func(u *engine.CmcpUI) bool {
-			return u.Tree != nil && u.Seqs["Space.Contacts"] > 0 && u.Seqs["Space.Power.Group"] > 0
+			return u.Tree != nil && u.Seqs["Space.Contacts"] > 0 && u.Seqs["Space.Power.Group"] > 0 && u.Screen.Resolved == "std."+scr
 		})
 		out, _ := json.MarshalIndent(ui, "", " ")
 		if err := os.WriteFile(filepath.Join(dir, scr+".json"), out, 0o644); err != nil {
@@ -598,5 +609,39 @@ func TestCmcpPackOverLoopbackHTTP(t *testing.T) {
 	})
 	if hits != 1 || ui.Tree == nil {
 		t.Fatalf("hits %d", hits)
+	}
+}
+
+// The viewscreen: contacts are projected, far to near, and a contact with art gets the view chosen for the angle it shows us
+// (spec 7.7), with the tint amounts evaluated for that contact (never the own ship's damage).
+func TestCmcpViewscreenContactArt(t *testing.T) {
+	g := newCmcpRig(t)
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "science", Name: "Science"}, Screen: "std.sensors", Reason: "manned",
+			Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}, {Pkg: "Space.Nav"}}, Commands: []string{"scan.srs"}})
+		s.Push("Space.Contacts", true, map[string]any{"contacts": map[string]any{
+			"17": map[string]any{"cid": 17, "name": "Near", "rel": map[string]any{"az": 10.0, "mark": 0.0}, "bearing": map[string]any{"az": 10.0, "mark": 0.0}, "distance_m": 1000000.0,
+				"type": "Ship", "class": "Marauder", "empire": "federation", "size_m": 120.0, "heading": map[string]any{"az": 190.0, "mark": 0.0, "roll": 0.0},
+				"integrity": map[string]any{"hull": 0.5, "port_nacelle": 1.0, "starboard_nacelle": 1.0}},
+			"18": map[string]any{"cid": 18, "name": "Far", "rel": map[string]any{"az": -5.0, "mark": 0.0}, "bearing": map[string]any{"az": 355.0, "mark": 0.0}, "distance_m": 9000000.0, "type": "Ship", "class": "Marauder", "size_m": 120.0},
+			"19": map[string]any{"cid": 19, "name": "Behind", "rel": map[string]any{"az": 170.0, "mark": 0.0}, "bearing": map[string]any{"az": 170.0, "mark": 0.0}, "distance_m": 1000.0, "type": "Ship"}}})
+	})
+	ui := g.waitUI("viewscreen", func(u *engine.CmcpUI) bool {
+		return u.Tree != nil && findNode(u.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" && n.Props["items"] != nil }) != nil
+	})
+	vs := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "viewscreen" })
+	items, _ := vs.Props["items"].([]map[string]any)
+	if len(items) != 2 {
+		t.Fatalf("the contact behind the ship is outside the field of view: %d items", len(items))
+	}
+	if items[0]["cid"] != "18" || items[1]["cid"] != "17" {
+		t.Fatalf("far to near: %v then %v", items[0]["cid"], items[1]["cid"])
+	}
+	views, _ := items[1]["views"].([]map[string]any)
+	if len(views) == 0 || views[0]["view"] != "front" {
+		t.Fatalf("a ship whose bow points at us shows its front: %v", items[1]["views"])
+	}
+	if z, _ := views[0]["zones"].(map[string]float64); z["hull"] < 0.4 {
+		t.Fatalf("the contact's own damage tints its art: %v", views[0]["zones"])
 	}
 }

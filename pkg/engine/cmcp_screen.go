@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -290,7 +291,8 @@ func dtoNode(b *pack.BoundNode, scr *pack.Screen, ui *cs.UI) *CmcpNode {
 		n.Props["sprite_key"] = scr.Pack.SHA256 + "/" + sid
 	}
 	if n.Widget == "viewscreen" {
-		n.Props["items"] = viewItems(n.Props, scr)
+		items, effects, backdrop := viewItems(n.Props, scr)
+		n.Props["items"], n.Props["effects"], n.Props["backdrop"] = items, effects, backdrop
 	}
 	for _, c := range b.Children {
 		if d := dtoNode(c, scr, ui); d != nil {
@@ -440,10 +442,12 @@ func setUIPath(m map[string]any, path string, v any) {
 }
 
 // viewItems places the contacts on the forward view with the shared core's projection and apparent size (spec 7.8).
-func viewItems(props map[string]any, scr *pack.Screen) []map[string]any {
+func viewItems(props map[string]any, scr *pack.Screen) ([]map[string]any, map[string]any, map[string]any) {
 	fov, minPx := 60.0, 3.0
 	art := map[string]string{}
 	def := "marker"
+	blend := false
+	var effects, backdrop map[string]any
 	if sc := scr.Pack.Scenes[fmt.Sprint(props["scene"])]; sc != nil {
 		var raw struct {
 			FOV      float64 `json:"fov_deg"`
@@ -451,13 +455,19 @@ func viewItems(props map[string]any, scr *pack.Screen) []map[string]any {
 				Art   map[string]string `json:"art"`
 				Def   string            `json:"default"`
 				MinPx float64           `json:"min_px"`
+				Views struct {
+					Blend bool `json:"blend"`
+				} `json:"views"`
 			} `json:"contacts"`
+			Effects  map[string]any `json:"effects"`
+			Backdrop map[string]any `json:"backdrop"`
 		}
 		if json.Unmarshal(sc.Raw, &raw) == nil {
 			if raw.FOV > 0 {
 				fov = raw.FOV
 			}
-			art, def = raw.Contacts.Art, raw.Contacts.Def
+			art, def, blend = raw.Contacts.Art, raw.Contacts.Def, raw.Contacts.Views.Blend
+			effects, backdrop = raw.Effects, raw.Backdrop
 			if raw.Contacts.MinPx > 0 {
 				minPx = raw.Contacts.MinPx
 			}
@@ -488,11 +498,43 @@ func viewItems(props map[string]any, scr *pack.Screen) []map[string]any {
 			size = sz
 		}
 		empire, _ := c["empire"].(string)
-		items = append(items, map[string]any{"cid": k, "name": c["name"], "x": x, "y": y, "size": pack.ApparentFraction(size, d, fov),
-			"type": typ, "class": class, "art": pack.LookupArt(art, empire, class, typ, def), "min_px": minPx})
+		artID := pack.LookupArt(art, empire, class, typ, def)
+		item := map[string]any{"cid": k, "name": c["name"], "x": x, "y": y, "size": pack.ApparentFraction(size, d, fov),
+			"type": typ, "class": class, "art": artID, "min_px": minPx, "dist": d}
+		if sp := scr.Pack.Sprites[artID]; sp != nil && len(sp.ViewNames) > 0 {
+			// the aspect: azimuth from the contact's bow to us, elevation of us above its plane (spec 7.7)
+			br, _ := c["bearing"].(map[string]any)
+			hd, _ := c["heading"].(map[string]any)
+			baz, _ := br["az"].(float64)
+			bmk, _ := br["mark"].(float64)
+			haz, _ := hd["az"].(float64)
+			hmk, _ := hd["mark"].(float64)
+			roll, _ := hd["roll"].(float64)
+			asp := math.Mod(baz+180-haz+720, 360)
+			el := -bmk - hmk
+			var vs []map[string]any
+			view, mirror := pack.SelectView(sp.ViewNames, asp, el)
+			if blend {
+				for _, w := range pack.BlendViews(sp.ViewNames, asp) {
+					am := sp.EvaluateContact(w.View, c)
+					vs = append(vs, map[string]any{"view": w.View, "weight": w.Weight, "zones": am.Zones, "glows": am.Glows})
+				}
+				_, mirror = pack.SelectView(sp.ViewNames, asp, el)
+			}
+			if len(vs) == 0 {
+				am := sp.EvaluateContact(view, c)
+				vs = []map[string]any{{"view": view, "weight": 1.0, "zones": am.Zones, "glows": am.Glows}}
+			}
+			item["views"], item["mirror"], item["roll"] = vs, mirror, roll
+		}
+		items = append(items, item)
 	}
-	sort.Slice(items, func(i, j int) bool { return fmt.Sprint(items[i]["cid"]) < fmt.Sprint(items[j]["cid"]) })
-	return items
+	// far to near, at most 64 (the nearest), spec 7.8
+	sort.Slice(items, func(i, j int) bool { return items[i]["dist"].(float64) > items[j]["dist"].(float64) })
+	if len(items) > 64 {
+		items = items[len(items)-64:]
+	}
+	return items, effects, backdrop
 }
 
 // cmcpWidgets is what this client draws: every core widget and the optional joystick, scope (as a radar) and lights.
