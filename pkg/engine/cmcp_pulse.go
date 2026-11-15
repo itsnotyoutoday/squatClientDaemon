@@ -192,3 +192,32 @@ func firstNonEmpty(a, b string) string {
 func (cm *cmcpSess) publishPulse(p CmcpPulse) {
 	cm.s.e.bus.publish(Event{Kind: EvCmcpPulse, Session: cm.s.id, CmcpPulse: &p})
 }
+
+// ensureFx configures the pulse, the ambience and the shake from the player's own theme when no screen (and so no ship theme) decides it: the
+// ship-wide alert look is not tied to a console (6.17.1), a room or the dock shows it too.
+func (cm *cmcpSess) ensureFx() {
+	cm.s.e.cmcpMu.Lock()
+	r := cm.s.e.cmcpRender
+	cm.s.e.cmcpMu.Unlock()
+	id := r.Theme
+	if id == "" {
+		id = "tng"
+	}
+	pk := theme.Builtin(id)
+	if pk == nil {
+		pk = theme.Builtin("tng")
+	}
+	cm.mu.Lock()
+	cm.syncPulseLocked(pk, r)
+	cm.mu.Unlock()
+}
+
+// kickPulse makes the sampling loop take its next sample now (a hit, an alert change): the idle interval would otherwise delay a shake by
+// up to 250 ms, which is longer than the shortest shake.
+func (cm *cmcpSess) kickPulse() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.pulseTmr != nil && !cm.stopped {
+		cm.pulseTmr.Reset(time.Millisecond)
+	}
+}

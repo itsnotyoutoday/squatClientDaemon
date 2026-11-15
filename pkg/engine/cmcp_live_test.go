@@ -153,7 +153,7 @@ func TestCmcpLiveThemes(t *testing.T) {
 			}
 			seen[u.Tree.Theme] = true
 			if dir := os.Getenv("SQUAT_LIVE_CMCP_DUMP"); dir != "" { // the bound UI of this ship's console, for the screenshot script
-				_ = e.CmcpViewport(si.ID, 1300, 0.8125, 14) // a 1300 px wide window: the core decides the side layout and the cap
+				_ = e.CmcpViewport(si.ID, 1300, 1, 14) // a 1300 px wide window: the core decides the side layout and the cap
 				time.Sleep(600 * time.Millisecond)
 				u, _ = e.CmcpUI(si.ID)
 				b, _ := json.MarshalIndent(u, "", " ")
@@ -281,6 +281,16 @@ func TestCmcpLiveShake(t *testing.T) {
 		}
 	}
 	t.Logf("%d hit events, %d shake samples", hits, shakes)
+	if dir := os.Getenv("SQUAT_LIVE_CMCP_DUMP"); dir != "" { // the live samples (shake offsets and the ambience) for the screenshot script
+		var out []engine.CmcpPulse
+		for _, ev := range r.snapshot() {
+			if p := ev.CmcpPulse; p != nil && (p.Shake != nil || p.Ambient != nil) {
+				out = append(out, *p)
+			}
+		}
+		b, _ := json.MarshalIndent(out, "", " ")
+		_ = os.WriteFile(filepath.Join(dir, "live-pulses.json"), b, 0o644)
+	}
 }
 
 func envOr(k, d string) string {
@@ -288,4 +298,71 @@ func envOr(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// TestCmcpLiveRoom: what the game sends for a player who is aboard a ship but not manning a console (a room, the dock): the context stack, the
+// screen and whether the engine draws a CMCP screen (SQUAT_LIVE_CMCP_ROOM=1; Evennia PoC on 127.0.0.1:4101 only).
+func TestCmcpLiveRoom(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP_ROOM") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP_ROOM=1")
+	}
+	e, r := newEngine(t)
+	ps, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect bob cobalt-fern-52")
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	show := func(label string) {
+		time.Sleep(2 * time.Second)
+		u, _ := e.CmcpUI(si.ID)
+		var stack []string
+		for _, s := range u.Stack {
+			stack = append(stack, s.Kind+":"+s.ID+"->"+s.Screen)
+		}
+		scr := ""
+		if u.Tree != nil {
+			scr = u.Tree.Screen
+		}
+		t.Logf("%s: console=%v screen=%q resolved=%q tree=%q readonly=%v stack=%v alert=%q", label, u.Console != nil, u.Screen.ID, u.Screen.Resolved, scr, u.Readonly, stack, u.Alert)
+	}
+	show("logged in")
+	_ = e.Input(si.ID, "board "+envOr("SQUAT_LIVE_CMCP_BOARD", "resolute"))
+	show("boarded, no console")
+	if dir := os.Getenv("SQUAT_LIVE_CMCP_DUMP"); dir != "" { // the room as the game and the engine produce it, and the shakes of the hits that arrive
+		_ = e.CmcpViewport(si.ID, 1300, 1, 14)
+		for _, lvl := range []string{"yellow", "red"} {
+			_ = e.Input(si.ID, "alert "+lvl)
+			time.Sleep(2500 * time.Millisecond)
+			u, _ := e.CmcpUI(si.ID)
+			b, _ := json.MarshalIndent(u, "", " ")
+			_ = os.WriteFile(filepath.Join(dir, "live-room-"+lvl+".json"), b, 0o644)
+		}
+		var shakes []engine.CmcpPulse
+		for i := 0; i < 240 && len(shakes) < 12; i++ {
+			time.Sleep(250 * time.Millisecond)
+		}
+		for _, ev := range r.snapshot() {
+			if ev.CmcpPulse != nil && ev.CmcpPulse.Shake != nil && (ev.CmcpPulse.Shake.X != 0 || ev.CmcpPulse.Shake.Y != 0) {
+				shakes = append(shakes, *ev.CmcpPulse)
+			}
+		}
+		b, _ := json.MarshalIndent(shakes, "", " ")
+		_ = os.WriteFile(filepath.Join(dir, "live-room-shakes.json"), b, 0o644)
+		t.Logf("room: %d shake samples from live hits", len(shakes))
+	}
+	_ = e.Input(si.ID, "look")
+	show("look")
+	_ = e.Input(si.ID, "man opera")
+	show("manned")
+	_ = e.Input(si.ID, "unman")
+	show("unmanned")
 }

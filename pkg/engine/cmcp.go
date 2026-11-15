@@ -319,6 +319,9 @@ func (cm *cmcpSess) receive(pkg string, data json.RawMessage) {
 	if cm.packFrame(pkg, data) {
 		return
 	}
+	if pkg == msg.PkgEvent {
+		data = floorHitStrength(data)
+	}
 	f := frame.Frame{Package: pkg}
 	if len(data) > 0 && string(data) != "null" {
 		f.Payload = data
@@ -382,6 +385,9 @@ func (cm *cmcpSess) publish() {
 	}
 	d.Docs = nil // the screen tree carries the evaluated data; CmcpUI() returns the documents
 	d.Tree = cm.tree(ui)
+	if d.Tree == nil {
+		cm.ensureFx() // no console screen (a room, the dock): the alert ambience, the shake and the pulse still follow the player's default theme
+	}
 	cm.s.e.bus.publish(Event{Kind: EvCmcp, Session: cm.s.id, Cmcp: d})
 }
 
@@ -393,6 +399,9 @@ func (cm *cmcpSess) notes(out cs.Output) []CmcpNote {
 			go cm.loadCached()
 		case cs.NoteEvent:
 			ns = append(ns, CmcpNote{Kind: "event", Event: n.Event})
+			if n.Event != nil && n.Event.Type == "hit" {
+				cm.kickPulse() // a hit starts a shake now, not at the next idle sample
+			}
 		case cs.NoteScanReport:
 			ns = append(ns, CmcpNote{Kind: "scan", Scan: n.Scan})
 		case cs.NoteReply, cs.NoteCmdTimeout:
@@ -619,4 +628,66 @@ func (e *Engine) CmcpDisable(id string) error {
 	cm.c.Disable(e.now())
 	cm.flush()
 	return nil
+}
+
+// MinHitStrength is the least strength this client gives a hit on its own ship. The spec's amplitude is 12 px x strength, so a shield hit that
+// reports strength 0 (a fully absorbed hit: the game sends that for most shield hits) would not move the display at all; the player wants to
+// SEE every hit, so the client raises a lower strength to this floor before the core's shake sees it. Client policy, not spec.
+const MinHitStrength = 0.4
+
+// floorHitStrength raises data.strength of a `hit` event on the own ship to MinHitStrength.
+func floorHitStrength(raw json.RawMessage) json.RawMessage {
+	var ev map[string]any
+	if json.Unmarshal(raw, &ev) != nil || ev["type"] != "hit" {
+		return raw
+	}
+	d, _ := ev["data"].(map[string]any)
+	if d == nil || d["cid"] != "self" {
+		return raw
+	}
+	if v, ok := d["strength"].(float64); ok && v < MinHitStrength {
+		d["strength"] = MinHitStrength
+		if b, err := json.Marshal(ev); err == nil {
+			return b
+		}
+	}
+	return raw
+}
+
+// CmcpClose asks the game to close the session's active context (the X of the console window, a close key or command): Cobra.Context.Close
+// with reason "user" or "client". It NEVER hides the screen: the game decides (a manned console is unmanned and popped, a special room is hidden
+// for the visit) and its update takes the screen away; a refusal or a missing answer comes back as a notice. A context-less connection sends the
+// console.unman verb instead.
+func (e *Engine) CmcpClose(id, reason string) error {
+	cm, err := e.cmcpOf(id)
+	if err != nil {
+		return err
+	}
+	now := e.now()
+	_, err = cm.c.CloseContext(now, reason)
+	switch {
+	case err == nil:
+	case errors.Is(err, cs.ErrContextlessClient):
+		if _, cerr := cm.c.Command(now, "console.unman", nil); cerr != nil {
+			cm.c.Notify(now, notice.Notice{ID: "close", Kind: notice.Error, Text: "Could not leave the console: " + cerr.Error()})
+		}
+		err = nil
+	case errors.Is(err, cs.ErrNoActiveContext):
+		cm.c.Notify(now, notice.Notice{ID: "close", Kind: notice.Info, Text: "There is nothing to close here."})
+		err = nil
+	case errors.Is(err, cs.ErrCloseThrottled):
+		err = nil // two requests per second: a quick second click is dropped
+	}
+	cm.flush()
+	return err
+}
+
+// CmcpCloseAll tells every connected CMCP session's game that the client window is closing (reason "client"); the game decides what to do.
+func (e *Engine) CmcpCloseAll() {
+	for _, si := range e.Sessions() {
+		if ok, _ := cs.CloseSends("client_window_closed"); !ok {
+			return
+		}
+		_ = e.CmcpClose(si.ID, cs.CloseClient)
+	}
 }

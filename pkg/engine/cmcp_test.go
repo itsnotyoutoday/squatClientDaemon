@@ -126,11 +126,12 @@ func (g *cmcpRig) waitUI(what string, pred func(*engine.CmcpUI) bool) *engine.Cm
 }
 
 type cmcpRigCfg struct {
-	clock    func() time.Time // a fake engine clock (nil: the real one)
-	assets   *msg.Assets
-	packs    []msg.PackRef
-	storeDir string
-	onFrame  func(*cmcpRig, frame.Frame)
+	clock     func() time.Time // a fake engine clock (nil: the real one)
+	noContext bool             // a client that does not speak Cobra.Context (it closes its console with console.unman)
+	assets    *msg.Assets
+	packs     []msg.PackRef
+	storeDir  string
+	onFrame   func(*cmcpRig, frame.Frame)
 }
 
 func newCmcpRig(t *testing.T) *cmcpRig { return newCmcpRigWith(t, nil) }
@@ -175,7 +176,7 @@ func newCmcpRigWith(t *testing.T, mod func(*cmcpRigCfg)) *cmcpRig {
 		g.e.SetCmcpPacks(ps)
 	}
 	g.e.SetCmcp(func() cs.Config {
-		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536, Logf: t.Logf}
+		return cs.Config{Name: "SquatClient", Version: "test", Kind: "gui", Render: &msg.Render{Kind: "gpu"}, MaxBody: 65536, Logf: t.Logf, NoContext: rc.noContext}
 	})
 	si, err := g.e.Dial(engine.World{ID: "w", Name: "w", Host: "127.0.0.1", Port: 1}, "")
 	if err != nil {
@@ -1245,4 +1246,198 @@ func TestCmcpHitShakeAndAmbient(t *testing.T) {
 			t.Fatalf("the player's ambience off: %+v", s)
 		}
 	}
+}
+
+// Aboard but not manning a console (a room, the dock) the engine draws the room in the ship's frame (std.room), and the alert ambience reaches
+// the view: the ship-wide look (6.17.1) is not tied to a console.
+func TestCmcpAmbientWithoutAScreen(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) { // aboard (the ship is known) with no console: a room
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Reason: "none"})
+		s.Push("Space.Ship.Status", true, map[string]any{"alert": "red", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+	})
+	g.r.until(t, "ambience without a screen", func() bool {
+		for _, ev := range g.r.snapshot() {
+			if ev.CmcpPulse != nil && ev.CmcpPulse.Ambient != nil && ev.CmcpPulse.Ambient.Edge != "" {
+				return true
+			}
+		}
+		return false
+	})
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree == nil || u.Tree.Screen != "std.room" {
+		t.Fatalf("aboard without a console the ship's frame is the room screen: %+v", u.Tree)
+	}
+}
+
+// A shield hit that reports strength 0 (the game's usual shield hit) still shakes the display: the client floors the strength, and the shake
+// reaches the web view in a room (no console) as well as at a console.
+func TestCmcpShieldHitStrengthZeroShakesInARoom(t *testing.T) {
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) { // aboard, no console: a room
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none"})
+		s.Push("Space.Ship.Status", true, map[string]any{"alert": "yellow", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+	})
+	ui := g.waitUI("the room is a screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.room" })
+	if findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "textport" }) == nil {
+		t.Fatal("the room screen has a text port")
+	}
+	b, _ := json.Marshal(msg.Event{Type: "hit", Data: map[string]any{"cid": "self", "shield": true, "strength": 0.0, "facing": "aft"}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Event", Data: b})
+	g.r.until(t, "a visible shake for a strength-0 shield hit", func() bool {
+		for _, ev := range g.r.snapshot() {
+			if p := ev.CmcpPulse; p != nil && p.Shake != nil && p.Shake.Active && (p.Shake.X != 0 || p.Shake.Y != 0) {
+				return true
+			}
+		}
+		return false
+	})
+	if dir := os.Getenv("SQUAT_DUMP_PULSES"); dir != "" { // the engine's real samples of this hit, for the headless screenshot script
+		time.Sleep(700 * time.Millisecond)
+		var out []engine.CmcpPulse
+		for _, ev := range g.r.snapshot() {
+			if p := ev.CmcpPulse; p != nil && (p.Shake != nil || p.Ambient != nil) {
+				out = append(out, *p)
+			}
+		}
+		b, _ := json.MarshalIndent(out, "", " ")
+		_ = os.WriteFile(filepath.Join(dir, "live-pulses.json"), b, 0o644)
+	}
+	// and the yellow-alert ambience is on the room's frame
+	g.r.until(t, "ambience in the room", func() bool {
+		for _, ev := range g.r.snapshot() {
+			if p := ev.CmcpPulse; p != nil && p.Ambient != nil && p.Ambient.Edge != "" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// The X of the console window asks the game (Cobra.Context.Close) and does NOT hide the screen: for a console, a room and the generic ship room the
+// request names the active context and reason user; the window closing sends reason client; a context-less client sends console.unman.
+func TestCmcpCloseAsksTheGame(t *testing.T) {
+	var mu sync.Mutex
+	var closes []map[string]any
+	var cmds []map[string]any
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+		c.onFrame = func(r *cmcpRig, f frame.Frame) {
+			var m map[string]any
+			if json.Unmarshal(f.Payload, &m) != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			switch f.Package {
+			case msg.PkgContextClose:
+				closes = append(closes, m)
+			case msg.PkgCmd:
+				cmds = append(cmds, m)
+			}
+		}
+	})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"dmg.assign"}})
+	})
+	g.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.operations" })
+	last := func() map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(closes) == 0 {
+			return nil
+		}
+		return closes[len(closes)-1]
+	}
+	if err := g.e.CmcpClose(g.sid, "user"); err != nil {
+		t.Fatal(err)
+	}
+	g.r.until(t, "a Cobra.Context.Close for the console", func() bool { return last() != nil })
+	c := last()
+	if c["reason"] != "user" || c["key"] == nil || c["key"] == "" || c["kind"] != "console" {
+		t.Fatalf("the close request names the active console context: %v", c)
+	}
+	// the screen stays until the game answers
+	time.Sleep(300 * time.Millisecond)
+	if u, _ := g.e.CmcpUI(g.sid); u.Tree == nil || u.Tree.Screen != "std.operations" {
+		t.Fatalf("the client must not hide the screen itself: %+v", u.Tree)
+	}
+	// the window closing: reason client (more than two requests a second are throttled, so wait)
+	time.Sleep(1100 * time.Millisecond)
+	g.e.CmcpCloseAll()
+	g.r.until(t, "a close with reason client", func() bool { c := last(); return c != nil && c["reason"] == "client" })
+
+	// a context-less client unmans with the verb
+	g2 := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+		c.noContext = true
+		c.onFrame = func(r *cmcpRig, f frame.Frame) {
+			var m map[string]any
+			if f.Package == msg.PkgCmd && json.Unmarshal(f.Payload, &m) == nil {
+				mu.Lock()
+				cmds = append(cmds, m)
+				mu.Unlock()
+			}
+		}
+	})
+	g2.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "Ops"}, Screen: "std.operations", Reason: "manned", Commands: []string{"console.unman"}})
+	})
+	g2.waitUI("console", func(u *engine.CmcpUI) bool { return u.Tree != nil })
+	_ = g2.e.CmcpClose(g2.sid, "user")
+	g2.r.until(t, "console.unman for a context-less client", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, m := range cmds {
+			if m["cmd"] == "console.unman" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// std.shiproom: the generic room aboard (context room:shiproom) is a built-in screen with the ship's status strip, the room's name from $ctx and the
+// text port; it is drawn like any screen, so the theme frame, the alert look and the hit shake are on it; the X names the room context.
+func TestCmcpShiproomScreen(t *testing.T) {
+	var mu sync.Mutex
+	var closes []map[string]any
+	g := newCmcpRigWith(t, func(c *cmcpRigCfg) {
+		c.onFrame = func(r *cmcpRig, f frame.Frame) {
+			var m map[string]any
+			if f.Package == msg.PkgContextClose && json.Unmarshal(f.Payload, &m) == nil {
+				mu.Lock()
+				closes = append(closes, m)
+				mu.Unlock()
+			}
+		}
+	})
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "s1", Epoch: 1, Name: "Resolute"}, Reason: "none", Subscribe: []msg.SubSpec{{Pkg: "Space.Ship.Status"}}})
+		s.Push("Space.Ship.Status", true, map[string]any{"name": "ACS Resolute", "class": "Constitution", "alert": "yellow", "hull": map[string]any{"cur": 90.0, "max": 100.0}})
+	})
+	prio := 35
+	b, _ := json.Marshal(msg.Context{Rev: 3, Ship: msg.ContextShip{ID: "s1", Epoch: 1}, Op: "push", Reason: "entered",
+		Context: &msg.ContextEntry{Key: "room:shiproom", Ctx: 1, Kind: "room", ID: "shiproom", Name: "Mess Hall", Screen: "std.shiproom", Priority: &prio}})
+	g.trp.Load().deliver(conn.Event{Kind: conn.EvGmcp, Package: "Cobra.Context", Data: b})
+	ui := g.waitUI("the ship room screen", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.shiproom" })
+	if findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "textport" }) == nil {
+		t.Fatal("the ship room has the text port")
+	}
+	lab := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool {
+		s, _ := n.Props["text"].(string)
+		return n.Widget == "label" && strings.Contains(s, "Mess Hall")
+	})
+	if lab == nil {
+		first := findNode(ui.Tree.Root, func(n *engine.CmcpNode) bool { return n.Widget == "label" && n.Props["text"] != "" })
+		t.Fatalf("the status strip names the room from $ctx.name: %v", first)
+	}
+	if err := g.e.CmcpClose(g.sid, "user"); err != nil {
+		t.Fatal(err)
+	}
+	g.r.until(t, "a close for the room context", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(closes) > 0 && closes[len(closes)-1]["kind"] == "room" && closes[len(closes)-1]["key"] == "room:shiproom"
+	})
 }
