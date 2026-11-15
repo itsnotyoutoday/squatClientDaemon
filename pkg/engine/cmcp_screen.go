@@ -233,6 +233,9 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	key := fmt.Sprintf("%s/%d|%v|%s|%d", shipID, epoch, r.UseShipTheme, def, th.gen)
 	hasShip := ui.ShipTheme != "" || ui.ConsoleTheme != ""
 	if key == cm.themeKey && (cm.themeShip || !hasShip) {
+		// the theme is unchanged, but the player's pulse / ambience / shake / recolour settings may not be: they reach the core on every call
+		// (syncPulseLocked does nothing when nothing changed)
+		cm.syncPulseForLocked(th, cm.themeID, cm.themeSrc, r)
 		return cm.themeID, cm.themeSrc
 	}
 	want := def
@@ -243,11 +246,7 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	cm.wantThemeLocked(want, refs)
 	id, src := th.reg.Resolve(want)
 	// the pulse and the recolour mode follow the theme in effect and the player's settings
-	if pk := th.packs[id]; src == theme.SourcePack && pk != nil {
-		cm.syncPulseLocked(pk, r)
-	} else {
-		cm.syncPulseLocked(theme.Builtin(id), r)
-	}
+	cm.syncPulseForLocked(th, id, src, r)
 	// a theme change is said once on the notice line (the first built-in theme of a connection is not news)
 	ver := theme.BuiltinVersions()[id]
 	if src == theme.SourcePack {
@@ -761,3 +760,13 @@ func (e *Engine) CmcpViewport(id string, widthPx, scale, monoPx float64) error {
 }
 
 type cmcpViewport struct{ w, scale, mono float64 }
+
+// syncPulseForLocked configures the core's pulse, ambience and shake for the theme in effect (a pack's or a built-in one) and the player's settings.
+// cm.mu is held.
+func (cm *cmcpSess) syncPulseForLocked(th *themeState, id, src string, r CmcpRender) {
+	if pk := th.packs[id]; src == theme.SourcePack && pk != nil {
+		cm.syncPulseLocked(pk, r)
+	} else {
+		cm.syncPulseLocked(theme.Builtin(id), r)
+	}
+}

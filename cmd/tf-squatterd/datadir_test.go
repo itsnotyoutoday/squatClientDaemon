@@ -48,3 +48,26 @@ func TestResolveSharedConfigDir(t *testing.T) {
 		t.Fatalf("configDir = %s", o.configDir)
 	}
 }
+
+func TestResolveDefaultBind(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, c := range []struct {
+		name     string
+		o        options
+		wantBind string
+	}{
+		{"nothing given: every interface", options{}, "0.0.0.0"},
+		{"plain ws:// stays on loopback", options{insecureLoopback: true}, "127.0.0.1"},
+		{"an explicit bind wins", options{bind: "100.73.155.123"}, "100.73.155.123"},
+		{"explicit loopback with TLS", options{bind: "127.0.0.1"}, "127.0.0.1"},
+	} {
+		o := c.o
+		o.dataDir = t.TempDir()
+		if err := o.resolve(); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if o.bind != c.wantBind {
+			t.Fatalf("%s: bind %q, want %q", c.name, o.bind, c.wantBind)
+		}
+	}
+}

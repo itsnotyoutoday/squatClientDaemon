@@ -2,7 +2,7 @@
 // TFSP (docs/TF-SQUATTER.md) to SquatClient while TinyFugue, which started it
 // with "/squat on", owns the game connections.
 //
-//	tf-squatterd serve --fd 3 [--port 10328] [--bind 127.0.0.1] [--data-dir ~/.squatterd/tf]
+//	tf-squatterd serve --fd 3 [--port 10328] [--bind ADDR] [--data-dir ~/.squatterd/tf]
 //	tf-squatterd reload | pair [--role operator] | devices | revoke <deviceId> | status | update [--check] | version
 package main
 
@@ -48,7 +48,7 @@ Usage:
                                       bridge onto it. Settings: ~/.squatterd/config.json
   tf-squatterd version
 
-Flags: --data-dir DIR (default ~/.squatterd/tf)  --port N (default 10328)  --bind ADDR (default 127.0.0.1)
+Flags: --data-dir DIR (default ~/.squatterd/tf)  --port N (default 10328)  --bind ADDR (default 0.0.0.0; 127.0.0.1 with --insecure-loopback)
 `
 
 type options struct {
@@ -76,7 +76,7 @@ func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
 	fs.SetOutput(w)
 	fs.IntVar(&o.fd, "fd", 3, "inherited control socket (TinyFugue's end of the socketpair)")
 	fs.IntVar(&o.port, "port", proto.DefaultTFPort, "TCP port to listen on")
-	fs.StringVar(&o.bind, "bind", "127.0.0.1", "address to bind")
+	fs.StringVar(&o.bind, "bind", "", "address to bind (default 0.0.0.0, every interface; 127.0.0.1 with --insecure-loopback)")
 	fs.StringVar(&o.dataDir, "data-dir", "", "data directory (default ~/.squatterd/tf; an existing ~/.tf-squatter keeps being used)")
 	fs.BoolVar(&o.insecureLoopback, "insecure-loopback", false, "serve plain ws:// (only with a loopback --bind)")
 	fs.StringVar(&o.certFile, "cert", "", "TLS certificate file (default: auto-generated self-signed)")
@@ -93,6 +93,12 @@ func newFlags(name string, w io.Writer) (*flag.FlagSet, *options) {
 }
 
 func (o *options) resolve() error {
+	if o.bind == "" { // not given: every interface (the public address, Tailscale, the LAN); plain ws:// is only allowed on loopback
+		o.bind = "0.0.0.0"
+		if o.insecureLoopback {
+			o.bind = "127.0.0.1"
+		}
+	}
 	h, herr := os.UserHomeDir()
 	if o.dataDir == "" {
 		if herr != nil {

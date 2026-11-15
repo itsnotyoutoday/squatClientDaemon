@@ -1080,9 +1080,15 @@ func TestCmcpAlertPulse(t *testing.T) {
 		time.Sleep(400 * time.Millisecond)
 		adv(250 * time.Millisecond)
 		time.Sleep(400 * time.Millisecond)
+		// the pulse setting reaches the core asynchronously, so a first sample may still be the default (active) pulse; what must hold is that it
+		// settles to steady and never goes active again
+		g.r.until(t, name+": the pulse settles to steady", func() bool { l := last(g); return l == nil || !l.Active })
+		steady := false
 		for _, s := range samples(g) {
-			if s.Active {
-				t.Fatalf("%s: the pulse must be steady: %+v", name, s)
+			if !s.Active {
+				steady = true
+			} else if steady {
+				t.Fatalf("%s: the pulse went active again after it was steady: %+v", name, s)
 			}
 		}
 	}

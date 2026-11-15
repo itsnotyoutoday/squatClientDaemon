@@ -72,13 +72,19 @@ func (cm *cmcpSess) syncPulseLocked(pack *theme.Pack, r CmcpRender) {
 	if cm.fxSet && cm.ambCfg == amb && cm.shkCfg == shk && cm.pulseSet && cm.pulseCfg == cfg {
 		return
 	}
+	// The core is configured from goroutines (cm.mu is held here), so two quick changes could otherwise apply out of order and leave the older
+	// setting in effect: each change takes a sequence number, and a goroutine whose number is no longer the latest does nothing.
 	if !cm.fxSet || cm.ambCfg != amb {
 		a := amb
-		go cm.c.SetAmbient(&a)
+		cm.ambSeq++
+		seq := cm.ambSeq
+		go cm.applyFx(func() bool { return cm.ambSeq == seq }, func() { cm.c.SetAmbient(&a) })
 	}
 	if !cm.fxSet || cm.shkCfg != shk {
 		k := shk
-		go cm.c.SetShake(&k)
+		cm.shkSeq++
+		seq := cm.shkSeq
+		go cm.applyFx(func() bool { return cm.shkSeq == seq }, func() { cm.c.SetShake(&k) })
 	}
 	cm.fxSet, cm.ambCfg, cm.shkCfg = true, amb, shk
 	if cm.pulseSet && cm.pulseCfg == cfg {
@@ -86,7 +92,21 @@ func (cm *cmcpSess) syncPulseLocked(pack *theme.Pack, r CmcpRender) {
 	}
 	cm.pulseSet, cm.pulseCfg = true, cfg
 	c := cfg
-	go cm.c.SetPulse(&c)
+	cm.pulseSeq++
+	seq := cm.pulseSeq
+	go cm.applyFx(func() bool { return cm.pulseSeq == seq }, func() { cm.c.SetPulse(&c) })
+}
+
+// applyFx runs one core configuration call unless a newer one was requested meanwhile; the calls of a session never overlap, so the newest wins.
+func (cm *cmcpSess) applyFx(latest func() bool, apply func()) {
+	cm.fxApply.Lock()
+	defer cm.fxApply.Unlock()
+	cm.mu.Lock()
+	ok := latest()
+	cm.mu.Unlock()
+	if ok {
+		apply()
+	}
 }
 
 // armPulse starts the sampling loop (once per session).

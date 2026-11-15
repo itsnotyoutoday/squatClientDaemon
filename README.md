@@ -190,7 +190,7 @@ TinyFugue command and how this client answers it).
 `make build` also produces **`tf-squatterd`**, the helper that lets a running [TinyFugue](https://github.com/itsnotyoutoday/tinyfugue)
 (branch `squatterbridge`) be paired with SquatClient: TinyFugue keeps the game connections and runs its own triggers,
 and the app attaches to them. You do not start it yourself: put it on your `PATH` (or `/set squat_bin=...` in
-TinyFugue) and run `/squat on` and `/squat pair` inside TinyFugue. It listens on `127.0.0.1:10328` (`/tfsp`) with the
+TinyFugue) and run `/squat on` and `/squat pair` inside TinyFugue. It listens on every interface, port `10328` (`/tfsp`; `--bind 127.0.0.1` keeps it on the machine, and plain `ws://` mode defaults to loopback), with the
 same TLS pinning and ed25519 device keys as `squatterd`. Its data (devices, certificate, sessions) lives in `~/.squatterd/tf/`, apart from squatterd's files in `~/.squatterd/` (they would collide). An older install that used `~/.tf-squatter` keeps using that directory in place, untouched, as long as `~/.squatterd/tf` does not exist, so existing pairings and the TLS fingerprint survive; TinyFugue's `squat_dir` variable overrides the location. Build and pairing steps are in the
 [SquatClient README](https://github.com/itsnotyoutoday/squatclient#tinyfugue-and-the-tf-bridge); the protocol is in
 `docs/TF-SQUATTER.md`.

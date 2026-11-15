@@ -210,6 +210,8 @@ type cmcpSess struct {
 	pulsePack                   *theme.Pack
 	pulseCfg                    cs.PulseConfig
 	pulseSet                    bool
+	pulseSeq, ambSeq, shkSeq    int        // the latest requested core configuration of each kind (guarded by mu)
+	fxApply                     sync.Mutex // serializes the core configuration calls
 	fxSet                       bool
 	ambCfg                      cs.AmbientConfig
 	shkCfg                      cs.ShakeConfig
