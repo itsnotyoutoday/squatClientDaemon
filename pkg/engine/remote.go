@@ -145,8 +145,10 @@ func (s *session) ingestLine(l proto.Line, live bool) {
 		if l.Kind == proto.KindEcho && s.cap.dropEcho(l.Plain()) {
 			return // echo of an internal Capture send (daemon without noEcho)
 		}
-		if l.Kind == proto.KindEcho && l.Origin != "" && l.Origin == s.remote.sq.deviceIDValue() && !s.localEchoOn() {
-			return // /localecho off: what this device typed is not shown (the squatter echoes every sent line back to every device, the sender included)
+		if l.Kind == proto.KindEcho && (l.Origin == "tf" || (l.Origin != "" && l.Origin == s.remote.sq.deviceIDValue())) && !s.localEchoOn() {
+			// /localecho off: typed text is not shown. That is what this device typed (the squatter echoes every sent line back to every device, the
+			// sender included) and what was typed at TinyFugue's / gtf's own keyboard ("[tf]"); another device's typing is still shown
+			return
 		}
 		spans := l.Spans
 		if l.Kind == proto.KindEcho {

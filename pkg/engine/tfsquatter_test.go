@@ -674,9 +674,9 @@ func waitFor(t *testing.T, d time.Duration, what string, pred func() bool) {
 	t.Fatalf("timeout waiting for %s", what)
 }
 
-// /localecho off hides the echo of what THIS device typed (a squatter echoes every sent line back to every device, the sender included); the
-// echoes of TinyFugue's keyboard and of other devices are still shown, and /localecho on brings the own echo back.
-func TestTFLocalEchoOffHidesOnlyOwnEcho(t *testing.T) {
+// /localecho off hides the echo of typed text: what THIS device typed (a squatter echoes every sent line back to every device, the sender
+// included) and what was typed at TinyFugue's own keyboard ("[tf]"). Another device's typing is still shown, and /localecho on brings both back.
+func TestTFLocalEchoOffHidesOwnAndTinyFugueEcho(t *testing.T) {
 	v := newTFEnv(t)
 	e, r := v.connect(t)
 	id := v.session(t, e, r)
@@ -693,15 +693,20 @@ func TestTFLocalEchoOffHidesOnlyOwnEcho(t *testing.T) {
 	v.fake.Line(tsid, "e", "", own, "own typing two")
 	v.fake.Line(tsid, "e", "", "someone-else", "other device typing")
 	v.fake.Line(tsid, "e", "", "tf", "tf keyboard typing")
-	r.until(t, "the others' echoes arrive", func() bool { return r.has(id, "tf keyboard typing") && r.has(id, "other device typing") })
-	if r.has(id, "own typing two") {
-		t.Fatalf("/localecho off must hide this device's own echo: %v", linesOf(r, id))
+	v.fake.Line(tsid, "g", "", "game", "marker after the echoes")
+	r.until(t, "the later game line arrives", func() bool { return r.has(id, "marker after the echoes") })
+	if r.has(id, "own typing two") || r.has(id, "tf keyboard typing") {
+		t.Fatalf("/localecho off must hide this device's own echo and TinyFugue's: %v", linesOf(r, id))
+	}
+	if !r.has(id, "other device typing") {
+		t.Fatalf("another device's typing is still shown: %v", linesOf(r, id))
 	}
 	if err := e.Input(id, "/localecho on"); err != nil {
 		t.Fatal(err)
 	}
 	v.fake.Line(tsid, "e", "", own, "own typing three")
-	r.until(t, "own echo is back after /localecho on", func() bool { return r.has(id, "own typing three") })
+	v.fake.Line(tsid, "e", "", "tf", "tf keyboard typing again")
+	r.until(t, "the echoes are back after /localecho on", func() bool { return r.has(id, "own typing three") && r.has(id, "tf keyboard typing again") })
 }
 
 func linesOf(r *rec, id string) []string {
