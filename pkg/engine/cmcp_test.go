@@ -741,3 +741,47 @@ func TestCmcpShowScreen(t *testing.T) {
 	})
 	g.waitUI("console change resets", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == "std.sensors" })
 }
+
+// One theme per ship: every console and screen of a ship reports the ship's theme, built-in fallback screens included, whatever the screens
+// suggest; it changes only on a ship hop or when the setting changes.
+func TestCmcpOneThemePerShip(t *testing.T) {
+	ships := []struct{ id, theme string }{{"ss-booty-king", "frontier"}, {"kdf-bortas", "klingon"}, {"rse-valdore", "romulan"}, {"fma-daimon", "ferengi"}, {"acs-resolute", "tos"}, {"khv-drakhar", "klingon"}}
+	g := newCmcpRig(t)
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	consoles := []struct{ console, screen string }{{"operations", "std.operations"}, {"science", "std.sensors"}, {"tactical", "std.tactical"}, {"navigation", "std.helm"}, {"engineering", "std.power"}, {"command", "std.command"}, {"medical", "std.medical"}}
+	rev := 0
+	for _, sh := range ships {
+		for i, c := range consoles {
+			g.do(func(s *cs.Server) {
+				s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: sh.id, Epoch: 1, Theme: sh.theme}, Console: &msg.ConsoleRef{ID: c.console, Name: c.console}, Screen: c.screen, Reason: "manned",
+					Subscribe: []msg.SubSpec{{Pkg: "Space.Contacts"}}, Commands: []string{"scan.srs"}})
+			})
+			rev++
+			want, scr := sh.theme, c.screen
+			u := g.waitUI(sh.id+" "+c.console, func(u *engine.CmcpUI) bool {
+				return u.Tree != nil && u.Ship != nil && u.Ship.ID == sh.id && u.Tree.Screen == scr
+			})
+			// the theme must be ready for the first screen of the hop: "frontier" is not built in, so it falls back to plain (still ONE id per ship)
+			if u.Tree.Theme != want && !(want == "frontier" && u.Tree.Theme == "plain") {
+				t.Fatalf("ship %s console %s (%d): theme %q, want %q", sh.id, c.console, i, u.Tree.Theme, want)
+			}
+		}
+	}
+	// a ship that names no theme: the first screen's suggestion (or the player's theme) sticks for the whole stay
+	g.do(func(s *cs.Server) {
+		s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "npc-1", Epoch: 1}, Console: &msg.ConsoleRef{ID: "operations", Name: "o"}, Screen: "std.operations", Reason: "manned", Commands: []string{"scan.srs"}})
+	})
+	first := g.waitUI("npc ship", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Ship != nil && u.Ship.ID == "npc-1" }).Tree.Theme
+	for _, c := range consoles[1:] {
+		g.do(func(s *cs.Server) {
+			s.SetConsole(msg.Console{Ship: msg.ShipInfo{ID: "npc-1", Epoch: 1}, Console: &msg.ConsoleRef{ID: c.console, Name: c.console}, Screen: c.screen, Reason: "manned", Commands: []string{"scan.srs"}})
+		})
+		u := g.waitUI("npc "+c.console, func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Screen == c.screen })
+		if u.Tree.Theme != first {
+			t.Fatalf("a ship with no theme changed theme on screen switch: %q -> %q", first, u.Tree.Theme)
+		}
+	}
+	// a setting change takes effect: fixed mode uses the player's theme
+	g.e.SetCmcpRender(engine.CmcpRender{Theme: "ferengi", UseShipTheme: false})
+	g.waitUI("fixed", func(u *engine.CmcpUI) bool { return u.Tree != nil && u.Tree.Theme == "ferengi" })
+}

@@ -97,3 +97,63 @@ func TestCmcpLiveEvennia(t *testing.T) {
 	}
 	_ = e.Input(si.ID, "unman")
 }
+
+// TestCmcpLiveThemes boards the ships named in SQUAT_LIVE_CMCP_SHIPS and mans the consoles in SQUAT_LIVE_CMCP_CONSOLES, logging the theme id of
+// every screen (one theme per ship is expected). Local throwaway game on 127.0.0.1:4101 only.
+func TestCmcpLiveThemes(t *testing.T) {
+	ships := os.Getenv("SQUAT_LIVE_CMCP_SHIPS")
+	if os.Getenv("SQUAT_LIVE_CMCP") == "" || ships == "" {
+		t.Skip("set SQUAT_LIVE_CMCP=1 SQUAT_LIVE_CMCP_SHIPS=drakhar,... SQUAT_LIVE_CMCP_CONSOLES=opera,...")
+	}
+	e, r := newEngine(t)
+	ps, _ := engine.OpenPackStore(t.TempDir())
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Render: &msg.Render{Kind: "gpu"}, Themes: []string{"tng"}, Theme: "tng"}
+	})
+	si, err := e.Dial(engine.World{Name: "poc", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	acct := os.Getenv("SQUAT_LIVE_CMCP_ACCOUNT")
+	if acct == "" {
+		acct = "bob cobalt-fern-52"
+	}
+	_ = e.Input(si.ID, "connect "+acct)
+	r.until(t, "ready", func() bool { u, err := e.CmcpUI(si.ID); return err == nil && u.State == "ready" })
+	go func() { // consent: yes
+		answered := map[string]bool{}
+		for i := 0; i < 2000; i++ {
+			for _, ev := range r.snapshot() {
+				for _, n := range ev.CmcpNotes {
+					if n.Kind == "pack-consent" && n.Pack != nil && !answered[n.Pack.ID] {
+						answered[n.Pack.ID] = true
+						_ = e.CmcpPackConsent(si.ID, n.Pack.ID, true)
+					}
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}()
+	for _, sh := range strings.Split(ships, ",") {
+		_ = e.Input(si.ID, "board "+sh)
+		time.Sleep(1500 * time.Millisecond)
+		seen := map[string]bool{}
+		for _, c := range strings.Split(os.Getenv("SQUAT_LIVE_CMCP_CONSOLES"), ",") {
+			_ = e.Input(si.ID, "man "+c)
+			time.Sleep(1800 * time.Millisecond)
+			u, _ := e.CmcpUI(si.ID)
+			if u == nil || u.Tree == nil || u.Ship == nil {
+				t.Logf("%s / man %s: no screen", sh, c)
+				continue
+			}
+			seen[u.Tree.Theme] = true
+			t.Logf("%s / man %-6s ship=%s shipTheme=%q consoleTheme=%q -> screen %s theme %s (%s)", sh, c, u.Ship.ID, u.ShipTheme, u.ConTheme, u.Tree.Screen, u.Tree.Theme, u.Tree.ThemeSource)
+		}
+		t.Logf("%s: distinct themes %v", sh, seen)
+		_ = e.Input(si.ID, "unman")
+	}
+}

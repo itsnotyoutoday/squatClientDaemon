@@ -198,6 +198,10 @@ func consoleID(ui *cs.UI) string {
 	return ui.Console.ID
 }
 
+// theme resolves ONE theme per ship (and per setting), used for every screen of that ship: the ship's theme (UI.ShipTheme, else the active
+// console's own suggestion) wins over any per-screen suggest_theme, built-in fallback screens included; only a ship that names no theme falls
+// back to the first pack screen's suggestion, then the player's console theme, then tng. It is sticky: it changes only on a ship hop or when
+// the player changes the setting, never when screens or consoles switch (a ship theme that appears later still takes over once).
 func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	cm.s.e.cmcpMu.Lock()
 	r := cm.s.e.cmcpRender
@@ -206,12 +210,24 @@ func (cm *cmcpSess) theme(ui *cs.UI, scr *pack.Screen) (string, string) {
 	if def == "" {
 		def = "tng"
 	}
-	// precedence of spec 6.6 (the player's choice, then, only with "use the ship's theme", console, ship, screen): the shared core's rule
-	want := theme.Select("", r.UseShipTheme, ui.ConsoleTheme, ui.ShipTheme, scr.SuggestTheme, def)
-	if !r.UseShipTheme {
-		want = def
+	shipID, epoch := "", 0
+	if ui.HaveShip {
+		shipID, epoch = ui.Ship.ID, ui.Ship.Epoch
+	}
+	key := fmt.Sprintf("%s/%d|%v|%s", shipID, epoch, r.UseShipTheme, def)
+	hasShip := ui.ShipTheme != "" || ui.ConsoleTheme != ""
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if key == cm.themeKey && (cm.themeShip || !hasShip) {
+		return cm.themeID, cm.themeSrc
+	}
+	want := def
+	if r.UseShipTheme {
+		// the ship's theme first (as the "console" slot of the core's rule), then the console's own, then the screen's suggestion
+		want = theme.Select("", true, ui.ShipTheme, ui.ConsoleTheme, scr.SuggestTheme, def)
 	}
 	id, src := theme.Resolve(want, nil, theme.BuiltinSet())
+	cm.themeKey, cm.themeID, cm.themeSrc, cm.themeShip = key, id, src, hasShip && r.UseShipTheme
 	return id, src
 }
 
