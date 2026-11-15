@@ -452,7 +452,7 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 		Readonly: u.Readonly, AI: u.AI, Title: u.Title, ShipTheme: u.ShipTheme, ConTheme: u.ConsoleTheme,
 		Screen:   CmcpScreen{ID: u.Screen.ID, Resolved: u.Screen.Resolved, PackID: u.Screen.PackID, Pack: u.Screen.PackWanted, Fallback: u.Screen.Fallback},
 		Commands: append([]string{}, u.Commands...), Catalogue: u.Catalogue, Docs: u.Docs, Seqs: u.Seqs, Alert: u.Alert, Pending: u.Pending}
-	if u.HaveShip {
+	if u.HaveShip && u.Ship.ID != "none" { // the "No ship" sentinel (spec 3.1.1) is the absence of a ship, never a ship named "No ship"
 		sh := u.Ship
 		d.Ship = &sh
 	}
