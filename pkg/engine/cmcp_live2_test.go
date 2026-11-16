@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,14 +11,13 @@ import (
 	"github.com/itsnotyoutoday/squatClientDaemon/pkg/proto"
 )
 
-// TestCmcp2LiveConcourse runs this client against the local CMCP 2 test game on 127.0.0.1:4101 (the Evennia testgame in v2 mode, a throwaway
-// game): the definition is fetched, the concourse (world.place) is drawn as a screen, boarding a ship adds the ship scope's owner, and going
-// home takes it away again. SQUAT_LIVE_CMCP2=1 turns it on. Never point it at any other game.
+// TestCmcp2LiveConcourse: at the concourse the game sends no context at all, so the client draws nothing there (no screen, no pane), and
+// boarding a ship gives the ship scope an owner. SQUAT_LIVE_CMCP2=1.
 func TestCmcp2LiveConcourse(t *testing.T) {
 	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
 		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101 (and its asset server on 4102)")
 	}
-	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1") // the game's definition and packs are served over plain http on loopback
+	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
 	e, r := newEngine(t)
 	ps, err := engine.OpenPackStore(t.TempDir())
 	if err != nil {
@@ -29,7 +27,7 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
-			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen"}}, Themes: []string{"tng"}, Theme: "tng",
+			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
 			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
 	})
 	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
@@ -40,32 +38,40 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 	_ = e.Input(si.ID, "connect alice ember-tide-91")
 	time.Sleep(800 * time.Millisecond)
-	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
+	_ = e.Input(si.ID, "home")
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
 	r.until(t, "CMCP 2 ready with a definition", func() bool {
 		u := get()
 		return u != nil && u.State == "ready" && u.V2 && u.Def != nil
 	})
-	t.Logf("ready: proto %d def %+v scopes %v", ui.Proto, ui.Def, ui.Scopes)
-	r.until(t, "the concourse is drawn", func() bool {
-		u := get()
-		return u != nil && u.Ctx != nil && u.Tree != nil
-	})
-	t.Logf("ctx %+v screen %q tree %q title %q", ui.Ctx, ui.Screen.Resolved, ui.Tree.Screen, ui.Tree.Title)
-	if ui.Ctx.Type != "world.place" || ui.Ctx.Surface != "screen" {
-		t.Fatalf("the player lands on the concourse as a screen: %+v", ui.Ctx)
+	time.Sleep(1500 * time.Millisecond)
+	// at the concourse: nothing to draw. No active context, no screen, no pane, and the ship scope has nobody
+	u := get()
+	if u.Ctx != nil {
+		t.Errorf("the concourse sends no context: %+v", u.Ctx)
 	}
+	if u.Tree != nil {
+		t.Errorf("nothing is drawn at the concourse: screen %q", u.Tree.Screen)
+	}
+	if len(u.Panes) != 0 {
+		t.Errorf("no pane at the concourse: %+v", u.Panes)
+	}
+	if u.Scopes["ship"].Owner != nil {
+		t.Errorf("nobody owns the ship scope at the concourse: %+v", u.Scopes["ship"].Owner)
+	}
+	t.Logf("concourse: ctx=%v tree=%v panes=%d scopes=%v", u.Ctx, u.Tree, len(u.Panes), u.Scopes)
+	// boarding gives the ship scope an owner, and leaving takes everything away again
 	_ = e.Input(si.ID, "board resolute")
 	r.until(t, "aboard: the ship scope has an owner", func() bool {
 		u := get()
 		return u != nil && u.Scopes["ship"].Owner != nil
 	})
-	t.Logf("aboard: owner %+v ctx %+v tree %v", ui.Scopes["ship"].Owner, ui.Ctx, ui.Tree != nil)
+	t.Logf("aboard: owner %+v ctx %+v", ui.Scopes["ship"].Owner, ui.Ctx)
 	_ = e.Input(si.ID, "home")
-	r.until(t, "home: the ship scope has no owner again", func() bool {
+	r.until(t, "home: nothing is left of the ship", func() bool {
 		u := get()
-		return u != nil && u.Scopes["ship"].Owner == nil && u.Ctx != nil && u.Ctx.Type == "world.place"
+		return u != nil && u.Scopes["ship"].Owner == nil && u.Ctx == nil && u.Tree == nil && len(u.Panes) == 0
 	})
 }
 
@@ -100,7 +106,7 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
-	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Tree != nil })
+	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Def != nil })
 	ship := os.Getenv("SQUAT_LIVE_CMCP2_SHIP")
 	if ship == "" {
 		ship = "resolute"
@@ -125,67 +131,6 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 		t.Logf("no sound pack loaded (the game may announce none)")
 	} else {
 		t.Logf("sound pack loaded")
-	}
-}
-
-// TestCmcp2LivePanes: on the concourse the game also pushes world.briefing (a dock): the client gets the main screen AND a pane with its own bound tree,
-// without a text port. SQUAT_LIVE_CMCP2=1.
-func TestCmcp2LivePanes(t *testing.T) {
-	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
-		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
-	}
-	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
-	e, r := newEngine(t)
-	ps, err := engine.OpenPackStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
-	e.SetCmcp(func() cs.Config {
-		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
-			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
-			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
-	})
-	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.waitState(t, e, si.ID, proto.StateConnected)
-	time.Sleep(1500 * time.Millisecond)
-	_ = e.Input(si.ID, "connect alice ember-tide-91")
-	time.Sleep(800 * time.Millisecond)
-	_ = e.Input(si.ID, "home") // a test before this one may have left the account aboard a ship
-	var ui *engine.CmcpUI
-	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
-	r.until(t, "the main screen and a dock pane with a tree", func() bool {
-		u := get()
-		return u != nil && u.Tree != nil && len(u.Panes) > 0 && u.Panes[0].Tree != nil
-	})
-	p := ui.Panes[0]
-	t.Logf("main screen %q; pane %s on %s (%s) layout %q title %q dock %q size %v readonly %v commands %v", ui.Tree.Screen, p.Key, p.Surface, p.Type, p.Layout, p.Title, p.Dock, p.Size, p.Readonly, p.Commands)
-	var walk func(n *engine.CmcpNode, f func(*engine.CmcpNode))
-	walk = func(n *engine.CmcpNode, f func(*engine.CmcpNode)) {
-		if n == nil {
-			return
-		}
-		f(n)
-		for _, c := range n.Children {
-			walk(c, f)
-		}
-	}
-	buttons := 0
-	walk(p.Tree.Root, func(n *engine.CmcpNode) {
-		if n.Widget == "textport" {
-			t.Errorf("a pane draws no second text port")
-		}
-		if n.Widget == "button" {
-			buttons++
-		}
-	})
-	t.Logf("pane widgets: %d buttons", buttons)
-	if p.Surface == "screen" {
-		t.Fatalf("an off-screen context is not presented on screen: %+v", p)
 	}
 }
 
@@ -218,7 +163,7 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 	_ = e.Input(si.ID, "home")
 	var ui *engine.CmcpUI
 	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
-	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Tree != nil })
+	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Def != nil })
 	_ = e.Input(si.ID, "board resolute")
 	r.until(t, "aboard", func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
 	defer func() { _ = e.Input(si.ID, "home"); time.Sleep(500 * time.Millisecond) }()
@@ -252,78 +197,4 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 		_ = e.Input(si.ID, "unman")
 		time.Sleep(400 * time.Millisecond)
 	}
-}
-
-// TestCmcp2LivePaneText: the guide pane is plain text, drawn straight in the dock: labels only, no table, no buttons, no text port.
-// SQUAT_LIVE_CMCP2=1.
-func TestCmcp2LivePaneText(t *testing.T) {
-	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
-		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
-	}
-	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
-	e, r := newEngine(t)
-	ps, err := engine.OpenPackStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
-	e.SetCmcp(func() cs.Config {
-		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
-			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
-			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
-	})
-	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.waitState(t, e, si.ID, proto.StateConnected)
-	time.Sleep(1500 * time.Millisecond)
-	_ = e.Input(si.ID, "connect alice ember-tide-91")
-	time.Sleep(800 * time.Millisecond)
-	_ = e.Input(si.ID, "home")
-	var ui *engine.CmcpUI
-	r.until(t, "the guide pane with a tree", func() bool {
-		u, _ := e.CmcpUI(si.ID)
-		ui = u
-		return u != nil && len(u.Panes) > 0 && u.Panes[0].Tree != nil
-	})
-	p := &ui.Panes[0]
-	kinds := map[string]int{}
-	var lines []string
-	var walk func(*engine.CmcpNode)
-	walk = func(n *engine.CmcpNode) {
-		if n == nil {
-			return
-		}
-		kinds[n.Widget]++
-		if n.Widget == "label" {
-			if t, ok := n.Props["text"].(string); ok && strings.TrimSpace(t) != "" {
-				lines = append(lines, t)
-			}
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-	}
-	walk(p.Tree.Root)
-	t.Logf("pane %q (%s): widgets %v, %d lines of text; first %q, last %q", p.Title, p.Surface, kinds, len(lines), firstOf(lines), firstOf([]string{lines[len(lines)-1]}))
-	for _, bad := range []string{"table", "list", "button", "textport"} {
-		if kinds[bad] > 0 {
-			t.Errorf("the guide pane is plain text: it has %d %s widget(s)", kinds[bad], bad)
-		}
-	}
-	if len(lines) < 20 {
-		t.Errorf("the six sections and their lines are there: %d lines", len(lines))
-	}
-	if p.Title != "Guide" || p.Surface != "dock" {
-		t.Errorf("the dock pane is titled Guide: %q on %q", p.Title, p.Surface)
-	}
-}
-
-func firstOf(s []string) string {
-	if len(s) == 0 {
-		return ""
-	}
-	return s[0]
 }
