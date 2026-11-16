@@ -306,8 +306,10 @@ func (cm *cmcpSess) tree(ui *cs.UI) (out *CmcpTree) {
 	cm.s.e.cmcpMu.Unlock()
 	if ui.V2 {
 		// v2: the active context's layout is the screen, when it is presented as a screen and the definition was accepted. A game's own
-		// context types decide what is drawn; there is no "no console and no room" rule and no ship sentinel (spec 20.10).
-		if ui.TextClient || ui.CtxType == "" || ui.CtxSurface != "screen" || ui.Screen.Resolved == "" {
+		// context types decide what is drawn; there is no ship sentinel (spec 20.10). The player's "room screens" setting still holds, as in v1:
+		// a room, a dock or an away team draws a screen only when they asked for it. A console they are at always does.
+		room := !strings.HasSuffix(ui.CtxType, ".console") && !ui.Readonly
+		if ui.TextClient || ui.CtxType == "" || ui.CtxSurface != "screen" || ui.Screen.Resolved == "" || (room && !roomScreens) {
 			if ui.Ambience { // the ship-wide alert look still needs the theme's pulse and ambience
 				if scr, _ := cm.pickScreen(ui); scr != nil {
 					cm.theme(ui, scr)

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/itsnotyoutoday/cmcp/go/defs"
@@ -103,5 +104,27 @@ func TestWorldDevHTTP(t *testing.T) {
 	e.SetWorldDevHTTP(map[string]bool{"Local Test": true, "off": false})
 	if !e.devHTTPFor("local test") || e.devHTTPFor("off") || e.devHTTPFor("other") {
 		t.Fatalf("only the marked world: %v %v %v", e.devHTTPFor("local test"), e.devHTTPFor("off"), e.devHTTPFor("other"))
+	}
+}
+
+// A room draws a screen only when the player asked for room screens, as in v1; a console always does.
+func TestRoomScreensSettingHoldsInV2(t *testing.T) {
+	for _, c := range []struct {
+		ctxType string
+		rooms   bool
+		want    bool
+	}{
+		{"ship.console", false, true}, // at a console: always
+		{"ship.console", true, true},
+		{"ship.shiproom", false, false}, // a room: only when asked for
+		{"ship.shiproom", true, true},
+		{"ship.away", false, false},
+		{"world.place", false, false},
+	} {
+		room := !strings.HasSuffix(c.ctxType, ".console")
+		got := !(room && !c.rooms)
+		if got != c.want {
+			t.Errorf("%s with roomScreens=%v: drawn=%v, want %v", c.ctxType, c.rooms, got, c.want)
+		}
 	}
 }

@@ -26,7 +26,7 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
 			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen"}}, Themes: []string{"tng"}, Theme: "tng",
@@ -82,7 +82,7 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
 			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen"}}, Themes: []string{"tng", "klingon", "romulan", "tos", "ferengi", "soft", "ops"}, Theme: "tng",
@@ -141,7 +141,7 @@ func TestCmcp2LivePanes(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
 			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
@@ -201,7 +201,7 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
 			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng", "klingon", "romulan", "tos", "ferengi", "soft", "ops"}, Theme: "tng",
@@ -267,7 +267,7 @@ func TestCmcp2LivePaneText(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.SetCmcpPacks(ps)
-	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
 	e.SetCmcp(func() cs.Config {
 		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
 			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
