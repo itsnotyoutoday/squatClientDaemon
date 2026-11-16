@@ -74,6 +74,28 @@ func TestCmcp2LiveConcourse(t *testing.T) {
 		u := get()
 		return u != nil && u.Scopes["ship"].Owner == nil && u.Ctx == nil && u.Tree == nil && len(u.Panes) == 0
 	})
+	// and the same while a console is manned: `home` must leave the console behind, not keep the player in it
+	_ = e.Input(si.ID, "board resolute")
+	r.until(t, "aboard again", func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
+	_ = e.Input(si.ID, "man command")
+	r.until(t, "at the command console", func() bool {
+		u := get()
+		return u != nil && u.Ctx != nil && u.Ctx.Type == "ship.console" && u.Tree != nil
+	})
+	t.Logf("manned: ctx=%s screen=%q", ctxType(get()), get().Tree.Screen)
+	_ = e.Input(si.ID, "home")
+	ok := false
+	for deadline := time.Now().Add(6 * time.Second); time.Now().Before(deadline); time.Sleep(150 * time.Millisecond) {
+		if u := get(); u != nil && u.Scopes["ship"].Owner == nil && u.Ctx == nil && u.Tree == nil {
+			ok = true
+			break
+		}
+	}
+	u = get()
+	t.Logf("after home from a manned console: ctx=%s tree=%v shipOwner=%v", ctxType(u), u.Tree != nil, u.Scopes["ship"].Owner)
+	if !ok {
+		t.Errorf("home from a manned console leaves the console: ctx=%s tree=%v owner=%+v", ctxType(u), u.Tree != nil, u.Scopes["ship"].Owner)
+	}
 }
 
 // TestCmcp2LiveThemesAndConsoles checks that what worked the v1 way still works the v2 way: the ship's own theme (a downloaded pack) is used,
