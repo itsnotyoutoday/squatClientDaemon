@@ -1,7 +1,10 @@
 package engine_test
 
 import (
+	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,4 +254,149 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 		_ = e.Input(si.ID, "unman")
 		time.Sleep(400 * time.Millisecond)
 	}
+}
+
+// TestCmcp2LivePaneTabs: the guide pane's tab buttons write $ui of THAT pane and its list re-binds to the chosen page. SQUAT_LIVE_CMCP2=1.
+func TestCmcp2LivePaneTabs(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
+	}
+	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
+	e, r := newEngine(t)
+	ps, err := engine.OpenPackStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always"})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
+			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen", "panel", "dock", "float"}}, Themes: []string{"tng"}, Theme: "tng",
+			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
+	})
+	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home")
+	var ui *engine.CmcpUI
+	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); ui = u; return u }
+	r.until(t, "the guide pane with a tree", func() bool {
+		u := get()
+		return u != nil && len(u.Panes) > 0 && u.Panes[0].Tree != nil
+	})
+	walk := func(n *engine.CmcpNode, f func(*engine.CmcpNode)) {
+		var rec func(*engine.CmcpNode)
+		rec = func(x *engine.CmcpNode) {
+			if x == nil {
+				return
+			}
+			f(x)
+			for _, c := range x.Children {
+				rec(c)
+			}
+		}
+		rec(n)
+	}
+	// what the pane holds: the buttons (one per tab) and the list of the page in view
+	buttons := map[string]string{} // text -> path
+	var listPath string
+	rowsOf := func(p *engine.CmcpPane) []string {
+		var out []string
+		walk(p.Tree.Root, func(n *engine.CmcpNode) {
+			if n.Widget != "list" {
+				return
+			}
+			listPath = n.Path
+			// rows are a list, or a map keyed "01", "02", ... (the client's own entries() takes either)
+			switch rows := n.Props["rows"].(type) {
+			case []any:
+				for _, x := range rows {
+					if m, ok := x.(map[string]any); ok {
+						out = append(out, fmt.Sprint(m["text"]))
+					}
+				}
+			case map[string]any:
+				keys := make([]string, 0, len(rows))
+				for k := range rows {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					if m, ok := rows[k].(map[string]any); ok {
+						out = append(out, fmt.Sprint(m["text"]))
+					}
+				}
+			}
+		})
+		return out
+	}
+	p := &ui.Panes[0]
+	walk(p.Tree.Root, func(n *engine.CmcpNode) {
+		if n.Widget == "button" {
+			buttons[strings.ToLower(fmt.Sprint(n.Props["text"]))] = n.Path
+		}
+		if n.Widget == "textport" {
+			t.Error("the guide pane draws no text port")
+		}
+	})
+	first := rowsOf(p)
+	t.Logf("pane %q: %d buttons %v, list %q with %d rows; first row %q", p.Title, len(buttons), keysOf(buttons), listPath, len(first), firstOf(first))
+	if len(buttons) < 6 {
+		t.Fatalf("the six tab buttons are there: %v", keysOf(buttons))
+	}
+	// each tab button writes $ui of this pane and the list re-binds to that page
+	for _, tab := range []string{"test", "clients", "welcome"} {
+		path, ok := buttons[tab]
+		if !ok {
+			t.Errorf("no %q tab", tab)
+			continue
+		}
+		if _, err := e.CmcpPaneEvent(si.ID, p.Key, path, "click", nil); err != nil {
+			t.Fatalf("%s tab: %v", tab, err)
+		}
+		var rows []string
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if u := get(); u != nil && len(u.Panes) > 0 && u.Panes[0].Tree != nil {
+				rows = rowsOf(&u.Panes[0])
+				if len(rows) > 0 && (tab == "welcome") == (strings.Join(rows, "|") == strings.Join(first, "|")) {
+					break
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if len(rows) == 0 {
+			t.Errorf("tab %q: the list is empty after the click", tab)
+			continue
+		}
+		same := strings.Join(rows, "|") == strings.Join(first, "|")
+		if tab == "welcome" && !same {
+			t.Errorf("tab welcome: back to the first page, got %q", firstOf(rows))
+		}
+		if tab != "welcome" && same {
+			t.Errorf("tab %q: the list did not change (still %q)", tab, firstOf(rows))
+		}
+		t.Logf("tab %-8s -> %d rows, first %q", tab, len(rows), firstOf(rows))
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func firstOf(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0]
 }
