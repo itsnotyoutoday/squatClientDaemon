@@ -3,6 +3,7 @@ package engine_test
 import (
 	"cmp"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +171,77 @@ func TestCmcp2LiveThemesAndConsoles(t *testing.T) {
 }
 
 // TestCmcp2LiveEveryConsole mans each console of a ship in turn and reports what SquatClient draws for it. SQUAT_LIVE_CMCP2=1.
+// TestCmcp2LiveShipThemes: each ship has its own look, so moving to another ship changes the theme the client draws with. SQUAT_LIVE_CMCP2=1.
+func TestCmcp2LiveShipThemes(t *testing.T) {
+	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
+		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
+	}
+	t.Setenv("SQUATCLIENT_DEV_LOOPBACK_HTTP", "1")
+	e, r := newEngine(t)
+	ps, err := engine.OpenPackStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetCmcpPacks(ps)
+	e.SetCmcpRender(engine.CmcpRender{Theme: "tng", UseShipTheme: true, PackConsent: "always", RoomScreens: true})
+	e.SetCmcp(func() cs.Config {
+		return cs.Config{Name: "SquatClient", Version: "live", Kind: "gui", MaxBody: 65536, Protos: []int{2},
+			Render: &msg.Render{Kind: "gpu", Surfaces: []string{"screen"}}, Themes: []string{"tng", "klingon", "romulan", "tos", "ferengi", "soft", "ops"}, Theme: "tng",
+			Packs: &msg.HelloPacks{Formats: []int{1}, Inline: true, HTTPS: true}}
+	})
+	si, err := e.Dial(engine.World{Name: "poc2", Host: "127.0.0.1", Port: 4101}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, e, si.ID, proto.StateConnected)
+	time.Sleep(1500 * time.Millisecond)
+	_ = e.Input(si.ID, "connect alice ember-tide-91")
+	time.Sleep(800 * time.Millisecond)
+	_ = e.Input(si.ID, "home")
+	get := func() *engine.CmcpUI { u, _ := e.CmcpUI(si.ID); return u }
+	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Def != nil })
+	defer func() { _ = e.Input(si.ID, "home"); time.Sleep(500 * time.Millisecond) }()
+	// each ship in turn: board, man a console, and note the owner's theme and the theme the screen is drawn in
+	seen := map[string]string{}
+	for _, ship := range []string{"resolute", "bootyking"} {
+		_ = e.Input(si.ID, "board "+ship)
+		r.until(t, "aboard "+ship, func() bool {
+			u := get()
+			return u != nil && u.Scopes["ship"].Owner != nil && strings.Contains(strings.ToLower(u.Scopes["ship"].Owner.Name), ship[:4])
+		})
+		_ = e.Input(si.ID, "man command")
+		ok := false
+		for deadline := time.Now().Add(6 * time.Second); time.Now().Before(deadline); time.Sleep(150 * time.Millisecond) {
+			u := get()
+			if u != nil && u.Ctx != nil && u.Ctx.Type == "ship.console" && u.Tree != nil && u.Scopes["ship"].Owner != nil && u.Tree.Theme == u.Scopes["ship"].Owner.Theme {
+				ok = true
+				break
+			}
+		}
+		u := get()
+		owner, theme := "", ""
+		if o := u.Scopes["ship"].Owner; o != nil {
+			owner, theme = o.Name, o.Theme
+		}
+		drawn := ""
+		if u.Tree != nil {
+			drawn = u.Tree.Theme
+		}
+		t.Logf("%-10s owner %q suggests theme %q; the screen is drawn in %q", ship, owner, theme, drawn)
+		if !ok {
+			t.Errorf("%s: the screen follows the ship's own theme (owner %q wants %q, drawn %q)", ship, owner, theme, drawn)
+		}
+		seen[ship] = drawn
+		_ = e.Input(si.ID, "unman")
+		time.Sleep(300 * time.Millisecond)
+		_ = e.Input(si.ID, "home")
+		time.Sleep(600 * time.Millisecond)
+	}
+	if seen["resolute"] == seen["bootyking"] {
+		t.Errorf("two ships with different looks draw in different themes: both %q", seen["resolute"])
+	}
+}
+
 func TestCmcp2LiveEveryConsole(t *testing.T) {
 	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
 		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
