@@ -28,6 +28,7 @@ type CmcpPane struct {
 	Resizable bool           `json:"resizable,omitempty"`
 	Size      map[string]any `json:"size,omitempty"`
 	Readonly  bool           `json:"readonly,omitempty"`
+	Level     int            `json:"level,omitempty"` // the most a client may draw for it (3 when the game says nothing)
 	Commands  []string       `json:"commands,omitempty"`
 	Tree      *CmcpTree      `json:"tree"` // nil: the layout is not available yet (its pack is still coming)
 }
@@ -61,7 +62,7 @@ func (cm *cmcpSess) paneTrees(ui *cs.UI) []CmcpPane {
 			for _, pv := range ui.Panes[sf] {
 				live[pv.Key] = true
 				p := CmcpPane{Surface: sf, Key: pv.Key, Ctx: pv.Ctx, Type: pv.Type, Scope: pv.Scope, ID: pv.ID, Name: pv.Name, Title: pv.Title, Layout: pv.Layout,
-					Dock: pv.Dock, Resizable: pv.Resizable, Size: pv.Size, Readonly: pv.Readonly, Commands: pv.Commands}
+					Dock: pv.Dock, Resizable: pv.Resizable, Size: pv.Size, Readonly: pv.Readonly, Commands: pv.Commands, Level: pv.Level}
 				p.Tree = cm.paneTree(ui, pv)
 				out = append(out, p)
 			}

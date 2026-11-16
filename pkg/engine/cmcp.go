@@ -119,13 +119,16 @@ type CmcpScope struct {
 
 // CmcpCtx is the active context of a v2 session: its type and scope, the layout in force and where it is presented (screen, panel, dock, float).
 type CmcpCtx struct {
-	Type    string         `json:"type"`
-	Scope   string         `json:"scope"`
-	Key     string         `json:"key"`
-	ID      string         `json:"id,omitempty"`
-	Layout  string         `json:"layout"`
-	Surface string         `json:"surface"`
-	Ambient bool           `json:"ambient"`
+	Type    string `json:"type"`
+	Scope   string `json:"scope"`
+	Key     string `json:"key"`
+	ID      string `json:"id,omitempty"`
+	Layout  string `json:"layout"`
+	Surface string `json:"surface"`
+	Ambient bool   `json:"ambient"`
+	// Level is the most this client may draw for the context (the game's own, 3 when it says nothing): 3 the full console, 2 ordinary
+	// widgets, 1 the game text alone. The window may cap lower; it never goes above this.
+	Level   int            `json:"level,omitempty"`
 	Data    map[string]any `json:"data,omitempty"` // $ctx.data
 	Layouts []string       `json:"layouts,omitempty"`
 }
@@ -674,7 +677,7 @@ func cmcpDTO(id string, u *cs.UI) *CmcpUI {
 			d.Scopes[n] = CmcpScope{Title: sv.Title, Owner: sv.Owner}
 		}
 		if u.CtxType != "" {
-			d.Ctx = &CmcpCtx{Type: u.CtxType, Scope: u.CtxScope, Key: u.CtxKey, ID: u.CtxID, Layout: u.CtxLayout, Surface: u.CtxSurface, Ambient: u.CtxAmbient, Data: u.CtxData, Layouts: u.Layouts}
+			d.Ctx = &CmcpCtx{Type: u.CtxType, Scope: u.CtxScope, Key: u.CtxKey, ID: u.CtxID, Layout: u.CtxLayout, Surface: u.CtxSurface, Ambient: u.CtxAmbient, Data: u.CtxData, Layouts: u.Layouts, Level: u.CtxLevel}
 		}
 		for _, e := range u.Stack2 {
 			x := CmcpStackEntry{Key: e.Key, Kind: e.Type, ID: e.ID, Name: e.Name, Title: e.Title, Screen: e.EffectiveLayout, Priority: e.Priority, Active: e.Active, Readonly: e.Readonly, MannedBy: e.MannedBy}
