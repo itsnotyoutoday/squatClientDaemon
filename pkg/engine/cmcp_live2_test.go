@@ -213,8 +213,8 @@ func TestCmcp2LiveEveryConsole(t *testing.T) {
 }
 
 // TestCmcp2LiveHitShake: a hit on your own ship shakes the console screen (spec 6.18), at a manned console and in a plain ship room.
-// SQUAT_LIVE_CMCP2=1. SQUAT_PREMAN=- skips the warm-up man/unman and then shows the game-side bug: straight after boarding, `man command`
-// prints the station in the text but pushes no Cobra.Context, so there is no console screen and nothing to shake.
+// SQUAT_LIVE_CMCP2=1. It mans the COMMAND console: the crew consoles (command, communications, medical, security) once took up to a second
+// to announce themselves, so a hit in that window had no screen to shake.
 func TestCmcp2LiveHitShake(t *testing.T) {
 	if os.Getenv("SQUAT_LIVE_CMCP2") == "" {
 		t.Skip("set SQUAT_LIVE_CMCP2=1 with the v2 testgame on 127.0.0.1:4101")
@@ -249,9 +249,9 @@ func TestCmcp2LiveHitShake(t *testing.T) {
 	r.until(t, "ready", func() bool { u := get(); return u != nil && u.State == "ready" && u.V2 && u.Def != nil })
 	_ = e.Input(si.ID, "board resolute")
 	r.until(t, "aboard", func() bool { u := get(); return u != nil && u.Scopes["ship"].Owner != nil })
-	// man another console first and give it up again: straight after boarding the game does not push a context for the command console
-	// (see the note on this test), so this makes the test about the shake and not about that
-	if pre := cmp.Or(os.Getenv("SQUAT_PREMAN"), "helm"); pre != "-" {
+	// SQUAT_PREMAN=<console> mans another console first and gives it up again (it was once needed to work round a game-side delay before a
+	// crew console's context arrived; not needed any more)
+	if pre := os.Getenv("SQUAT_PREMAN"); pre != "" && pre != "-" {
 		_ = e.Input(si.ID, "man "+pre)
 		time.Sleep(900 * time.Millisecond)
 		_ = e.Input(si.ID, "unman")
